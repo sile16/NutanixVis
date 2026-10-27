@@ -27,7 +27,7 @@ export function CableEdgeView({ id, data, selected }: EdgeProps<CableEdge>) {
           fill="none"
           stroke={data.dropped ? DROP_COLOR : data.glow}
           strokeWidth={6}
-          strokeOpacity={0.35}
+          strokeOpacity={data.glowOpacity}
           strokeLinecap="round"
           data-testid={`glow-${id}`}
         />

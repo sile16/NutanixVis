@@ -9,6 +9,7 @@ import type { ActionSpec, DeviceView, LinkView, Snapshot, ViewField } from '../.
 import { humanizeKey } from '../app/format';
 import { Button, Select, ShareBar } from '../components/controls';
 import { RoleBadge, StatusPill } from '../components/status';
+import { useActivityWindow } from '../diagram/hooks';
 import { BOND_MODE_LABEL } from '../diagram/nodes/parts';
 import { ancestorOfKind, bondUtilization, computePathUsage } from '../diagram/path-usage';
 import { trafficStyle } from '../diagram/traffic';
@@ -170,7 +171,11 @@ function Actions({ target, view }: { target: string; view: DeviceView | LinkView
 }
 
 function PathUsageSection({ snapshot, vmId }: { snapshot: Snapshot; vmId: string }) {
-  const usage = computePathUsage(snapshot, vmId);
+  // Same rolling window as the diagram, so shares don't jump with per-tick round-robin.
+  const activityTicks = useUi((s) => s.activityTicks);
+  const win = useActivityWindow(snapshot, activityTicks);
+  const usage = computePathUsage(win.snapshot, vmId);
+  const windowLabel = win.ticks === 1 ? 'last tick' : `last ${win.ticks} ticks`;
   if (!usage) return null;
   return (
     <Section title="Path usage" testId="path-usage">
@@ -184,7 +189,7 @@ function PathUsageSection({ snapshot, vmId }: { snapshot: Snapshot; vmId: string
         )}
       </div>
       <p className="mb-1 text-[11px] text-ink-muted">
-        Uplinks ({usage.traceCount} storage messages this tick)
+        Uplinks ({usage.traceCount} storage messages, {windowLabel})
       </p>
       <div className="mb-2 flex flex-col gap-1">
         {usage.uplinks.length ? (
@@ -198,7 +203,7 @@ function PathUsageSection({ snapshot, vmId }: { snapshot: Snapshot; vmId: string
             />
           ))
         ) : (
-          <p className="text-xs text-ink-muted">No storage traffic this tick.</p>
+          <p className="text-xs text-ink-muted">No storage traffic in the {windowLabel}.</p>
         )}
       </div>
       {usage.targets.length ? (
@@ -227,7 +232,9 @@ function PathUsageSection({ snapshot, vmId }: { snapshot: Snapshot; vmId: string
 function BondSection({ snapshot, hostId }: { snapshot: Snapshot; hostId: string }) {
   const bondUtilHost = useUi((s) => s.bondUtilHost);
   const setBondUtilHost = useUi((s) => s.setBondUtilHost);
-  const bonds = bondUtilization(snapshot, hostId);
+  const activityTicks = useUi((s) => s.activityTicks);
+  const win = useActivityWindow(snapshot, activityTicks);
+  const bonds = bondUtilization(win.snapshot, hostId);
   if (bonds.length === 0) return null;
   const on = bondUtilHost === hostId;
   return (

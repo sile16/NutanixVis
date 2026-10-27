@@ -36,6 +36,8 @@ export interface UiState {
   /** Actions applied since the simulation was (re)built: changing versions asks first. */
   actionsApplied: number;
   showPackets: boolean;
+  /** Ticks of history the diagram's activity views (glow, paths, bond shares) aggregate. */
+  activityTicks: number;
   /** Host whose bond member utilization is shown on the diagram. */
   bondUtilHost: string | null;
   layoutEdit: boolean;
@@ -55,6 +57,7 @@ export interface UiState {
   setVersions(v: VersionChoice): void;
   resetSim(): void;
   togglePackets(): void;
+  setActivityTicks(n: number): void;
   setBondUtilHost(id: string | null): void;
   setLayoutEdit(on: boolean): void;
   explain(seq: number | null): void;
@@ -88,6 +91,7 @@ export const useUi = create<UiState>()((set) => ({
   queued: 0,
   actionsApplied: 0,
   showPackets: true,
+  activityTicks: 10,
   bondUtilHost: null,
   layoutEdit: false,
   explainEvent: null,
@@ -118,6 +122,7 @@ export const useUi = create<UiState>()((set) => ({
   resetSim: () =>
     set((s) => ({ simEpoch: s.simEpoch + 1, queued: 0, actionsApplied: 0, playing: false })),
   togglePackets: () => set((s) => ({ showPackets: !s.showPackets })),
+  setActivityTicks: (activityTicks) => set({ activityTicks }),
   setBondUtilHost: (bondUtilHost) => set({ bondUtilHost }),
   setLayoutEdit: (layoutEdit) => set({ layoutEdit }),
   explain: (explainEvent) =>

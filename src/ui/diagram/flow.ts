@@ -65,6 +65,8 @@ export type CableEdgeData = {
   mid: Point;
   /** Highlight color (reduced-motion traffic highlight or path view), or null. */
   glow: string | null;
+  /** Glow strength: fades with how long ago the link last carried traffic. */
+  glowOpacity: number;
   dropped: boolean;
   dim: boolean;
   inPath: boolean;
@@ -164,8 +166,8 @@ export function buildNodes(
 export interface EdgeBuildOptions {
   readonly selectedId: string | null;
   readonly pathUsage: PathUsage | null;
-  /** Per-link highlight (reduced motion / packets off): category color and whether dropped. */
-  readonly glow: ReadonlyMap<string, { color: string; dropped: boolean }>;
+  /** Per-link activity highlight: dominant category color, opacity (recency) and drop marker. */
+  readonly glow: ReadonlyMap<string, { color: string; dropped: boolean; opacity: number }>;
   readonly labels: ReadonlyMap<string, string>;
 }
 
@@ -196,6 +198,7 @@ export function buildEdges(
         pathD: g.pathD,
         mid: g.pointAt(0.5),
         glow: glow?.color ?? null,
+        glowOpacity: glow?.opacity ?? 0,
         dropped: glow?.dropped ?? false,
         dim: opts.pathUsage !== null && !inPath,
         inPath,

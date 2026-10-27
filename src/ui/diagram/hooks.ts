@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Snapshot, Trace } from '../../engine/types';
+import { type ActivityWindow, buildActivityWindow } from './activity-window';
 
 export function usePrefersReducedMotion(): boolean {
   const query = '(prefers-reduced-motion: reduce)';
@@ -39,4 +40,24 @@ export function useTraceHistory(snapshot: Snapshot, depth = 3): readonly TraceHi
     ].slice(0, depth);
   }
   return cur.entries;
+}
+
+/**
+ * Rolling window of the last `ticks` snapshots (oldest first), for flicker-free activity views.
+ * Resets on a new topology or when time goes backwards (a new simulation).
+ */
+export function useActivityWindow(snapshot: Snapshot, ticks: number): ActivityWindow {
+  const ref = useRef<Snapshot[]>([]);
+  return useMemo(() => {
+    const buf = ref.current;
+    const last = buf[buf.length - 1];
+    if (last && (last.topologyId !== snapshot.topologyId || snapshot.simTime < last.simTime)) {
+      buf.length = 0;
+    }
+    const tail = buf[buf.length - 1];
+    if (tail && tail.simTime === snapshot.simTime) buf[buf.length - 1] = snapshot;
+    else buf.push(snapshot);
+    while (buf.length > Math.max(1, ticks)) buf.shift();
+    return buildActivityWindow(buf);
+  }, [snapshot, ticks]);
 }

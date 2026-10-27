@@ -18,10 +18,11 @@ import type { Snapshot } from '../../engine/types';
 import { PAUSED_REPLAY_MS, playbackSchedule } from '../store/playback';
 import { useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
+import { glowOpacity } from './activity-window';
 import { ContextMenu } from './context-menu';
 import { buildEdges, buildNodes, type CableEdge, type DeviceNode } from './flow';
 import { computeLinkGeometries, type Point } from './geometry';
-import { usePrefersReducedMotion, useTraceHistory } from './hooks';
+import { useActivityWindow, usePrefersReducedMotion, useTraceHistory } from './hooks';
 import { computeLayout, type LayoutMap, moveDevice, portKey } from './layout';
 import { LayoutEditPanel } from './layout-edit-panel';
 import { Legend } from './legend';
@@ -81,44 +82,48 @@ export function Diagram({
   }, [key, layoutMap]);
 
   const selectedId = selection?.id ?? null;
+  // Activity views aggregate a rolling window so multipath round-robin doesn't flicker.
+  const activityTicks = useUi((s) => s.activityTicks);
+  const win = useActivityWindow(snapshot, activityTicks);
   const pathUsage = useMemo(
-    () => (selection?.type === 'device' ? computePathUsage(snapshot, selection.id) : null),
-    [snapshot, selection],
+    () => (selection?.type === 'device' ? computePathUsage(win.snapshot, selection.id) : null),
+    [win, selection],
   );
 
   const utilLabels = useMemo(() => {
     const out = new Map<string, string>();
     if (!bondUtilHost) return out;
-    for (const bond of bondUtilization(snapshot, bondUtilHost)) {
+    for (const bond of bondUtilization(win.snapshot, bondUtilHost)) {
       for (const m of bond.members) out.set(m.nicId, `${Math.round(m.share * 100)}%`);
     }
     return out;
-  }, [snapshot, bondUtilHost]);
+  }, [win, bondUtilHost]);
 
   const edgeLabels = useMemo(() => {
     const out = new Map<string, string>();
     if (!bondUtilHost) return out;
-    for (const bond of bondUtilization(snapshot, bondUtilHost)) {
+    for (const bond of bondUtilization(win.snapshot, bondUtilHost)) {
       for (const m of bond.members) {
-        if (m.linkId && m.status === 'up') out.set(m.linkId, `${bond.label} ${m.total}/tick`);
+        const perTick = Math.round(m.total / win.ticks);
+        if (m.linkId && m.status === 'up') out.set(m.linkId, `${bond.label} ${perTick}/tick`);
       }
     }
     return out;
-  }, [snapshot, bondUtilHost]);
+  }, [win, bondUtilHost]);
 
   const animate = showPackets && !reducedMotion;
   const glow = useMemo(() => {
-    const out = new Map<string, { color: string; dropped: boolean }>();
-    if (animate) return out;
-    for (const t of snapshot.traces) {
-      t.links.forEach((id, i) => {
-        const dropped = t.result === 'dropped' && i === t.links.length - 1;
-        const prev = out.get(id);
-        if (!prev || dropped) out.set(id, { color: trafficStyle(t.category).color, dropped });
+    // Always on: a steady, fading glow shows which cables carry IO; packets animate on top.
+    const out = new Map<string, { color: string; dropped: boolean; opacity: number }>();
+    for (const [id, a] of win.links) {
+      out.set(id, {
+        color: trafficStyle(a.category).color,
+        dropped: a.dropped,
+        opacity: glowOpacity(a.age, win.ticks),
       });
     }
     return out;
-  }, [snapshot.traces, animate]);
+  }, [win]);
 
   const nodes = useMemo<DeviceNode[]>(
     () => buildNodes(snapshot, dl, { selectedId, pathUsage, utilLabels, draggable: layoutEdit }),

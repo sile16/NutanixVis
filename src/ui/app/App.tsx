@@ -59,6 +59,8 @@ function Header({ entry, themePref }: { entry: CatalogEntry; themePref: ThemePre
   const resetSim = useUi((s) => s.resetSim);
   const showPackets = useUi((s) => s.showPackets);
   const togglePackets = useUi((s) => s.togglePackets);
+  const activityTicks = useUi((s) => s.activityTicks);
+  const setActivityTicks = useUi((s) => s.setActivityTicks);
   const layoutEdit = useUi((s) => s.layoutEdit);
   const setLayoutEdit = useUi((s) => s.setLayoutEdit);
   return (
@@ -109,6 +111,19 @@ function Header({ entry, themePref }: { entry: CatalogEntry; themePref: ThemePre
           )}
           Packets
         </Button>
+        <Select
+          label="Activity"
+          value={String(activityTicks)}
+          onChange={(e) => setActivityTicks(Number(e.target.value))}
+          data-testid="activity-window"
+          title="How many recent ticks the cable glow, path highlight and bond shares aggregate"
+        >
+          {[1, 5, 10, 30].map((n) => (
+            <option key={n} value={n}>
+              {n === 1 ? 'Last tick' : `Last ${n} ticks`}
+            </option>
+          ))}
+        </Select>
         {import.meta.env.DEV ? (
           <Button
             variant="ghost"

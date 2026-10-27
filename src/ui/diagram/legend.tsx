@@ -25,7 +25,7 @@ export function Legend({
         Traffic{' '}
         <span className="font-normal">
           {animated
-            ? '(this tick)'
+            ? '(packets: this tick; glow: recent)'
             : reducedMotion
               ? '(reduced motion: highlighted)'
               : '(packets off: highlighted)'}

@@ -23,7 +23,7 @@ export interface CatalogEntry {
 export const fixtureCatalog: readonly CatalogEntry[] = [
   {
     id: 't1-ahv-flasharray',
-    title: 'T1 · AHV compute + Everpure FlashArray',
+    title: 'T1 · AHV + Everpure FlashArray',
     hasFlashArray: true,
     layout: t1Layout,
     createSimulation: (versions) =>

@@ -32,6 +32,7 @@ import { bondUtilization, computePathUsage } from './path-usage';
 import type { ReplayContext } from './replay';
 import { trafficStyle } from './traffic';
 import { edgeTypes, nodeTypes } from './types';
+import { relocateVms } from './vm-placement';
 
 /** Layout depends only on structure (ids, parents, kinds, cable ends), not on per-tick state. */
 function structureKey(s: Snapshot): string {
@@ -69,10 +70,12 @@ export function Diagram({
   const [editedLayout, setEditedLayout] = useState<LayoutMap | null>(null);
   const layoutMap = editedLayout ?? baseLayout;
 
-  const key = structureKey(snapshot);
+  // Draw VMs under the host they currently run on (AHV HA restarts move them).
+  const placedView = relocateVms(snapshot.devices, layoutMap);
+  const key = structureKey({ ...snapshot, devices: placedView.devices });
   // biome-ignore lint/correctness/useExhaustiveDependencies: recompute on structure, not per tick
   const { dl, geometries } = useMemo(() => {
-    const layout = computeLayout(snapshot.devices, snapshot.links, layoutMap);
+    const layout = computeLayout(placedView.devices, snapshot.links, placedView.layout);
     const ends = Object.values(snapshot.links).flatMap((l) => {
       const a = layout.anchors.get(portKey(l.a.device, l.a.port));
       const b = layout.anchors.get(portKey(l.b.device, l.b.port));

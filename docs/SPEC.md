@@ -854,3 +854,28 @@ Stream H raised these while writing the acceptance scenarios. Each is labeled wi
 - **New option:** `path-loss-force-shutdown-s` for T1 and T1-lab. It sets `vm.pathLossForceShutdownS` on all VMs.
 - **New profile fields:** `flasharray.controllerRebootS`, `externalStorage.ioTimeoutS`, `cluster.cvmBootS`.
 - **View fields:** the view-field contract in `docs/view-fields.md` is adopted. Domain streams must produce those fields and event codes.
+
+---
+
+## 15. Field deployment input (2026-10-27)
+
+Owner-supplied field practice from deployment walkthroughs. Items that come only from internal recordings are kept in `docs/internal/` until the owner approves citing them.
+
+### 15.1 Storage network layout: three supported shapes, all modeled
+
+| Layout (`storage-vswitch-layout`) | Shape | Source | What a node NIC failure does |
+|---|---|---|---|
+| `single-bond` + MAC pinning (default) | One storage vswitch, both NICs, Active-Active MAC pinning | Everpure NET KB, Cisco Validated Design | Strict A/B: that VLAN's paths are lost after KATO (§6.4c). Tagged-both: the bond saves the path. |
+| `single-bond` + LACP | One vswitch, LACP over MLAG | Nutanix deployment guide ("LACP when available") | The hash moves; LACP fast/slow detection only applies to failures without carrier loss. |
+| `per-fabric` | **One vswitch per fabric, each "No Uplink Bond"** with one NIC and one storage segment (VLAN). Multipathing is left entirely to NVMe. | Field practice, AHV Admin Guide (No Uplink Bond), NET KB (no-bond allowed as an exception) | That fabric's paths are lost after KATO; IO continues on the other fabric. There is no bond layer at all. |
+
+- **ISL.** Field practice keeps storage VLANs **off the ISL** (single hop from node to array; the ISL adds latency and can become a bottleneck). The Cisco Validated Design allows storage traffic on the ISL. The option `isl-storage-vlans`: pruned | allowed.
+- **Switch ports.** FA data ports are typically access ports (untagged) on the switch, while node ports are trunks.
+- **MAC pinning + isolated VLANs.** With isolated VLANs, `per-fabric` and VLAN-aware MAC pinning reach the same failure outcome, by different mechanisms.
+
+### 15.2 Backlog from field input
+
+- **Build-up action `storage.create-internal-interface`.** Creating an External Storage internal interface runs a cross-CVM network validation over the new segment. A VLAN or trunk misconfiguration makes the task fail and roll back ("network validation failed"). Model it as a build-up step whose success depends on L2 reachability between CVMs on that VLAN. Confidence: `inferred` from field observation.
+- **Jumbo frames.** Field practice treats MTU 9000 as required on the storage vswitch and interface. The deployment guide calls it recommended, with a 1500 default. The existing `mtu` option covers both; scenario narratives should say that 9000 end to end is the norm.
+- **Pod quota counts provisioned size, not used size** (DEPLOY-GUIDE also warns about quota limits). Add a misconfiguration scenario: VM or disk create fails once provisioned capacity exceeds the quota, while running IO is unaffected.
+- **UI: vDisk → FA volume name.** Prism Central shows each vDisk's backing FA volume name. Show it in the VM and vDisk inspector.

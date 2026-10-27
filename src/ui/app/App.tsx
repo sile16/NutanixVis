@@ -1,25 +1,159 @@
-import { t1Steady } from '../../fixtures/snapshots/t1-steady';
+/**
+ * App shell (SPEC §8): header (brand, topology picker, version selector, clock, time controls),
+ * the diagram in the centre and the tabbed right rail.
+ *
+ * Until integration, topologies and simulations come from the fixture catalog and the version
+ * matrix from a fixture (see `src/fixtures`). Stream I swaps both for the real modules.
+ */
+import { Eye, EyeOff, Monitor, Moon, Move, RotateCcw, Sun } from 'lucide-react';
+import { useEffect, useMemo } from 'react';
+import { type CatalogEntry, fixtureCatalog } from '../../fixtures/catalog';
+import { fixtureVersionMatrix } from '../../fixtures/version-matrix';
+import { Button, Select } from '../components/controls';
+import { Diagram } from '../diagram/diagram';
+import { RightRail } from '../panels/right-rail';
+import { SimProvider } from '../store/sim-context';
+import { type ThemePref, useUi } from '../store/ui-store';
+import { usePlayback } from '../store/use-playback';
+import { loadThemePref, saveThemePref, useResolvedTheme } from './theme';
+import { SimClock, TimeControls } from './time-controls';
+import { VersionSelector } from './version-selector';
+import { resolveVersions, toVersionSelection } from './versions';
 
-/** Phase 0 shell. Stream B replaces the body with the diagram + panels (SPEC §8). */
-export function App() {
-  const snapshot = t1Steady;
+const matrix = fixtureVersionMatrix;
+const catalog = fixtureCatalog;
+const THEME_NEXT: Readonly<Record<ThemePref, ThemePref>> = {
+  system: 'light',
+  light: 'dark',
+  dark: 'system',
+};
+
+function PlaybackDriver() {
+  usePlayback();
+  return null;
+}
+
+function ThemeToggle({ pref }: { pref: ThemePref }) {
+  const setTheme = useUi((s) => s.setTheme);
+  const Icon = pref === 'light' ? Sun : pref === 'dark' ? Moon : Monitor;
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-border bg-panel px-4 py-2">
-        <h1 className="text-lg font-semibold">
-          NutanixVis{' '}
-          <span className="font-normal text-ink-muted">· failure scenario simulator</span>
-        </h1>
-        <span className="font-mono text-sm text-ink-muted" data-testid="sim-clock">
-          T+{snapshot.simTime}s
-        </span>
-      </header>
-      <main className="flex-1 p-4">
-        <p className="text-ink-muted">
-          Fixture snapshot: {Object.keys(snapshot.devices).length} devices,{' '}
-          {Object.keys(snapshot.links).length} links.
-        </p>
-      </main>
-    </div>
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => {
+        const next = THEME_NEXT[pref];
+        setTheme(next);
+        saveThemePref(next);
+      }}
+      aria-label={`Theme: ${pref}. Switch to ${THEME_NEXT[pref]}`}
+      title={`Theme: ${pref}`}
+    >
+      <Icon size={15} aria-hidden="true" />
+    </Button>
+  );
+}
+
+function Header({ entry, themePref }: { entry: CatalogEntry; themePref: ThemePref }) {
+  const setTopology = useUi((s) => s.setTopology);
+  const resetSim = useUi((s) => s.resetSim);
+  const showPackets = useUi((s) => s.showPackets);
+  const togglePackets = useUi((s) => s.togglePackets);
+  const layoutEdit = useUi((s) => s.layoutEdit);
+  const setLayoutEdit = useUi((s) => s.setLayoutEdit);
+  return (
+    <header className="flex flex-wrap items-end gap-x-4 gap-y-2 border-b border-border bg-panel px-4 py-2">
+      <div className="mr-2 self-center">
+        <h1 className="text-lg font-bold leading-tight tracking-tight">NutanixVis</h1>
+        <p className="text-[11px] leading-tight text-ink-muted">Failure scenario simulator</p>
+      </div>
+      <Select
+        label="Topology"
+        value={entry.id}
+        onChange={(e) => setTopology(e.target.value)}
+        data-testid="topology-select"
+      >
+        {catalog.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.title}
+          </option>
+        ))}
+      </Select>
+      <VersionSelector matrix={matrix} hasFlashArray={entry.hasFlashArray} />
+      <div className="flex items-end gap-2">
+        <SimClock />
+        <TimeControls />
+      </div>
+      <div className="ml-auto flex items-center gap-1 self-center">
+        <Button variant="ghost" size="sm" onClick={resetSim} title="Reset the simulation">
+          <RotateCcw size={15} aria-hidden="true" />
+          <span className="sr-only">Reset simulation</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-pressed={showPackets}
+          onClick={togglePackets}
+          data-testid="toggle-packets"
+          title={showPackets ? 'Hide packet animation' : 'Show packet animation'}
+        >
+          {showPackets ? (
+            <Eye size={15} aria-hidden="true" />
+          ) : (
+            <EyeOff size={15} aria-hidden="true" />
+          )}
+          Packets
+        </Button>
+        {import.meta.env.DEV ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-pressed={layoutEdit}
+            onClick={() => setLayoutEdit(!layoutEdit)}
+            title="Dev only: drag nodes and copy layout JSON"
+          >
+            <Move size={15} aria-hidden="true" />
+            Layout
+          </Button>
+        ) : null}
+        <ThemeToggle pref={themePref} />
+      </div>
+    </header>
+  );
+}
+
+export function App() {
+  const topologyId = useUi((s) => s.topologyId);
+  const versions = useUi((s) => s.versions);
+  const simEpoch = useUi((s) => s.simEpoch);
+  const themePref = useUi((s) => s.theme);
+  const setTheme = useUi((s) => s.setTheme);
+  useEffect(() => setTheme(loadThemePref()), [setTheme]);
+  const theme = useResolvedTheme(themePref);
+
+  const entry = catalog.find((t) => t.id === topologyId) ?? catalog[0];
+  if (!entry) throw new Error('fixture catalog is empty');
+  const resolved = resolveVersions(matrix, versions);
+  const selection = toVersionSelection(matrix, resolved, entry.hasFlashArray);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rebuild on topology/version/reset only
+  const sim = useMemo(
+    () => entry.createSimulation(selection),
+    [entry, selection.nutanix, selection.flasharray, simEpoch],
+  );
+
+  return (
+    <SimProvider sim={sim}>
+      <PlaybackDriver />
+      <div className="flex h-full flex-col">
+        <Header entry={entry} themePref={themePref} />
+        <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_24rem]">
+          <section aria-label="Topology diagram" className="min-h-0 min-w-0">
+            <Diagram key={`${entry.id}:${simEpoch}`} baseLayout={entry.layout} colorMode={theme} />
+          </section>
+          <aside aria-label="Details" className="min-h-0 border-l border-border bg-panel">
+            <RightRail />
+          </aside>
+        </main>
+      </div>
+    </SimProvider>
   );
 }

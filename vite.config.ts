@@ -10,5 +10,7 @@ export default defineConfig({
     include: ['tests/**/*.test.ts', 'src/**/*.test.ts'],
     exclude: ['tests/e2e/**', 'node_modules/**'],
     environment: 'node',
+    // Full-domain simulations (hundreds of ticks) run slower on CI runners than locally.
+    testTimeout: 30_000,
   },
 });

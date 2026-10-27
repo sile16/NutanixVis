@@ -68,5 +68,5 @@ export default defineScenario({
   narrative:
     "Node 1 loses both vs1 uplinks but keeps management on vs0, so the cluster still sees the host as healthy. Its CVM loses every NVMe path while Stargate keeps answering the redirector, so the VMs' IO stays with the local CVM and retries until the array responds. Without a per-VM force-shutdown timeout the VMs stall in place, then resume as soon as the uplinks return.",
   cite: ['ntnx-ncp-everpure-deploy-7.6', 'ntnx-bible-5b', 'ntnx-bible-8c'],
-  status: 'todo',
+  status: 'active',
 });

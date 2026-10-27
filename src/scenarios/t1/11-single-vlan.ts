@@ -23,7 +23,11 @@ export default defineScenario({
   id: 't1-11-single-vlan-switch-fail',
   title: 'T1 misconfiguration: single storage VLAN, then Switch A fails',
   topology: T1.topology,
-  options: { 'storage-vlans': 'single', 'vlan-placement': 'tagged-both' },
+  options: {
+    'storage-vlans': 'single',
+    'vlan-placement': 'tagged-both',
+    'isl-storage-vlans': 'allowed',
+  },
   durationS: END,
   timeline: [{ at: T0, action: { kind: 'switch.fail', target: SW_A }, note: 'Switch A fails.' }],
   expect: [

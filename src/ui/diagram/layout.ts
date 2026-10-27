@@ -94,11 +94,15 @@ const union = (rects: readonly Rect[]): Rect | null => {
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 };
 
+/** Logical devices that hold cluster-wide state; shown in panels, not drawn on the diagram. */
+const LOGICAL_KINDS: ReadonlySet<string> = new Set(['nutanix-cluster']);
+
 export function childrenIndex(
   devices: Readonly<Record<string, DeviceView>>,
 ): Map<string | undefined, string[]> {
   const kids = new Map<string | undefined, string[]>();
   for (const d of Object.values(devices)) {
+    if (LOGICAL_KINDS.has(d.kind)) continue;
     const parent = d.parent !== undefined && devices[d.parent] ? d.parent : undefined;
     const list = kids.get(parent) ?? [];
     list.push(d.id);

@@ -62,5 +62,5 @@ export default defineScenario({
   narrative:
     "The primary controller CT0 crashes. CT1 sees the drive-quorum claim expire in about a second and promotes; the array serves no IO for a few seconds up to about 16 s. CT0's front-end ports disappear, so each CVM loses its two CT0 paths and continues on CT1's, all ANA Optimized. The pause is well under the guest SCSI timeout, so VMs only see latency.",
   cite: ['everpure-ha-crash', 'everpure-ana-faq', 'everpure-npiv', 'nvme-base-spec'],
-  status: 'todo',
+  status: 'active',
 });

@@ -71,5 +71,5 @@ export default defineScenario({
   narrative:
     'The primary controller stops completing IO but does not crash, so every VM stalls. After the 15 s IO delay timeout the primary gives back and the secondary promotes; the worst-case pause is the delay plus promotion, inside the 30 s failover objective. VMs resume without guest IO errors.',
   cite: ['everpure-ha-iodelay', 'everpure-ha-timing', 'everpure-ana-faq'],
-  status: 'todo',
+  status: 'active',
 });

@@ -77,5 +77,5 @@ export default defineScenario({
   narrative:
     'The vs0 bond mode is changed while compute-only VMs are running, and the change applies to every host because Nutanix does not support mixed bond modes. Watch storage traffic spread from one uplink to both under MAC pinning, then rehash per TCP session under LACP. In a real cluster, enabling LACP from Prism does a rolling host reboot, and an uplink update that takes over 30 s triggers HA.',
   cite: ['ntnx-ahv-admin-11.2', 'ovs-bonding'],
-  status: 'todo',
+  status: 'active',
 });

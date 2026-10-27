@@ -44,5 +44,5 @@ export default defineScenario({
   narrative:
     "The secondary controller CT1 crashes. There is no array-wide pause: CT0 keeps the drives and keeps serving. CT1's paths go silent and are declared lost one keep-alive timeout later; new IO moves to CT0's paths at once, and commands caught in flight are retried after the quiesce time.",
   cite: ['everpure-ha-secondary', 'everpure-ana-faq', 'nvme-base-spec'],
-  status: 'todo',
+  status: 'active',
 });

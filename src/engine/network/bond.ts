@@ -390,6 +390,29 @@ export class BondRuntime {
     return this.usableFor(vlan)[0] ?? null;
   }
 
+  /**
+   * Side-effect-free view of where a source MAC on `vlan` egresses (view field `pinning`):
+   * per-MAC modes only; `balance-tcp` hashes per flow, so it returns `null`. An SLB bucket that
+   * has not carried traffic yet is unpinned (`null`).
+   */
+  viewPin(mac: string, vlan: number): string | null {
+    switch (this.modeValue) {
+      case 'active-backup':
+        return this.activeFor(vlan);
+      case 'no-bond':
+        return this.eligibleList[0] ?? null;
+      case 'balance-slb': {
+        const b = slbBucket(mac, vlan);
+        const forced = this.forced.get(b);
+        if (forced !== undefined) return forced;
+        const m = this.buckets[b] ?? null;
+        return m !== null && this.usableFor(vlan).includes(m) ? m : null;
+      }
+      case 'balance-tcp':
+        return null;
+    }
+  }
+
   /** Egress member for a flow on frame VLAN `vlan`, or `null` if none is usable. */
   selectEgress(flow: FlowId, vlan: number, weight = 1): string | null {
     switch (this.modeValue) {
@@ -580,12 +603,12 @@ export class BondRuntime {
       net: 'bond',
       mode: this.modeValue,
       uplinks: this.uplinksValue.join(','),
-      members: this.cabledValue.join(','),
+      members: JSON.stringify(this.cabledValue),
       eligible: this.eligibleList.join(','),
       misconfig: this.misconfigValue,
     };
     if (this.group !== undefined) f.group = this.group;
-    if (this.usesLacp) f.lacpRate = this.rate;
+    f.lacpRate = this.usesLacp ? this.rate : null;
     if (this.modeValue === 'balance-slb' || this.modeValue === 'active-backup') {
       f.slbVlanAware = this.vlanAwareValue;
     }

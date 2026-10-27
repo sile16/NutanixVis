@@ -63,7 +63,7 @@ function variant(mode: Mode): ScenarioDef {
     ],
     narrative: `Compute-only node 1 loses one of its two NICs. It has no local CVM, so every storage IO from its VMs crosses this bond to a remote Stargate, and the bond is now in the storage path. ${HOW[mode]} Carrier loss is detected at once in every mode, so VMs see a brief IO blip and no HA event.`,
     cite: ['ntnx-ahv-admin-11.2', 'ntnx-community-co-nodes'],
-    status: 'todo',
+    status: 'active',
   });
 }
 

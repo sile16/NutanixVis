@@ -71,5 +71,5 @@ export default defineScenario({
   narrative:
     "A Purity upgrade reboots the secondary controller first; its Ethernet ports disappear while it reboots, so each CVM temporarily loses that controller's paths. Once it is back, the primary gives back and the upgraded controller promotes, with an IO pause of at most 15 s. Then the old primary reboots and returns as secondary.",
   cite: ['everpure-ha-planned', 'everpure-upgrade', 'everpure-npiv', 'everpure-ana-faq'],
-  status: 'todo',
+  status: 'active',
 });

@@ -59,5 +59,5 @@ export default defineScenario({
   narrative:
     'The host running the Acropolis leader fails, taking the HA coordinator with it. The surviving hosts elect a new leader at T+20, which is also when the 40 s disconnect timeout starts, so the HA timeline is unchanged: fence at T+60 and VM restarts by T+120.',
   cite: ['ntnx-bible-5b', 'ntnx-ahv-admin-11.2'],
-  status: 'todo',
+  status: 'active',
 });

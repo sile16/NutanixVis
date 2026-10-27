@@ -32,6 +32,7 @@ const KIND_TO_TYPE: Readonly<Record<string, NodeKind>> = {
   nic: 'nic',
   'fa-interface': 'iface',
   'cvm-interface': 'iface',
+  'host-interface': 'iface',
   vswitch: 'vswitch',
   disk: 'disk',
 };

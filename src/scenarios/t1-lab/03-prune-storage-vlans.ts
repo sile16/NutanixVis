@@ -81,7 +81,7 @@ function variant(withTimeout: boolean): ScenarioDef {
       ? "Both storage VLANs are pruned from node 1's switch port, so its CVM loses every array path while management stays up. The VMs on node 1 have a force-shutdown timeout set, so once it expires they are shut down and restarted on a node that still reaches the array."
       : "Both storage VLANs are pruned from node 1's switch port, so its CVM loses every array path while management stays up and the cluster still sees a healthy host. By default the node retries IO until the array responds, so its VMs stall in place with no HA event.",
     cite: ['ntnx-ncp-everpure-deploy-7.6', 'nvme-base-spec'],
-    status: 'todo',
+    status: 'active',
   });
 }
 

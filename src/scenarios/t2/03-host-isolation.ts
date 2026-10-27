@@ -68,5 +68,5 @@ export default defineScenario({
   narrative:
     'Node 2 loses its network but keeps running. Its Stargate cannot complete replicated writes and its CVM is in the Zookeeper minority, so VM writes fail. Each isolated VM terminates itself 45 s after its first failed IO, before the majority side fences the host at T+60 and restarts the VMs by T+120, so no VM ever runs twice.',
   cite: ['ntnx-bible-5b', 'ntnx-bible-4i', 'ntnx-ahv-admin-11.2'],
-  status: 'todo',
+  status: 'active',
 });

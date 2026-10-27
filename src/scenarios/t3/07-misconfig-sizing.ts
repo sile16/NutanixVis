@@ -21,7 +21,7 @@ function coRatio(): ScenarioDef {
     narrative:
       'Six compute-only nodes share the storage of three HCI nodes. Community sizing guidance is about two HCI nodes per CO node, starting with four HCI nodes, so the simulator raises an advisory. It is a warning, not a hard limit, and everything still runs.',
     cite: ['ntnx-community-co-nodes-blog', 'ntnx-community-co-nodes'],
-    status: 'todo',
+    status: 'active',
   });
 }
 
@@ -60,7 +60,7 @@ function tooFewCvmNodes(): ScenarioDef {
     narrative:
       'The cluster has exactly three storage-only nodes, the minimum for FT1, and needs at least three functioning nodes at all times. When one fails, only two CVM-bearing nodes remain, so the cluster cannot restore its configured fault tolerance however long Curator runs. Size CVM nodes for the FT you need plus a spare.',
     cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-4i'],
-    status: 'todo',
+    status: 'active',
   });
 }
 

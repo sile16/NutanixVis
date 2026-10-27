@@ -39,6 +39,7 @@ function variant(mode: Mode, placement: Placement): ScenarioDef {
     topology: T1.topology,
     options: {
       'vlan-placement': placement,
+      ...(placement === 'tagged-both' ? { 'isl-storage-vlans': 'allowed' } : {}),
       'vs1-bond-mode': mode,
       ...(mode === 'balance-tcp' ? { mlag: true } : {}),
     },

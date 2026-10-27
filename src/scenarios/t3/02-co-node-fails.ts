@@ -60,7 +60,7 @@ function variant(mixed: boolean): ScenarioDef {
       ? 'Compute-only node 1 fails. It holds no data and runs no CVM, so storage is untouched and nothing is rebuilt. AHV HA restarts its VMs by T+120 on the other compute-only node or on an HCI node.'
       : 'Compute-only node 1 fails. It holds no data and runs no CVM, so storage is untouched and nothing is rebuilt. AHV HA restarts its VMs by T+120 on another compute-only node; storage-only nodes are never restart targets.',
     cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-5b', 'ntnx-community-co-nodes-blog'],
-    status: 'todo',
+    status: 'active',
   });
 }
 

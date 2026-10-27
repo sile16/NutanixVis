@@ -58,5 +58,5 @@ export default defineScenario({
   narrative:
     'Compute-only node 1 loses both uplinks. Its VMs reach storage only over the network, so their IO stops immediately, unlike an HCI VM, which could still read from its local CVM. The cluster then treats the host as isolated: the VMs terminate themselves 45 s after their first failed IO, the host is fenced, and HA restarts them on another compute-only node.',
   cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-5b', 'ntnx-community-co-nodes'],
-  status: 'todo',
+  status: 'active',
 });

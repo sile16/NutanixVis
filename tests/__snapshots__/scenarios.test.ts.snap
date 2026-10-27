@@ -1,0 +1,567 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`scenario acceptance > t1-03-fa-primary-crash: T1: FlashArray primary controller crashes 1`] = `
+[
+  "11	action.fail@fa.ct0",
+  "11	device.failed@fa.ct0",
+  "11	net.link.down",
+  "11	net.link.down",
+  "11	net.link.down",
+  "12	fa.claim.expired@fa.ct1",
+  "12	fa.promotion.start@fa.ct1",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-2.cvm",
+  "15	nvme.path.lost@node-2.cvm",
+  "15	nvme.path.lost@node-3.cvm",
+  "15	nvme.path.lost@node-3.cvm",
+  "15	nvme.path.lost@node-4.cvm",
+  "15	nvme.path.lost@node-4.cvm",
+  "27	fa.promotion.complete@fa.ct1",
+  "27	net.endpoint.moved@fa",
+]
+`;
+
+exports[`scenario acceptance > t1-04-fa-secondary-crash: T1: FlashArray secondary controller crashes 1`] = `
+[
+  "11	action.fail@fa.ct1",
+  "11	device.failed@fa.ct1",
+  "11	net.link.down",
+  "11	net.link.down",
+  "11	net.link.down",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-2.cvm",
+  "15	nvme.path.lost@node-2.cvm",
+  "15	nvme.path.lost@node-3.cvm",
+  "15	nvme.path.lost@node-3.cvm",
+  "15	nvme.path.lost@node-4.cvm",
+  "15	nvme.path.lost@node-4.cvm",
+]
+`;
+
+exports[`scenario acceptance > t1-05-purity-ndu: T1: Purity non-disruptive upgrade 1`] = `
+[
+  "11	action.fa.ndu@fa",
+  "11	fa.ndu.start@fa",
+  "11	fa.controller.rebooting@fa.ct1",
+  "11	nvme.path.lost@node-1.cvm",
+  "11	nvme.path.lost@node-1.cvm",
+  "11	nvme.path.lost@node-2.cvm",
+  "11	nvme.path.lost@node-2.cvm",
+  "11	nvme.path.lost@node-3.cvm",
+  "11	nvme.path.lost@node-3.cvm",
+  "11	nvme.path.lost@node-4.cvm",
+  "11	nvme.path.lost@node-4.cvm",
+  "311	fa.controller.online@fa.ct1",
+  "311	nvme.path.restored@node-1.cvm",
+  "311	nvme.path.restored@node-1.cvm",
+  "311	nvme.path.restored@node-2.cvm",
+  "311	nvme.path.restored@node-2.cvm",
+  "311	nvme.path.restored@node-3.cvm",
+  "311	nvme.path.restored@node-3.cvm",
+  "311	nvme.path.restored@node-4.cvm",
+  "311	nvme.path.restored@node-4.cvm",
+  "312	fa.giveback@fa.ct0",
+  "312	fa.promotion.start@fa.ct1",
+  "327	fa.promotion.complete@fa.ct1",
+  "327	net.endpoint.moved@fa",
+  "328	fa.controller.rebooting@fa.ct0",
+  "328	nvme.path.lost@node-1.cvm",
+  "328	nvme.path.lost@node-1.cvm",
+  "328	nvme.path.lost@node-2.cvm",
+  "328	nvme.path.lost@node-2.cvm",
+  "328	nvme.path.lost@node-3.cvm",
+  "328	nvme.path.lost@node-3.cvm",
+  "328	nvme.path.lost@node-4.cvm",
+  "328	nvme.path.lost@node-4.cvm",
+  "628	fa.controller.online@fa.ct0",
+  "628	fa.ndu.complete@fa",
+  "628	nvme.path.restored@node-1.cvm",
+  "628	nvme.path.restored@node-1.cvm",
+  "628	nvme.path.restored@node-2.cvm",
+  "628	nvme.path.restored@node-2.cvm",
+  "628	nvme.path.restored@node-3.cvm",
+  "628	nvme.path.restored@node-3.cvm",
+  "628	nvme.path.restored@node-4.cvm",
+  "628	nvme.path.restored@node-4.cvm",
+]
+`;
+
+exports[`scenario acceptance > t1-06-fa-io-stall-giveback: T1: FlashArray primary IO stall triggers a giveback 1`] = `
+[
+  "11	action.fa.io-stall@fa.ct0",
+  "26	fa.io-delay.timeout@fa.ct0",
+  "26	fa.giveback@fa.ct0",
+  "26	fa.promotion.start@fa.ct1",
+  "41	fa.promotion.complete@fa.ct1",
+  "41	net.endpoint.moved@fa",
+  "41	nvme.io.timeout@node-1.cvm",
+  "41	nvme.io.timeout@node-1.cvm",
+  "41	nvme.io.timeout@node-1.cvm",
+  "41	nvme.io.timeout@node-2.cvm",
+  "41	nvme.io.timeout@node-2.cvm",
+  "41	nvme.io.timeout@node-2.cvm",
+  "41	nvme.io.timeout@node-3.cvm",
+  "41	nvme.io.timeout@node-3.cvm",
+  "41	nvme.io.timeout@node-3.cvm",
+  "41	nvme.io.timeout@node-4.cvm",
+  "41	nvme.io.timeout@node-4.cvm",
+  "41	nvme.io.timeout@node-4.cvm",
+]
+`;
+
+exports[`scenario acceptance > t1-07-host-power-loss: T1: an AHV host loses power; HA restarts its VMs by T+120 1`] = `
+[
+  "11	action.power-off@node-2",
+  "11	device.failed@node-2",
+  "11	net.link.down",
+  "11	net.link.down",
+  "11	net.link.down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-2.vs0",
+  "11	net.bond.member-down@node-2.vs0",
+  "11	net.bond.down@node-2.vs0",
+  "11	net.bond.member-down@node-2.vs1",
+  "11	net.bond.member-down@node-2.vs1",
+  "11	net.bond.down@node-2.vs1",
+  "11	vm.crashed@node-2.vm-1",
+  "11	vm.crashed@node-2.vm-2",
+  "31	ha.host.disconnected@node-2",
+  "71	ha.host.fenced@node-2",
+  "131	ha.vm.restarted@node-2.vm-1",
+  "131	ha.vm.restarted@node-2.vm-2",
+]
+`;
+
+exports[`scenario acceptance > t1-09-node-storage-uplinks-lost: T1: a node loses both storage uplinks but keeps vs0 1`] = `
+[
+  "11	action.fail@node-1.eth1",
+  "11	device.failed@node-1.eth1",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs1",
+  "11	action.fail@node-1.eth3",
+  "11	device.failed@node-1.eth3",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs1",
+  "11	net.bond.down@node-1.vs1",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.all-paths.lost@node-1.cvm",
+  "15	zk.leader.elected@node-2.cvm",
+  "72	vm.io.guest-timeout@node-1.vm-1",
+  "72	vm.io.guest-timeout@node-1.vm-2",
+  "191	action.recover@node-1.eth1",
+  "191	device.recovered@node-1.eth1",
+  "191	net.link.up",
+  "191	net.bond.member-up@node-1.vs1",
+  "191	action.recover@node-1.eth3",
+  "191	device.recovered@node-1.eth3",
+  "191	net.link.up",
+  "191	net.bond.member-up@node-1.vs1",
+  "195	nvme.path.restored@node-1.cvm",
+  "195	nvme.path.restored@node-1.cvm",
+  "195	nvme.path.restored@node-1.cvm",
+  "195	nvme.path.restored@node-1.cvm",
+]
+`;
+
+exports[`scenario acceptance > t1-13-fa-mgmt-unreachable: T1: FlashArray management API unreachable 1`] = `
+[
+  "11	action.fa.interface.disable@fa.vir0",
+  "16	action.vm.snapshot@node-1.vm-1",
+  "16	mgmt.task.failed@node-1.vm-1",
+  "71	action.fa.interface.enable@fa.vir0",
+  "76	action.vm.snapshot@node-1.vm-1",
+  "76	mgmt.task.succeeded@node-1.vm-1",
+]
+`;
+
+exports[`scenario acceptance > t1-17-lacp-no-mlag: T1 misconfiguration: LACP across two switches without MLAG 1`] = `
+[
+  "0	net.bond.lacp-no-mlag@node-1.vs1",
+  "0	net.bond.lacp-no-mlag@node-2.vs1",
+  "0	net.bond.lacp-no-mlag@node-3.vs1",
+  "0	net.bond.lacp-no-mlag@node-4.vs1",
+  "11	action.fail@node-1.eth1",
+  "11	device.failed@node-1.eth1",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs1",
+  "11	net.bond.member-up@node-1.vs1",
+]
+`;
+
+exports[`scenario acceptance > t1-19-flow-control-enabled: T1 misconfiguration: PFC enabled on the storage switches 1`] = `
+[
+  "1	switch.flow-control.unsupported@sw-a",
+  "1	switch.flow-control.unsupported@sw-b",
+]
+`;
+
+exports[`scenario acceptance > t1lab-01-disable-one-fa-ip: T1-lab: disable one FlashArray data IP 1`] = `
+[
+  "11	action.fa.interface.disable@fa.ct0.eth10.v10",
+  "11	nvme.path.lost@node-1.cvm",
+  "13	nvme.path.lost@node-2.cvm",
+  "13	nvme.path.lost@node-3.cvm",
+  "131	action.fa.interface.enable@fa.ct0.eth10.v10",
+  "131	nvme.path.restored@node-1.cvm",
+  "133	nvme.path.restored@node-2.cvm",
+  "133	nvme.path.restored@node-3.cvm",
+]
+`;
+
+exports[`scenario acceptance > t1lab-03-prune-storage-vlans-default: T1-lab: prune the storage VLANs on one node's switch port (default path-loss handling) 1`] = `
+[
+  "11	action.switch.port.prune-vlan",
+  "11	action.switch.port.prune-vlan",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.all-paths.lost@node-1.cvm",
+  "15	zk.leader.elected@node-2.cvm",
+  "72	vm.io.guest-timeout@node-1.vm-1",
+  "72	vm.io.guest-timeout@node-1.vm-2",
+]
+`;
+
+exports[`scenario acceptance > t1lab-03-prune-storage-vlans-force-shutdown: T1-lab: prune the storage VLANs on one node's switch port (per-VM force-shutdown set) 1`] = `
+[
+  "11	action.switch.port.prune-vlan",
+  "11	action.switch.port.prune-vlan",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.path.lost@node-1.cvm",
+  "15	nvme.all-paths.lost@node-1.cvm",
+  "15	zk.leader.elected@node-2.cvm",
+  "71	vm.force-shutdown@node-1.vm-1",
+  "71	vm.force-shutdown@node-1.vm-2",
+  "72	ha.vm.restarted@node-1.vm-1",
+  "72	ha.vm.restarted@node-1.vm-2",
+]
+`;
+
+exports[`scenario acceptance > t2-03-host-isolation: T2: host network isolation; isolated VMs self-terminate at 45 s 1`] = `
+[
+  "11	action.host.isolate@node-2",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-2.vs0",
+  "11	net.bond.failover@node-2.vs0",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-2.vs0",
+  "11	net.bond.down@node-2.vs0",
+  "31	ha.host.disconnected@node-2",
+  "57	ha.vm.self-terminated@node-2.vm-1",
+  "57	ha.vm.self-terminated@node-2.vm-2",
+  "71	ha.host.fenced@node-2",
+  "71	curator.rebuild.start@node-2.cvm",
+  "131	ha.vm.restarted@node-2.vm-1",
+  "131	ha.vm.restarted@node-2.vm-2",
+]
+`;
+
+exports[`scenario acceptance > t2-04-acropolis-leader-host-fails: T2: the host running the Acropolis leader fails 1`] = `
+[
+  "11	action.power-off@node-1",
+  "11	device.failed@node-1",
+  "11	net.link.down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs0",
+  "11	net.bond.member-down@node-1.vs0",
+  "11	net.bond.down@node-1.vs0",
+  "11	vm.crashed@node-1.vm-1",
+  "11	vm.crashed@node-1.vm-2",
+  "11	zk.leader.elected@node-2.cvm",
+  "11	ha.leader.lost@node-1",
+  "11	curator.rebuild.start@node-1.cvm",
+  "31	ha.leader.elected@node-2",
+  "32	ha.host.disconnected@node-1",
+  "71	ha.host.fenced@node-1",
+  "131	ha.vm.restarted@node-1.vm-1",
+  "131	ha.vm.restarted@node-1.vm-2",
+]
+`;
+
+exports[`scenario acceptance > t2-07-disk-failure: T2: a single disk fails 1`] = `
+[
+  "11	action.disk.fail@node-1.disk-3",
+  "11	device.failed@node-1.disk-3",
+  "11	disk.offline@node-1.disk-3",
+  "11	curator.rebuild.start@node-1.cvm",
+  "146	curator.rebuild.complete@node-1.cvm",
+]
+`;
+
+exports[`scenario acceptance > t2-07-disk-flapping: T2: a disk goes offline 3 times within an hour 1`] = `
+[
+  "11	action.disk.fail@node-1.disk-3",
+  "11	device.failed@node-1.disk-3",
+  "11	disk.offline@node-1.disk-3",
+  "11	curator.rebuild.start@node-1.cvm",
+  "71	action.recover@node-1.disk-3",
+  "71	device.recovered@node-1.disk-3",
+  "71	disk.smart-check@node-1.disk-3",
+  "81	disk.online@node-1.disk-3",
+  "82	curator.rebuild.complete@node-1.cvm",
+  "131	action.disk.fail@node-1.disk-3",
+  "131	device.failed@node-1.disk-3",
+  "131	disk.offline@node-1.disk-3",
+  "131	curator.rebuild.start@node-1.cvm",
+  "191	action.recover@node-1.disk-3",
+  "191	device.recovered@node-1.disk-3",
+  "191	disk.smart-check@node-1.disk-3",
+  "201	disk.online@node-1.disk-3",
+  "202	curator.rebuild.complete@node-1.cvm",
+  "251	action.disk.fail@node-1.disk-3",
+  "251	device.failed@node-1.disk-3",
+  "251	disk.offline@node-1.disk-3",
+  "251	curator.rebuild.start@node-1.cvm",
+  "296	curator.rebuild.complete@node-1.cvm",
+  "311	action.recover@node-1.disk-3",
+  "311	device.recovered@node-1.disk-3",
+  "311	disk.kept-offline@node-1.disk-3",
+]
+`;
+
+exports[`scenario acceptance > t2-09-ft2-two-concurrent-failures: T2 FT2 (RF3, 5 nodes): two nodes fail at once 1`] = `
+[
+  "11	action.power-off@node-1",
+  "11	device.failed@node-1",
+  "11	net.link.down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs0",
+  "11	net.bond.member-down@node-1.vs0",
+  "11	net.bond.down@node-1.vs0",
+  "11	action.power-off@node-2",
+  "11	device.failed@node-2",
+  "11	net.link.down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-2.vs0",
+  "11	net.bond.member-down@node-2.vs0",
+  "11	net.bond.down@node-2.vs0",
+  "11	vm.crashed@node-1.vm-1",
+  "11	vm.crashed@node-1.vm-2",
+  "11	vm.crashed@node-2.vm-1",
+  "11	vm.crashed@node-2.vm-2",
+  "11	zk.leader.elected@node-3.cvm",
+  "11	ha.leader.lost@node-1",
+  "11	curator.rebuild.start@node-1.cvm",
+  "11	curator.rebuild.start@node-2.cvm",
+  "11	cluster.ft.insufficient-nodes@cluster",
+  "31	ha.leader.elected@node-3",
+  "32	ha.host.disconnected@node-1",
+  "32	ha.host.disconnected@node-2",
+  "71	ha.host.fenced@node-1",
+  "71	ha.host.fenced@node-2",
+  "131	ha.vm.restarted@node-1.vm-1",
+  "131	ha.vm.restarted@node-1.vm-2",
+  "131	ha.vm.restarted@node-2.vm-1",
+  "131	ha.vm.restarted@node-2.vm-2",
+]
+`;
+
+exports[`scenario acceptance > t2-11-partition-3-2: T2: a 3/2 network partition on a 5-node cluster 1`] = `
+[
+  "11	action.link-down",
+  "11	net.link.down",
+  "11	action.link-down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs0",
+  "11	action.link-down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-2.vs0",
+  "11	action.link-down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-3.vs0",
+  "11	action.link-down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-4.vs0",
+  "11	net.bond.failover@node-4.vs0",
+  "11	action.link-down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-5.vs0",
+  "11	net.bond.failover@node-5.vs0",
+  "31	ha.host.disconnected@node-4",
+  "31	ha.host.disconnected@node-5",
+  "57	ha.vm.self-terminated@node-4.vm-1",
+  "57	ha.vm.self-terminated@node-4.vm-2",
+  "57	ha.vm.self-terminated@node-5.vm-1",
+  "57	ha.vm.self-terminated@node-5.vm-2",
+  "71	ha.host.fenced@node-4",
+  "71	ha.host.fenced@node-5",
+  "71	curator.rebuild.start@node-4.cvm",
+  "71	curator.rebuild.start@node-5.cvm",
+  "131	ha.vm.restarted@node-4.vm-1",
+  "131	ha.vm.restarted@node-4.vm-2",
+  "131	ha.vm.restarted@node-5.vm-1",
+  "131	ha.vm.restarted@node-5.vm-2",
+]
+`;
+
+exports[`scenario acceptance > t3-01-so-node-fails: T3 CO+SO: a storage-only node fails 1`] = `
+[
+  "11	action.power-off@node-4",
+  "11	device.failed@node-4",
+  "11	net.link.down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-4.vs0",
+  "11	net.bond.member-down@node-4.vs0",
+  "11	net.bond.down@node-4.vs0",
+  "11	zk.leader.elected@node-5.cvm",
+  "11	ha.leader.lost@node-4",
+  "11	curator.rebuild.start@node-4.cvm",
+  "12	redirector.unhealthy@node-1",
+  "12	redirector.redirect@node-1",
+  "12	redirector.unhealthy@node-3",
+  "12	redirector.redirect@node-3",
+  "31	ha.leader.elected@node-5",
+  "32	ha.host.disconnected@node-4",
+  "71	ha.host.fenced@node-4",
+]
+`;
+
+exports[`scenario acceptance > t3-02-co-node-fails-co-hci: T3 CO+HCI: a compute-only node fails 1`] = `
+[
+  "11	action.power-off@node-1",
+  "11	device.failed@node-1",
+  "11	net.link.down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs0",
+  "11	net.bond.member-down@node-1.vs0",
+  "11	net.bond.down@node-1.vs0",
+  "11	vm.crashed@node-1.vm-1",
+  "11	vm.crashed@node-1.vm-2",
+  "31	ha.host.disconnected@node-1",
+  "71	ha.host.fenced@node-1",
+  "131	ha.vm.restarted@node-1.vm-1",
+  "131	ha.vm.restarted@node-1.vm-2",
+]
+`;
+
+exports[`scenario acceptance > t3-02-co-node-fails-co-so: T3 CO+SO: a compute-only node fails 1`] = `
+[
+  "11	action.power-off@node-1",
+  "11	device.failed@node-1",
+  "11	net.link.down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs0",
+  "11	net.bond.member-down@node-1.vs0",
+  "11	net.bond.down@node-1.vs0",
+  "11	vm.crashed@node-1.vm-1",
+  "11	vm.crashed@node-1.vm-2",
+  "31	ha.host.disconnected@node-1",
+  "71	ha.host.fenced@node-1",
+  "131	ha.vm.restarted@node-1.vm-1",
+  "131	ha.vm.restarted@node-1.vm-2",
+]
+`;
+
+exports[`scenario acceptance > t3-03-co-nic-down-active-backup: T3 CO+SO: a CO node loses one NIC (active-backup) 1`] = `
+[
+  "11	action.fail@node-1.eth0",
+  "11	device.failed@node-1.eth0",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs0",
+  "11	net.bond.failover@node-1.vs0",
+]
+`;
+
+exports[`scenario acceptance > t3-03-co-nic-down-balance-slb: T3 CO+SO: a CO node loses one NIC (balance-slb) 1`] = `
+[
+  "11	action.fail@node-1.eth0",
+  "11	device.failed@node-1.eth0",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs0",
+]
+`;
+
+exports[`scenario acceptance > t3-03-co-nic-down-balance-tcp: T3 CO+SO: a CO node loses one NIC (balance-tcp) 1`] = `
+[
+  "11	action.fail@node-1.eth0",
+  "11	device.failed@node-1.eth0",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs0",
+]
+`;
+
+exports[`scenario acceptance > t3-04-co-all-uplinks-lost: T3 CO+SO: a CO node loses all uplinks 1`] = `
+[
+  "11	action.fail@node-1.eth0",
+  "11	device.failed@node-1.eth0",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs0",
+  "11	net.bond.failover@node-1.vs0",
+  "11	action.fail@node-1.eth1",
+  "11	device.failed@node-1.eth1",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-1.vs0",
+  "11	net.bond.down@node-1.vs0",
+  "12	redirector.unhealthy@node-1",
+  "12	redirector.unhealthy@node-1",
+  "31	ha.host.disconnected@node-1",
+  "56	ha.vm.self-terminated@node-1.vm-1",
+  "56	ha.vm.self-terminated@node-1.vm-2",
+  "71	ha.host.fenced@node-1",
+  "131	ha.vm.restarted@node-1.vm-1",
+  "131	ha.vm.restarted@node-1.vm-2",
+]
+`;
+
+exports[`scenario acceptance > t3-06-bond-mode-change-under-load: T3 CO+SO: change the bond mode mid-scenario under load 1`] = `
+[
+  "11	action.vswitch.set-bond-mode@node-1.vs0",
+  "11	net.bond.mode-changed@node-1.vs0",
+  "11	net.bond.mode-changed@node-2.vs0",
+  "11	net.bond.mode-changed@node-3.vs0",
+  "11	net.bond.mode-changed@node-4.vs0",
+  "11	net.bond.mode-changed@node-5.vs0",
+  "11	net.bond.mode-changed@node-6.vs0",
+  "11	net.bond.mode-changed@node-7.vs0",
+  "41	action.vswitch.set-bond-mode@node-1.vs0",
+  "41	net.bond.mode-changed@node-1.vs0",
+  "41	net.bond.mode-changed@node-2.vs0",
+  "41	net.bond.mode-changed@node-3.vs0",
+  "41	net.bond.mode-changed@node-4.vs0",
+  "41	net.bond.mode-changed@node-5.vs0",
+  "41	net.bond.mode-changed@node-6.vs0",
+  "41	net.bond.mode-changed@node-7.vs0",
+]
+`;
+
+exports[`scenario acceptance > t3-07-co-ratio-advisory: T3 CO+HCI misconfiguration: CO nodes outnumber HCI nodes 2:1 1`] = `
+[
+  "1	cluster.advisory.co-ratio@cluster",
+]
+`;
+
+exports[`scenario acceptance > t3-07-too-few-cvm-nodes: T3 CO+SO misconfiguration: only three storage-only nodes 1`] = `
+[
+  "11	action.power-off@node-6",
+  "11	device.failed@node-6",
+  "11	net.link.down",
+  "11	net.link.down",
+  "11	net.bond.member-down@node-6.vs0",
+  "11	net.bond.member-down@node-6.vs0",
+  "11	net.bond.down@node-6.vs0",
+  "11	curator.rebuild.start@node-6.cvm",
+  "11	cluster.ft.insufficient-nodes@cluster",
+  "12	redirector.unhealthy@node-2",
+  "12	redirector.redirect@node-2",
+  "12	redirector.unhealthy@node-3",
+  "12	redirector.redirect@node-3",
+  "31	ha.host.disconnected@node-6",
+  "71	ha.host.fenced@node-6",
+]
+`;

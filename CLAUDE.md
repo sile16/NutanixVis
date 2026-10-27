@@ -18,6 +18,7 @@ pnpm is pinned via `packageManager` (pnpm 12). If `pnpm` isn't on PATH, use `npx
 - `pnpm typecheck`: `tsc --noEmit` (TypeScript 7 native compiler)
 - `pnpm lint` / `pnpm fix`: Biome lint and format check, or auto-fix. Markdown and `docs/` are excluded.
 - `pnpm e2e`: Playwright smoke tests. Run `pnpm exec playwright install chromium` once first.
+- `SCENARIO_PROBE=out.json pnpm vitest run tests/scenario-probe.test.ts`: run every scenario (including `todo`) against the real models and write a pass/fail report
 - `pnpm check:public`: fails if tracked files reference internal sources or vendor documents
 - `pnpm verify`: check:public, lint, typecheck, test and build, all in sequence (`pnpm ci` is a pnpm built-in, so it is not ours)
 

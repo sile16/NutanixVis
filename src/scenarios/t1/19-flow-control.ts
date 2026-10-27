@@ -23,5 +23,5 @@ export default defineScenario({
   narrative:
     'Priority Flow Control is enabled on both storage switches. Everpure does not support PFC or Global Pause with FlashArray NVMe/TCP and asks for both to be disabled, so the simulator flags the configuration.',
   cite: ['everpure-nutanix-net-bp'],
-  status: 'todo',
+  status: 'active',
 });

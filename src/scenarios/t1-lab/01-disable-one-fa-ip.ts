@@ -48,5 +48,5 @@ export default defineScenario({
   narrative:
     "One of the array's data IPs is disabled. Every CVM's path to that IP goes silent and is declared lost after the keep-alive timeout, while IO carries on over the other paths, which are all ANA Optimized. When the IP comes back, the next reconnect attempt restores the path.",
   cite: ['nvme-base-spec', 'everpure-ana-faq', 'everpure-ha-scenarios'],
-  status: 'todo',
+  status: 'active',
 });

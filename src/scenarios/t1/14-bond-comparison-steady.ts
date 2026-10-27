@@ -68,6 +68,8 @@ function variant(mode: Mode, policy: Policy): ScenarioDef {
     // pinning carries both VLANs, so the comparison is made on the trunked fabric.
     options: {
       'vlan-placement': 'tagged-both',
+      // The bond can only save a path if the ISL carries the storage VLANs.
+      'isl-storage-vlans': 'allowed',
       'vs1-bond-mode': mode,
       'multipath-policy': policy,
       ...(mode === 'balance-tcp' ? { mlag: true } : {}),

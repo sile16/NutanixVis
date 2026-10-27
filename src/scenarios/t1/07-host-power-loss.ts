@@ -75,5 +75,5 @@ export default defineScenario({
   narrative:
     "Node 2 loses power. The Acropolis leader stops getting heartbeats; at T+20 the 40 s timeout starts, at T+60 Stargates fence the host's IO, and by T+120 its VMs restart on the surviving nodes. The VM data lives on the array, so nothing is rebuilt and the 4-node cluster can still ride out one more node failure.",
   cite: ['ntnx-bible-5b', 'ntnx-ahv-admin-11.2', 'ntnx-ncp-everpure-deploy-7.6'],
-  status: 'todo',
+  status: 'active',
 });

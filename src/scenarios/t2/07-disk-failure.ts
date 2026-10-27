@@ -56,7 +56,7 @@ function hardFailure(): ScenarioDef {
     narrative:
       "One SSD on node 1 fails. Stargate takes it offline and reads are served from the other replicas, so VMs see no IO errors and there is no HA event. Curator starts re-replicating the disk's data immediately.",
     cite: ['ntnx-bible-4i', 'ntnx-bible-4g'],
-    status: 'todo',
+    status: 'active',
   });
 }
 
@@ -94,7 +94,7 @@ function flapping(): ScenarioDef {
     narrative:
       'A disk keeps dropping offline and coming back. Each time, Hades runs a SMART check and returns it to service if it passes, but a disk that goes offline three times within an hour stays offline. VM IO is served from replicas throughout.',
     cite: ['ntnx-bible-4i'],
-    status: 'todo',
+    status: 'active',
   });
 }
 

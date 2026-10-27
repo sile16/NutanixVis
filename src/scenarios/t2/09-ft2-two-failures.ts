@@ -55,5 +55,5 @@ export default defineScenario({
   narrative:
     'On an FT2 cluster data has three copies, metadata five, and Zookeeper runs on five nodes. Two nodes fail at once: every extent group and metadata range still has a live majority, so storage stays up, Curator starts rebuilding, and HA restarts the VMs from both nodes on the remaining three.',
   cite: ['ntnx-bible-4i', 'ntnx-bible-5b'],
-  status: 'todo',
+  status: 'active',
 });

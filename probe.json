@@ -1,0 +1,180 @@
+{
+  "t1-01-storage-nic-strict-ab": [
+    "VMs keep running (latency outliers only) @12: predicate returned false",
+    "vs1 on node 1 moves its vNICs to eth3 on carrier loss @13: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":\"node-1.eth3\"}"
+  ],
+  "t1-01-storage-nic-tagged-both": [
+    "VMs keep running (latency outliers only) @12: predicate returned false",
+    "vs1 on node 1 moves its vNICs to eth3 on carrier loss @13: predicate returned false",
+    "node 1 VM IO blip is at most a couple of ticks @14: predicate returned false",
+    "node 1 CVM never loses an NVMe path @15: predicate returned false",
+    "no nvme.path.lost @78: predicate returned false"
+  ],
+  "t1-02-switch-a-fails": [
+    "every vs1 bond is down to its Switch B member @13: predicate returned false",
+    "every CVM loses exactly the paths to FA ports on Switch A @18: predicate returned false"
+  ],
+  "t1-03-fa-primary-crash": "PASS",
+  "t1-04-fa-secondary-crash": "PASS",
+  "t1-05-purity-ndu": "PASS",
+  "t1-06-fa-io-stall-giveback": "PASS",
+  "t1-07-host-power-loss": "PASS",
+  "t1-08-cvm-fails": [
+    "failback only after the local Stargate is stable for 30 s @310: predicate returned false",
+    "node 1 VMs are served locally again @310: predicate returned false"
+  ],
+  "t1-09-node-storage-uplinks-lost": "PASS",
+  "t1-10-both-switches": [
+    "every CVM has lost every NVMe path @18: predicate returned false",
+    "cluster services stop (their volumes are on the array) @130: predicate returned false",
+    "no VM is serving IO during the outage @130: predicate returned false"
+  ],
+  "t1-10-array-lost": "PASS",
+  "t1-11-single-vlan-switch-fail": [
+    "steady state: every CVM has all NVMe paths live @10: predicate returned false",
+    "every CVM loses the paths to FA ports on Switch A @18: predicate returned false"
+  ],
+  "t1-12-mtu-mismatch": ["the mismatch is reported @15: predicate returned false"],
+  "t1-13-fa-mgmt-unreachable": "PASS",
+  "t1-14-bond-steady-active-backup-active-active": [
+    "steady state: every CVM has all NVMe paths live @10: predicate returned false",
+    "every path rides the single active uplink @20: predicate returned false"
+  ],
+  "t1-14-bond-steady-active-backup-active-passive": [
+    "steady state: all VMs running @10: predicate returned false",
+    "steady state: every CVM has all NVMe paths live @10: predicate returned false",
+    "every path rides the single active uplink @20: predicate returned false",
+    "all VMs running @20: predicate returned false"
+  ],
+  "t1-14-bond-steady-balance-slb-active-active": [
+    "IO uses every live path, split by vNIC: uplinks are exactly the vNICs’ pinned members @20: predicate returned false"
+  ],
+  "t1-14-bond-steady-balance-slb-active-passive": [
+    "one active path, pinned to one uplink @20: predicate returned false"
+  ],
+  "t1-14-bond-steady-balance-tcp-active-active": [
+    "steady state: all VMs running @10: predicate returned false",
+    "steady state: every CVM has all NVMe paths live @10: predicate returned false",
+    "vs1 runs balance-tcp @10: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":null}",
+    "LACP negotiated across the MLAG pair @10: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":null}",
+    "IO uses every live path and the paths' connections hash across both uplinks @20: predicate returned false",
+    "all VMs running @20: predicate returned false"
+  ],
+  "t1-14-bond-steady-balance-tcp-active-passive": [
+    "steady state: all VMs running @10: predicate returned false",
+    "steady state: every CVM has all NVMe paths live @10: predicate returned false",
+    "vs1 runs balance-tcp @10: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":null}",
+    "LACP negotiated across the MLAG pair @10: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":null}",
+    "one active path; its queues' TCP connections may hash to both uplinks @20: predicate returned false",
+    "all VMs running @20: predicate returned false"
+  ],
+  "t1-15-bond-nic-down-active-backup-tagged-both": [
+    "steady state: every CVM has all NVMe paths live @10: predicate returned false",
+    "no NVMe path is lost: the bond keeps both VLANs reachable @10: predicate returned false",
+    "the blip is at most a couple of ticks @10: predicate returned false",
+    "VMs keep running @12: predicate returned false",
+    "no nvme.path.lost @78: predicate returned false"
+  ],
+  "t1-15-bond-nic-down-balance-slb-tagged-both": [
+    "VMs keep running @12: predicate returned false",
+    "the blip is at most a couple of ticks @14: predicate returned false",
+    "no NVMe path is lost: the bond keeps both VLANs reachable @15: predicate returned false",
+    "no nvme.path.lost @78: predicate returned false"
+  ],
+  "t1-15-bond-nic-down-balance-tcp-tagged-both": [
+    "steady state: all VMs running @10: predicate returned false",
+    "steady state: every CVM has all NVMe paths live @10: predicate returned false",
+    "VMs keep running @10: predicate returned false",
+    "no NVMe path is lost: the bond keeps both VLANs reachable @10: predicate returned false",
+    "the blip is at most a couple of ticks @10: predicate returned false",
+    "node 1 vs1 carries everything on eth3 @13: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":null}",
+    "no nvme.path.lost @78: predicate returned false"
+  ],
+  "t1-15-bond-nic-down-balance-slb-strict-ab": [
+    "VMs keep running @12: predicate returned false",
+    "node 1 vs1 carries everything on eth3 @13: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":\"node-1.eth3\"}"
+  ],
+  "t1-16-slb-rebalance-strict-ab": [
+    "VMs keep running on the VLAN-B paths @12: predicate returned false"
+  ],
+  "t1-17-lacp-no-mlag": [
+    "only one member per bond is aggregated @10: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":null}",
+    "storage still works over the single aggregated link @10: predicate returned false",
+    "node 1 still has one working member after eth1 fails @16: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":null}",
+    "all VMs running @16: predicate returned false"
+  ],
+  "t1-18-lacp-fast-hung-switch": [
+    "steady state: all VMs running @10: predicate returned false",
+    "steady state: every CVM has all NVMe paths live @10: predicate returned false",
+    "bonds still count the Switch A member as up @11: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":null}",
+    "LACP detaches the Switch A member @16: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":null}",
+    "in the end only the paths to FA ports on Switch A are lost @38: predicate returned false",
+    "all VMs are running @38: predicate returned false",
+    "no command waits longer than detection or KATO + CQT @39: predicate returned false"
+  ],
+  "t1-18-lacp-slow-hung-switch": [
+    "steady state: all VMs running @10: predicate returned false",
+    "steady state: every CVM has all NVMe paths live @10: predicate returned false",
+    "bonds still count the Switch A member as up @98: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":null}",
+    "LACP detaches the Switch A member @103: threw: node-1.vs1 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.storage-a\":null,\"node-1.cvm.storage-b\":null}",
+    "in the end only the paths to FA ports on Switch A are lost @123: predicate returned false",
+    "all VMs are running @123: predicate returned false"
+  ],
+  "t1-19-flow-control-enabled": "PASS",
+  "t2-01-cvm-power-off-autopath": [
+    "failback only after the local Stargate is stable for 30 s @340: predicate returned false",
+    "node 1 VMs are served locally again @340: predicate returned false"
+  ],
+  "t2-02-host-power-loss": [
+    "rebuild has restored full redundancy on the remaining three nodes @1873: predicate returned false"
+  ],
+  "t2-03-host-isolation": "PASS",
+  "t2-04-acropolis-leader-host-fails": "PASS",
+  "t2-05-uplink-active-backup": "PASS",
+  "t2-05-tor-active-backup": [
+    "affected bonds fail over to eth1 on link state @13: predicate returned false"
+  ],
+  "t2-06-lacp-fast-member-failure": [
+    "bonds still count the Switch A member @11: threw: node-1.vs0 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.mgmt\":null,\"node-1.host-mgmt\":null}",
+    "LACP fast detaches the member @16: threw: node-1.vs0 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.mgmt\":null,\"node-1.host-mgmt\":null}"
+  ],
+  "t2-06-lacp-slow-member-failure": [
+    "bonds still count the Switch A member @98: threw: node-1.vs0 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.mgmt\":null,\"node-1.host-mgmt\":null}",
+    "LACP slow detaches the member @103: threw: node-1.vs0 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.cvm.mgmt\":null,\"node-1.host-mgmt\":null}",
+    "some flows blackholed far longer than fast rate allows @103: predicate returned false"
+  ],
+  "t2-07-disk-failure": "PASS",
+  "t2-07-disk-flapping": "PASS",
+  "t2-08-second-failure-after-rebuild": "PASS",
+  "t2-08-second-failure-during-rebuild": [
+    "data was unavailable, not lost: it returns with node 4 @793: predicate returned false"
+  ],
+  "t2-09-ft2-two-concurrent-failures": "PASS",
+  "t2-10-block-failure-aware": "PASS",
+  "t2-10-block-failure-not-met": [
+    "availability returns with the block @463: predicate returned false"
+  ],
+  "t2-11-partition-3-2": "PASS",
+  "t3-01-so-node-fails": "PASS",
+  "t3-02-co-node-fails-co-so": "PASS",
+  "t3-02-co-node-fails-co-hci": "PASS",
+  "t3-03-co-nic-down-active-backup": "PASS",
+  "t3-03-co-nic-down-balance-slb": "PASS",
+  "t3-03-co-nic-down-balance-tcp": [
+    "the bond carries everything on eth1 @13: threw: node-1.vs0 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.host-mgmt\":null}"
+  ],
+  "t3-04-co-all-uplinks-lost": "PASS",
+  "t3-05-hci-vs-co-nic-failure": [
+    "both nodes are then handled as isolated hosts: VMs restart elsewhere @133: predicate returned false"
+  ],
+  "t3-06-bond-mode-change-under-load": [
+    "every host now runs MAC pinning on both uplinks @15: threw: node-4.vs0 (bond).pinning: expected JSON Record<string, string>, got {\"node-4.cvm.mgmt\":\"node-4.eth0\",\"node-4.host-mgmt\":null}",
+    "every host now runs LACP on both uplinks @45: threw: node-1.vs0 (bond).pinning: expected JSON Record<string, string>, got {\"node-1.host-mgmt\":null}"
+  ],
+  "t3-07-co-ratio-advisory": "PASS",
+  "t3-07-too-few-cvm-nodes": "PASS",
+  "t1lab-01-disable-one-fa-ip": "PASS",
+  "t1lab-02-disable-vlan-10-ips": ["VMs keep running on VLAN 20 @12: predicate returned false"],
+  "t1lab-03-prune-storage-vlans-default": "PASS",
+  "t1lab-03-prune-storage-vlans-force-shutdown": "PASS"
+}

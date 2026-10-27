@@ -54,5 +54,5 @@ export default defineScenario({
   narrative:
     'The FlashArray management API becomes unreachable while the data ports stay up. Provisioning and snapshot tasks fail because Nutanix drives the array through that API, but running VM IO over NVMe/TCP is unaffected. Once the API is reachable again the snapshot succeeds.',
   cite: ['ntnx-ncp-everpure-deploy-7.6', 'ntnx-bible-8c'],
-  status: 'todo',
+  status: 'active',
 });

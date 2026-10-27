@@ -30,7 +30,10 @@ function variant(placement: 'strict-ab' | 'tagged-both'): ScenarioDef {
     id: `t1-01-storage-nic-${trunked ? 'tagged-both' : 'strict-ab'}`,
     title: `T1: one vs1 storage NIC fails (${trunked ? 'VLANs tagged on both switches' : 'isolated A/B VLANs'})`,
     topology: T1.topology,
-    options: { 'vlan-placement': placement },
+    options: {
+      'vlan-placement': placement,
+      ...(placement === 'tagged-both' ? { 'isl-storage-vlans': 'allowed' } : {}),
+    },
     durationS: END,
     timeline: [
       {

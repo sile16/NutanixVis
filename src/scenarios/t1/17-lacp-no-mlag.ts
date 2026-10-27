@@ -20,7 +20,13 @@ export default defineScenario({
   id: 't1-17-lacp-no-mlag',
   title: 'T1 misconfiguration: LACP across two switches without MLAG',
   topology: T1.topology,
-  options: { 'vlan-placement': 'tagged-both', 'vs1-bond-mode': 'balance-tcp', mlag: false },
+  options: {
+    'vlan-placement': 'tagged-both',
+    // The bond can only save a path if the ISL carries the storage VLANs.
+    'isl-storage-vlans': 'allowed',
+    'vs1-bond-mode': 'balance-tcp',
+    mlag: false,
+  },
   durationS: END,
   timeline: [
     { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth1 fails.' },
@@ -48,5 +54,5 @@ export default defineScenario({
   narrative:
     'LACP is enabled on vs1, but the two switches are not an MLAG pair, so each uplink negotiates with a different LACP partner. The bond can aggregate only the members that share a partner, so each node runs on a single uplink and loses the bandwidth and resilience LACP was meant to add. Across two switches, LACP needs MLAG or vPC.',
   cite: ['ntnx-ahv-admin-11.2', 'ntnx-ncp-everpure-deploy-7.6', 'ovs-bonding'],
-  status: 'todo',
+  status: 'active',
 });

@@ -955,7 +955,18 @@ export class NetworkRuntime implements NetworkQuery {
       views.push(view(id, 'switch', s.spec.label ?? id, undefined, status, fields));
     }
     for (const b of this.bonds.values()) {
-      views.push(view(b.id, 'bond', b.label, b.owner, b.status(), b.fields()));
+      const fields = b.fields();
+      // vNIC → member pinning for endpoints attached to this bond (view-field contract).
+      // Unpinned vNICs (balance-tcp, or an SLB bucket not used yet) are omitted.
+      const pinning: Record<string, string> = {};
+      for (const [eid, e] of this.endpoints) {
+        if (e.spec.attach.kind === 'bond' && e.spec.attach.id === b.id) {
+          const m = b.viewPin(e.spec.mac, e.spec.vlan);
+          if (m !== null) pinning[eid] = m;
+        }
+      }
+      fields.pinning = JSON.stringify(pinning);
+      views.push(view(b.id, 'bond', b.label, b.owner, b.status(), fields));
     }
     return views.sort((x, y) => cmp(x.id, y.id));
   }

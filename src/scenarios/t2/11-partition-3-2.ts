@@ -72,5 +72,5 @@ export default defineScenario({
   narrative:
     'The network splits a five-node FT2 cluster into three nodes and two. Only the three-node side holds a Zookeeper majority, so it keeps the cluster running, fences the other two hosts and restarts their VMs. On the two-node side writes fail, and each VM terminates itself 45 s after its first failed IO, so it is gone before its restarted copy starts.',
   cite: ['ntnx-bible-5b', 'ntnx-bible-4i'],
-  status: 'todo',
+  status: 'active',
 });

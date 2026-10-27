@@ -56,5 +56,5 @@ export default defineScenario({
   narrative:
     'Storage-only node 4 fails. It runs no VMs, so there is nothing for AHV HA to restart, but Curator starts rebuilding its replicas at once. Compute-only VMs whose Stargate was on node 4 have their iSCSI sessions redirected to another storage node after a short pause.',
   cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-4i', 'ntnx-community-co-nodes'],
-  status: 'todo',
+  status: 'active',
 });

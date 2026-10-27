@@ -71,8 +71,24 @@ export interface Profile {
     readonly pathLossDefault: Cited<'retry-until-array-responds'>;
     readonly multipathPolicy: Cited<MultipathPolicy>;
     readonly ioQueuesPerPath: Cited<number>;
+    /**
+     * NVMe Keep Alive Timeout (KATO). The host sends Keep Alive at KATO/2; a path whose keep-alive
+     * goes unanswered for KATO is declared lost (SPEC §6.4c).
+     */
     readonly keepAliveTimeoutS: Cited<number>;
+    /**
+     * NVMe Command Quiesce Time (CQT, TP4129). After a path is declared lost, commands that were in
+     * flight on it are held for CQT before being retried on another path, so the target can quiesce
+     * them first (prevents stale-write corruption). New IO uses surviving paths immediately.
+     */
+    readonly commandQuiesceTimeS: Cited<number>;
+    /** Delay between reconnect attempts on a lost path. */
     readonly reconnectDelayS: Cited<number>;
+    /**
+     * Controller-loss timeout: how long a lost path keeps reconnecting before its controller is
+     * deleted. If every path to the namespace is deleted, queued IO fails to the guest.
+     * `RECONNECT_FOREVER` (-1) = never delete.
+     */
     readonly controllerLossTimeoutS: Cited<number>;
   };
 

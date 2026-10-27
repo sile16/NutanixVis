@@ -45,7 +45,10 @@ describe('registry', () => {
   it.each(all)('%s options: unique ids, defaults within choices', (_id, t) => {
     const ids = t.options.map((o) => o.id);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const o of t.options) expect(o.choices).toContain(o.default);
+    for (const o of t.options) {
+      expect(o.choices).toContain(o.default);
+      if (o.value !== undefined) expect(o.choices).toContain(o.value);
+    }
   });
 });
 

@@ -198,6 +198,7 @@ export function switchPair(p: {
   vlansB: readonly number[];
   mtu: number;
   mlag: boolean;
+  flowControl?: 'off' | 'global-pause' | 'pfc';
 }): Part {
   const sw = (id: SwitchId, label: string, vlans: readonly number[]): DeviceInput => ({
     id,
@@ -205,6 +206,7 @@ export function switchPair(p: {
     kind: 'switch',
     vlans: [...vlans].sort((a, b) => a - b),
     mtu: p.mtu,
+    flowControl: p.flowControl ?? 'off',
     ...(p.mlag ? { mlagDomain: 'mlag-1' } : {}),
   });
   return {

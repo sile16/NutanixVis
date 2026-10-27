@@ -453,6 +453,31 @@ This model drives both the IO distribution and the **path-usage view** in the UI
 - Selecting a VM or vDisk highlights its owning CVM, its active NVMe paths, and the uplink each path's connections use, with per-uplink and per-FA-port share bars.
 - A node-level toggle shows **bond member utilization** and the vNIC → uplink pinning, which updates live on rebalance and failover.
 
+### 6.4c NVMe/TCP path-failure timing (T1)
+
+The integration sets the multipath and NVMe timers automatically, and they must not be changed (Everpure guidance). The model uses three profile fields: `keepAliveTimeoutS` (KATO), `commandQuiesceTimeS` (CQT) and `controllerLossTimeoutS`, plus `reconnectDelayS`. Their semantics follow the NVMe Base Specification (Keep Alive; TP4129 "KATO Corrections and Clarifications" introduced CQT):
+
+1. **Keep-alive.** The host sends Keep Alive on each path's admin queue every KATO/2. The target (the FA controller) also tears down an association that goes quiet for KATO.
+2. **Detecting a lost path.** The initiator runs **inside the CVM**, whose vNIC never sees a host uplink, cable or switch lose carrier.
+   - **Silent losses, the normal case:** a node NIC, cable or switch failure, an FA port failure, an FA controller crash, or a strict-A/B frame with no member carrying its VLAN. In each case, keep-alive goes unanswered and the path is lost **KATO after the last successful exchange**.
+   - **Fast losses, the exception:** if the far end is reachable and actively closes the connection, the path is lost on that error before KATO. Examples are a TCP reset, or a graceful controller shutdown during NDU (`inferred`).
+3. **IO after a path is lost.**
+   - **New IO** goes to the remaining live paths **immediately**. All paths are ANA Optimized, so with `active-active` the load just redistributes.
+   - **Commands in flight on the lost path** are **held for CQT** and then retried on another path. CQT gives the target time to quiesce them, which prevents stale or duplicate writes.
+   - So the worst case for a single command is about **KATO + CQT**. The VM sees an outlier latency spike on a fraction of its IO, not an outage. A guest only sees errors if that exceeds its disk timeout (Linux SCSI timeout 60 s, AHV Admin Guide).
+4. **Reconnect.** A lost path retries every `reconnectDelayS`. When it reconnects, the path is restored (Optimized) and IO rebalances onto it.
+5. **Controller loss.** If a path has not reconnected within `controllerLossTimeoutS`, its controller is deleted, and the path stays gone until it is rediscovered.
+   - The timeout is set long enough to ride out long FA controller reboots, such as an NDU with a firmware update.
+6. **All paths lost** (the CVM, its fabric or the array):
+   - IO is **queued and retried** while any path is still inside its controller-loss window. This matches "a node retries IO until the external storage array responds" (DEPLOY-GUIDE).
+   - The per-VM force-shutdown timeout, if set, restarts the VM on a node that still has connectivity.
+   - Once every path's controller is deleted, queued IO fails to the guest.
+7. **Bond interplay.**
+   - When a bond failover keeps the VLAN reachable, the TCP connections survive and NVMe never notices.
+   - When it doesn't (strict A/B), the path is lost through keep-alive (item 2), and step 3 applies.
+
+**Publication note.** The integration's real KATO, CQT and controller-loss values are documented only in non-public material. Tracked files carry labeled `assumption` values until a public source or a `lab-observed` measurement exists (lab L5), or the owner decides otherwise. The **semantics** above are public (NVMe spec).
+
 ### 6.4a Failure-mode matrix (what fails, what detects it, what happens)
 
 This is the reference that E, F, G and H implement. Each row is about **one** failure layer.
@@ -476,9 +501,9 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 
 | Failure | Detector and timer | IO effect | VM / HA effect | Data effect |
 |---|---|---|---|---|
-| **One node storage NIC or cable down** (`vs1` member) | **Bond first.** MAC pinning fails over on link state. LACP detects in ≤3 s (fast) or ≤90 s (slow). | **Trunked VLANs (default):** the CVM's storage interface moves to the surviving uplink, **no NVMe path is lost**, and only a brief blip occurs (`inferred`). **Strict A/B:** the moved interface lands on a switch without its VLAN, so the paths on that VLAN are lost and NVMe multipath takes over (next row). | None | None |
+| **One node storage NIC or cable down** (`vs1` member) | **Bond first.** MAC pinning fails over on link state. LACP detects in ≤3 s (fast) or ≤90 s (slow). | **Strict A/B (default):** that NIC's VLAN has no other member, so its paths go silent and are lost after **KATO** (§6.4c). New IO then continues on the other VLAN's paths. In-flight commands on the lost paths are held CQT (§6.4c). **Tagged on both switches:** the vNIC moves to the surviving uplink and **no NVMe path is lost** (`inferred`). | None | None |
 | **One NVMe path down** (FA port, FA-side cable, or an unrecoverable node-side path) | Initiator keep-alive, value `assumption` (not public) | IO continues on the remaining paths, all ANA Optimized. Generic multipath retry is about 10 s (HA-Scenarios). | None | None (no RF; the array owns the data) |
-| **One storage switch down** | Bond (node side) + keep-alive (FA side) | Node interfaces move to the surviving uplink through the bond. Paths to **FA ports cabled to the dead switch** are lost, and IO continues through the FA ports on the other switch. | None | None |
+| **One storage switch down** | Keep-alive (KATO); the CVM never sees the carrier loss | Every path through that switch is lost after KATO: in strict A/B, all of one VLAN's paths. New IO then moves to the other fabric. In-flight commands are held CQT, so the worst case is about KATO + CQT (§6.4c). | None (stall < guest timeout) | None |
 | **FA primary controller down** | Secondary sees claim expiry in about 1 s, then promotes | Array-wide pause from a few seconds up to about 16 s. The controller's ports disappear. | None, if the pause is under the guest timeout | None |
 | **FA secondary controller down** | — | Only IO on its paths stalls, then retries on the primary's paths | None | None |
 | **FA IO stall on primary** | IO delay timeout of 15 s, then giveback | Pause of 15 s plus promotion | None | None |
@@ -508,12 +533,16 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
   - **Option: LACP**, which Nutanix prefers when available (DEPLOY-GUIDE). It needs MLAG/vPC across the two switches and has fast/slow detection timers.
   - **Option: no-bond.** Both vendors discourage it, and it is shown as a misconfiguration.
 - On `vs1`, one NIC goes to Switch A and one to Switch B.
-- **Two storage VLANs**, **tagged on both switches** (default), following NET's VLAN-tagging recommendation.
+- **Two isolated storage VLANs** (default, the typical storage design): VLAN A only on Switch A, VLAN B only on Switch B. NET lists "dedicated switches for each VLAN" as a supported design. Ports are tagged trunks that allow only the required VLANs.
+- **Switch settings:** STP enabled with node and array ports as edge ports. **Flow control off.** NET: "Do not enable Priority Flow Control (PFC) or Global Pause … not supported by Everpure FlashArray in NVMe/TCP environments". A `flow-control` option (global-pause | pfc) is a misconfiguration to demo.
 - The FA has ct0.eth10 and ct1.eth10 on Switch A, and ct0.eth11 and ct1.eth11 on Switch B, plus FA mgmt.
 - **Options:**
   - **Bond mode** for `vs1`: Active-Backup, MAC pinning (default), or LACP. LACP needs an MLAG toggle; LACP without MLAG across two switches is a misconfiguration.
   - **Multipath policy:** active-active (default) or active-passive. This is an `assumption` until lab L12.
-  - **Strict A/B**, where each VLAN exists on only one switch. Bond failover then can't save a path, and with MAC pinning a rebalance can strand a vNIC on the wrong switch even without a failure. Both are teaching scenarios.
+  - **VLAN placement:** strict A/B (default) or tagged on both switches.
+    - In strict A/B, a node NIC failure can't be saved by the bond: the VLAN-A vNIC has nowhere to go, so the VLAN-A paths are lost through keep-alive and multipath carries the IO on VLAN B.
+    - **MAC-pinning placement is VLAN-aware** (`assumption`): a storage vNIC is pinned, rebalanced and failed over only onto a member whose switch carries its VLAN. Without this, the vendors' reference design (MAC pinning + isolated VLANs) would strand vNICs on rebalance. An "OVS-literal" toggle shows that hazard.
+    - Bonded-lab validation is needed; the test drive is single-NIC.
   - **Single-VLAN** misconfiguration.
   - **MTU** 1500 vs 9000 mismatch.
 

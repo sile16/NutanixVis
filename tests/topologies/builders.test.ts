@@ -53,8 +53,13 @@ describe('t1-ahv-flasharray', () => {
       ['node-1.cvm.storage-a', 'node-1.vs1', 10],
       ['node-1.cvm.storage-b', 'node-1.vs1', 20],
     ]);
+    // Default is isolated storage VLANs (fabric A/B): VLAN 10 only on sw-a, VLAN 20 only on sw-b.
+    expect(get(t, 'sw-a', 'switch').vlans).toEqual([10, 100, 200]);
+    expect(get(t, 'sw-b', 'switch').vlans).toEqual([20, 100, 200]);
+    expect(get(t, 'sw-a', 'switch').flowControl).toBe('off');
+    const both = buildT1({ vlanPlacement: 'tagged-both' });
     for (const sw of ['sw-a', 'sw-b'])
-      expect(get(t, sw, 'switch').vlans).toEqual([10, 20, 100, 200]);
+      expect(get(both, sw, 'switch').vlans).toEqual([10, 20, 100, 200]);
     expect(ofKind(t, 'fa-interface').map((i) => i.id)).toEqual(
       expect.arrayContaining(['fa.ct0.eth10.v10', 'fa.ct0.eth11.v20', 'fa.ct1.eth10.v10']),
     );
@@ -160,7 +165,7 @@ describe('t2-hci-ahv', () => {
   it('RF3 variant defaults to 5 nodes and refuses fewer', () => {
     const rf3 = buildT2({ replicationFactor: 3 });
     expect(count(rf3, 'ahv-host')).toBe(5);
-    expect(rf3.options.find((o) => o.id === 'replication-factor')?.default).toBe(3);
+    expect(rf3.options.find((o) => o.id === 'replication-factor')?.value).toBe(3);
     expect(() => buildT2({ replicationFactor: 3, nodeCount: 4 })).toThrow(/5 nodes/);
   });
   it('block layouts', () => {

@@ -221,6 +221,12 @@ const entries = {
     url: 'https://nvmexpress.org/specification/tcp-transport-specification/',
     publisher: 'NVM Express',
   },
+  'nvme-base-spec': {
+    title:
+      'NVM Express Base Specification (Keep Alive, Command Quiesce Time / TP4129 KATO Corrections and Clarifications)',
+    url: 'https://nvmexpress.org/specification/nvm-express-base-specification/',
+    publisher: 'NVM Express',
+  },
 
   // ── Nutanix community (unverified) ─────────────────────────────────────────
   'ntnx-community-cvm-components': {

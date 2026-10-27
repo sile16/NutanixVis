@@ -25,7 +25,9 @@ export const T1_LAB_ID = 't1-lab';
 
 export const t1LabOptions = {
   nodeCount: nodeCountOption('node-count', 'AHV nodes', 3),
-  vlanPlacement: t1Options.vlanPlacement,
+  // Single NIC per node: both storage VLANs must reach every node's switch, so the lab defaults to
+  // tagged-both. strict-ab here demonstrates the resulting reachability gap.
+  vlanPlacement: { ...t1Options.vlanPlacement, default: 'tagged-both' },
   multipathPolicy: t1Options.multipathPolicy,
 } as const;
 

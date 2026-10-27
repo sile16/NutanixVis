@@ -41,13 +41,23 @@ export const t1Options = {
   ),
   lacpRate: lacpRateOption(),
   mlag: mlagOption(),
-  // NET: "configure VLAN tagging between the nodes and the switches and between the switches
-  // and the arrays". strict-ab puts each storage VLAN on one switch only (teaching scenario).
+  // Default: isolated storage VLANs (fabric A/B), the typical storage design. NET lists
+  // "dedicated switches for each VLAN" as a supported option. tagged-both carries both storage
+  // VLANs on both switches.
   vlanPlacement: option(
     'vlan-placement',
     'Storage VLAN placement',
-    ['tagged-both', 'strict-ab'],
-    'tagged-both',
+    ['strict-ab', 'tagged-both'],
+    'strict-ab',
+    true,
+  ),
+  // NET: "Do not enable Priority Flow Control (PFC) or Global Pause ... not supported by
+  // Everpure FlashArray in NVMe/TCP environments." Non-off values are misconfigurations.
+  flowControl: option(
+    'flow-control',
+    'Switch flow control',
+    ['off', 'global-pause', 'pfc'],
+    'off',
     true,
   ),
   // NET: "at least two VLANs dedicated to NVMe/TCP data storage traffic". single = misconfig.
@@ -123,6 +133,7 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
     vlansB: [...base, ...storage.filter((v) => !strict || v === VLAN.storageB)],
     mtu: fabricMtu,
     mlag: p.mlag,
+    flowControl: p.flowControl,
   });
 
   // ct0/ct1.eth10 → Switch A, ct0/ct1.eth11 → Switch B, plus mgmt (SPEC §6.5; NET). With a

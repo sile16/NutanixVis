@@ -81,8 +81,8 @@ export function valuesFromParams<D extends OptionDefs>(defs: D, params: ParamsOf
 }
 
 /**
- * Schema option specs. `default` carries the value this instance was BUILT with, so the engine
- * can read the current value of options that touch no device field (e.g. multipath policy).
+ * Schema option specs. `value` is what this instance was built with, so the engine can read options
+ * that touch no device field (e.g. multipath policy). `default` is the declared default.
  */
 export function optionSpecs<D extends OptionDefs>(defs: D, params: ParamsOf<D>): OptionSpecInput[] {
   const p = params as Record<string, Choice>;
@@ -90,7 +90,8 @@ export function optionSpecs<D extends OptionDefs>(defs: D, params: ParamsOf<D>):
     id: def.id,
     label: def.label,
     choices: [...def.choices],
-    default: p[key] ?? def.default,
+    default: def.default,
+    value: p[key] ?? def.default,
     runtime: def.runtime,
   }));
 }

@@ -203,6 +203,12 @@ export const current: Profile = {
       ['spdk-jsonrpc'],
       'SPDK bdev_nvme default keep_alive_timeout_ms (10 s). Integration value not public; lab L5.',
     ),
+    commandQuiesceTimeS: c(
+      0,
+      'assumption',
+      ['nvme-base-spec'],
+      'Integration value not public. 0 = controller advertises no CQT (Linux nvmet default), so in-flight IO is retried right after the path is declared lost. Owner/lab to confirm (L5).',
+    ),
     reconnectDelayS: c(
       20,
       'assumption',

@@ -98,7 +98,7 @@ export const topologies: Readonly<Record<TopologyId, Topology>> = {
 
 /** Current option values of a built topology (option `default` = the value it was built with). */
 export function optionValuesOf(t: Topology): OptionValues {
-  return Object.fromEntries(t.options.map((o) => [o.id, o.default]));
+  return Object.fromEntries(t.options.map((o) => [o.id, o.value ?? o.default]));
 }
 
 /** Declared default option values for a topology id. */

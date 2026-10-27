@@ -14,9 +14,9 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | verified | 30 |
 | inferred | 5 |
 | unverified | 4 |
-| assumption | 7 |
+| assumption | 8 |
 | lab-observed | 0 |
-| **Total** | **46** |
+| **Total** | **47** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -55,6 +55,7 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `externalStorage.multipathPolicy` | 'active-active' | assumption | `spdk-nvme-multipath`, `ntnx-bible-8c` | Policy Nutanix configures is not public. SPDK supports both; round-robin active-active chosen; lab L12. |
 | `externalStorage.ioQueuesPerPath` | 4 | assumption | `nvme-tcp-spec`, `spdk-jsonrpc` | One TCP connection per NVMe/TCP queue (spec). Integration value not public; 4 is a model abstraction; lab L12. |
 | `externalStorage.keepAliveTimeoutS` | 10 | assumption | `spdk-jsonrpc` | SPDK bdev_nvme default keep_alive_timeout_ms (10 s). Integration value not public; lab L5. |
+| `externalStorage.commandQuiesceTimeS` | 0 | assumption | `nvme-base-spec` | Integration value not public. 0 = controller advertises no CQT (Linux nvmet default), so in-flight IO is retried right after the path is declared lost. Owner/lab to confirm (L5). |
 | `externalStorage.reconnectDelayS` | 20 | assumption | `spdk-nvme-multipath` | reconnect_delay_sec from the SPDK multipath example. Integration value not public; lab L5. |
 | `externalStorage.controllerLossTimeoutS` | -1 | assumption | `spdk-nvme-multipath`, `spdk-jsonrpc`, `ntnx-ncp-everpure-deploy-7.6` | -1 = reconnect forever (SPDK semantics, as in its multipath example); matches the documented retry-until-array-responds default. |
 | `flasharray.claimExpiryDetectS` | 1 | verified | `everpure-ha-crash` | Secondary detects expired drive-quorum claims in about 1 s. |

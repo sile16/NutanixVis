@@ -38,6 +38,11 @@ const SwitchSpec = z.object({
   mtu: z.number().int().default(9216),
   /** Switches sharing an MLAG domain can form a cross-switch LAG for LACP. */
   mlagDomain: z.string().optional(),
+  /**
+   * Ethernet flow control. Everpure: "Do not enable Priority Flow Control (PFC) or Global Pause"
+   * for NVMe/TCP (NET KB), so anything but `off` is a misconfiguration.
+   */
+  flowControl: z.enum(['off', 'global-pause', 'pfc']).default('off'),
 });
 
 /** AHV host. `role` selects HCI vs compute-only vs storage-only (SPEC §6.3a). */
@@ -55,7 +60,10 @@ const VSwitchSpec = z.object({
   kind: z.literal('vswitch'),
   name: z.string(),
   bondMode: BondModeSchema,
+  /** Active bond members. */
   uplinks: z.array(id).min(0),
+  /** NICs cabled for this vswitch (superset of `uplinks`); candidates for `vswitch.set-uplinks`. */
+  members: z.array(id).optional(),
   lacpRate: z.enum(['fast', 'slow']).optional(),
   mtu: z.number().int().default(1500),
 });
@@ -74,6 +82,16 @@ const CvmInterfaceSpec = z.object({
   vlan: z.number().int(),
   ip: z.string(),
   service: z.enum(['mgmt', 'external-storage', 'backplane']),
+});
+
+/** An AHV host IP on a vswitch (e.g. a compute-only host's mgmt IP its redirector uses). */
+const HostInterfaceSpec = z.object({
+  ...base,
+  kind: z.literal('host-interface'),
+  vswitch: id,
+  vlan: z.number().int(),
+  ip: z.string(),
+  service: z.enum(['mgmt']),
 });
 
 const DiskSpec = z.object({
@@ -112,6 +130,8 @@ const FaInterfaceSpec = z.object({
   vlan: z.number().int(),
   ip: z.string(),
   service: z.enum(['nvme-tcp', 'mgmt', 'replication']),
+  /** Floating IP (e.g. the array mgmt VIP) that moves to whichever controller is primary. */
+  floating: z.boolean().default(false),
 });
 
 const ExternalSpec = z.object({
@@ -126,6 +146,7 @@ export const DeviceSpecSchema = z.discriminatedUnion('kind', [
   VSwitchSpec,
   CvmSpec,
   CvmInterfaceSpec,
+  HostInterfaceSpec,
   DiskSpec,
   VmSpec,
   ArraySpec,
@@ -154,6 +175,8 @@ export const OptionSpecSchema = z.object({
   label: z.string(),
   choices: z.array(z.union([z.string(), z.number(), z.boolean()])).min(1),
   default: z.union([z.string(), z.number(), z.boolean()]),
+  /** Value this topology instance was built with; absent means `default`. */
+  value: z.union([z.string(), z.number(), z.boolean()]).optional(),
   /** Option values may be changed mid-scenario as runtime actions (SPEC §5.5). */
   runtime: z.boolean().default(false),
 });

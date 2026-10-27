@@ -591,6 +591,23 @@ export class BondRuntime {
     }
     if (this.modeValue === 'active-backup') f.active = this.active;
     for (const m of this.cabledValue) f[`member.${m}`] = this.memberState(m);
+    // View-field contract names (docs/view-fields.md, vswitch).
+    const states = this.cabledValue.map((m) => this.memberState(m));
+    f.bondMode = this.modeValue;
+    f.activeMembers = states.filter((st) => st === 'active' || st === 'up').length;
+    f.activeMember =
+      this.modeValue === 'active-backup'
+        ? (this.active ?? null)
+        : this.modeValue === 'no-bond'
+          ? (this.cabledValue.find((m) => this.memberState(m) === 'up') ?? null)
+          : null;
+    f.lacpState = !this.usesLacp
+      ? null
+      : states.every((st) => st === 'lacp-down' || st === 'down' || st === 'not-uplink')
+        ? 'down'
+        : states.some((st) => st === 'detached' || st === 'lacp-down')
+          ? 'partial'
+          : 'negotiated';
     if (this.hashed) {
       for (const [m, n] of Object.entries(this.bucketSpread())) f[`buckets.${m}`] = n;
     }

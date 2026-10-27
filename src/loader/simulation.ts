@@ -1,7 +1,7 @@
 /**
  * Build a runnable `Simulation` from a topology id + options + version selection (SPEC §13.2
- * stream I). Domain modules plug in by passing `devices`/`actions`; until they land, every
- * non-network topology device is a `StaticDevice` so the UI can render and fail/recover it.
+ * stream I). By default the full domain composition (`./domain`) runs; any topology device it does
+ * not model (and isn't a network element) becomes a `StaticDevice`.
  */
 
 import { type ResolvedVersions, resolveVersions } from '../domain/versions';
@@ -11,6 +11,7 @@ import { createSimulation, type EngineSimulation } from '../engine/sim';
 import type { Device, DeviceView, ViewField } from '../engine/types';
 import { buildTopology, type OptionValues, type TopologyId } from '../topologies';
 import type { DeviceSpec, Topology } from '../topologies/schema';
+import { defaultDomain } from './domain';
 import { topologyToNetwork } from './network';
 
 /** Device kinds the engine's network runtime already represents (and views) itself. */
@@ -59,11 +60,13 @@ export interface LoadOptions {
    * Domain device factory. Return devices for the ids it models; any topology device it doesn't
    * cover (and isn't a network element) becomes a `StaticDevice`.
    */
-  readonly domain?: (ctx: { readonly topology: Topology; readonly versions: ResolvedVersions }) => {
-    readonly devices: readonly Device<Profile>[];
-    readonly actions?: readonly ActionDefinition[];
-    readonly traffic?: Readonly<Record<string, string>>;
-  };
+  readonly domain?:
+    | 'none'
+    | ((ctx: { readonly topology: Topology; readonly versions: ResolvedVersions }) => {
+        readonly devices: readonly Device<Profile>[];
+        readonly actions?: readonly ActionDefinition[];
+        readonly traffic?: Readonly<Record<string, string>>;
+      });
 }
 
 export interface LoadedSimulation {
@@ -78,7 +81,11 @@ export function loadSimulation(opts: LoadOptions): LoadedSimulation {
   const versions = resolveVersions(opts.versions ?? {}, { hasArray });
   const { profile } = versions;
 
-  const domain = opts.domain?.({ topology, versions }) ?? { devices: [] };
+  // `domain: 'none'` gives a network-only simulation with static placeholders (tests, debugging).
+  const domain =
+    opts.domain === 'none'
+      ? { devices: [] }
+      : (opts.domain ?? defaultDomain)({ topology, versions });
   const modeled = new Set(domain.devices.map((d) => d.id));
   const placeholders = topology.devices
     .filter((d) => !NETWORK_KINDS.has(d.kind) && !modeled.has(d.id))

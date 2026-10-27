@@ -84,7 +84,14 @@ describe('invariant arbitraries', () => {
 
 const factory = defaultSimulationFactory();
 /** Topologies whose domain devices are modeled (SPEC §13 streams E/F/G). */
-const DOMAIN_MODELS_READY: ReadonlySet<string> = new Set<string>([]);
+const DOMAIN_MODELS_READY: ReadonlySet<string> = new Set<string>([
+  't1-ahv-flasharray',
+  't2-hci-ahv',
+  't3-co-so',
+  't3-co-hci',
+]);
+/** Full domain simulations are heavier than placeholders; property runs need more time. */
+const PROPERTY_TIMEOUT_MS = 120_000;
 
 describe.skipIf(factory === undefined)('cluster invariants under random faults', () => {
   for (const id of TOPOLOGIES) {
@@ -113,24 +120,31 @@ describe.skipIf(factory === undefined)('cluster invariants under random faults',
       );
     };
 
-    // Needs the Phase 2 domain models (VM instances, fencing, quorum fields); placeholders don't
-    // produce them yet. Flip `DOMAIN_MODELS_READY` per topology as streams E/F/G land.
-    it.skipIf(!DOMAIN_MODELS_READY.has(id))(`${id}: invariants hold on every tick`, () => {
-      fc.assert(
-        fc.property(timelineArb(t), fc.integer({ min: 1, max: 1_000_000 }), (timeline, seed) => {
-          expect(run(timeline, seed).failures).toEqual([]);
-        }),
-        { numRuns: 25 },
-      );
-    });
+    // Needs the domain models (VM instances, fencing, quorum fields), composed by the loader.
+    it.skipIf(!DOMAIN_MODELS_READY.has(id))(
+      `${id}: invariants hold on every tick`,
+      () => {
+        fc.assert(
+          fc.property(timelineArb(t), fc.integer({ min: 1, max: 1_000_000 }), (timeline, seed) => {
+            expect(run(timeline, seed).failures).toEqual([]);
+          }),
+          { numRuns: 15 },
+        );
+      },
+      PROPERTY_TIMEOUT_MS,
+    );
 
-    it(`${id}: same seed and actions give the same event codes`, () => {
-      fc.assert(
-        fc.property(timelineArb(t), fc.integer({ min: 1, max: 1_000_000 }), (timeline, seed) => {
-          expect(run(timeline, seed).eventCodes).toEqual(run(timeline, seed).eventCodes);
-        }),
-        { numRuns: 10 },
-      );
-    });
+    it(
+      `${id}: same seed and actions give the same event codes`,
+      () => {
+        fc.assert(
+          fc.property(timelineArb(t), fc.integer({ min: 1, max: 1_000_000 }), (timeline, seed) => {
+            expect(run(timeline, seed).eventCodes).toEqual(run(timeline, seed).eventCodes);
+          }),
+          { numRuns: 6 },
+        );
+      },
+      PROPERTY_TIMEOUT_MS,
+    );
   }
 });

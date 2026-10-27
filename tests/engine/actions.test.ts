@@ -7,7 +7,13 @@ const kinds = (specs: readonly { kind: string }[]) => specs.map((s) => s.kind);
 describe('action registry', () => {
   it('offers only applicable actions per target and state', () => {
     const s = probeSim(fabric(), []);
-    expect(kinds(s.availableActions('sw-a'))).toEqual(['fail', 'hang', 'fabric.set-mlag']);
+    expect(kinds(s.availableActions('sw-a'))).toEqual([
+      'fail',
+      'hang',
+      'switch.fail',
+      'switch.hang',
+      'fabric.set-mlag',
+    ]);
     expect(kinds(s.availableActions('l-isl'))).toEqual([
       'link-down',
       'hang',
@@ -27,7 +33,12 @@ describe('action registry', () => {
     s.applyAction({ kind: 'link-down', target: 'l-isl' });
     s.applyAction({ kind: 'switch.port.prune-vlan', target: 'l-isl', params: { vlan: 20 } });
     s.tick();
-    expect(kinds(s.availableActions('sw-a'))).toEqual(['recover', 'hang', 'fabric.set-mlag']);
+    expect(kinds(s.availableActions('sw-a'))).toEqual([
+      'recover',
+      'hang',
+      'switch.hang',
+      'fabric.set-mlag',
+    ]);
     expect(kinds(s.availableActions('l-isl'))).toEqual([
       'link-up',
       'hang',
@@ -35,6 +46,32 @@ describe('action registry', () => {
       'switch.port.prune-vlan',
       'switch.port.allow-vlan',
     ]);
+  });
+
+  it('switch.fail / switch.hang are switch-only aliases of fail / hang (SPEC §5.5)', () => {
+    const s = probeSim(fabric(), []);
+    expect(kinds(s.availableActions('h1'))).not.toContain('switch.fail');
+    expect(kinds(s.availableActions('l-isl'))).not.toContain('switch.hang');
+    s.applyAction({ kind: 'switch.fail', target: 'sw-a' });
+    s.applyAction({ kind: 'switch.hang', target: 'sw-b' });
+    s.applyAction({ kind: 'switch.fail', target: 'h1' });
+    s.applyAction({ kind: 'switch.hang', target: 'l-isl' });
+    const snap = s.tick();
+    const codes = snap.events.map((e) => `${e.code}@${e.deviceId ?? ''}`);
+    expect(codes).toContain('device.failed@sw-a');
+    const rejected = snap.events.filter((e) => e.code === 'action.rejected').map((e) => e.text);
+    expect(rejected).toHaveLength(2);
+    expect(rejected[0]).toContain('h1');
+    expect(rejected[1]).toContain('l-isl');
+    expect(snap.devices['sw-a']?.fields.state).toBe('failed');
+    expect(snap.devices['sw-b']?.fields.state).toBe('hung');
+    expect(snap.links['l-isl']?.status).toBe('down'); // sw-a died: carrier lost
+    expect(snap.links['l-h1-eth1']?.status).toBe('up'); // sw-b hung: carrier stays up
+    s.applyAction({ kind: 'recover', target: 'sw-a' });
+    s.applyAction({ kind: 'unhang', target: 'sw-b' });
+    const back = s.tick();
+    expect(back.devices['sw-a']?.fields.state).toBe('up');
+    expect(back.devices['sw-b']?.fields.state).toBe('up');
   });
 
   it('describes parameter choices for the UI', () => {

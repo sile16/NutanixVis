@@ -193,6 +193,39 @@ export function builtinActions(env: BuiltinEnv): ActionDefinition[] {
       apply: (req, ctx) => ctx.net.setHung(req.target, false),
     },
     {
+      // SPEC §5.5 kind-specific switch actions (scenario names); generic `recover` / `unhang`
+      // undo them. A failed switch takes every port's carrier down, so bonds see it at once.
+      spec: {
+        kind: 'switch.fail',
+        label: 'Fail switch',
+        description: 'The switch dies: every port loses carrier, so bonds fail over at once.',
+        appliesTo: (t) => isSwitch(t) && !env.isFailed(t.id),
+      },
+      apply: (req, ctx) => {
+        if (ctx.net.kindOf(req.target) !== 'switch') {
+          throw new ActionError(`switch.fail: '${req.target}' is not a switch`);
+        }
+        ctx.failDevice(req.target);
+      },
+    },
+    {
+      // Hung switch (view-field `state: hung`): forwarding stops but carrier stays up on every
+      // port, so only LACP can detect it (SPEC §5.3 "Failure detection in bonds").
+      spec: {
+        kind: 'switch.hang',
+        label: 'Hang switch (no carrier loss)',
+        description:
+          'The switch stops forwarding but keeps carrier on every port. Only LACP detects this.',
+        appliesTo: (t) => isSwitch(t) && !net.isHung(t.id),
+      },
+      apply: (req, ctx) => {
+        if (ctx.net.kindOf(req.target) !== 'switch') {
+          throw new ActionError(`switch.hang: '${req.target}' is not a switch`);
+        }
+        ctx.net.setHung(req.target, true);
+      },
+    },
+    {
       spec: {
         kind: 'set-latency',
         label: 'Set latency',

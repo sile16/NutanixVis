@@ -71,5 +71,8 @@ export default defineScenario({
   narrative:
     'MAC pinning periodically rebalances vNICs across uplinks by load, and it does not know which VLANs each switch carries. Here a rebalance moves the VLAN-A vNIC onto the uplink to Switch B, which has no VLAN 10, so its paths go silent and are lost after the keep-alive timeout even though nothing failed. IO carries on over VLAN B, but the node has quietly lost half its paths.',
   cite: ['ntnx-ahv-admin-11.2', 'everpure-nutanix-net-bp', 'ovs-bonding', 'nvme-base-spec'],
+  // todo until the workload issues at least one IO per NVMe path per tick (src/domain/workload/io.ts:
+  // 2 reads + 2 writes, queue depth 32): with 1 + 1 a tick's two IOs can both land on the
+  // silently lost paths, so the VM reads io-stalled for that tick although IO is flowing.
   status: 'todo',
 });

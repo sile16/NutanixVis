@@ -44,14 +44,34 @@ function variant(placement: 'strict-ab' | 'tagged-both'): ScenarioDef {
     ],
     expect: [
       ...t1Steady(),
-      atCtx(by(0), 'vs1 on node 1 moves its vNICs to eth3 on carrier loss', (s, ctx) => {
-        const vs = vswitch(s, T1.storageVs(1));
-        return (
-          vs.activeMembers === 1 &&
-          Object.values(vs.pinning).every((m) => m === T1.storageNicB(1)) &&
-          eventSeen(ctx, 'net.bond.failover', { device: T1.storageVs(1) })
-        );
+      at(T0, 'the VLAN-A vNIC starts on eth1 (Switch A)', (s) => {
+        return vswitch(s, T1.storageVs(1)).pinning[T1.segA(1)] === T1.storageNicA(1);
       }),
+      ...(trunked
+        ? [
+            atCtx(by(0), 'vs1 on node 1 moves its vNICs to eth3 on carrier loss', (s, ctx) => {
+              const vs = vswitch(s, T1.storageVs(1));
+              return (
+                vs.activeMembers === 1 &&
+                vs.pinning[T1.segA(1)] === T1.storageNicB(1) &&
+                vs.pinning[T1.segB(1)] === T1.storageNicB(1) &&
+                eventSeen(ctx, 'net.bond.failover', { device: T1.storageVs(1) })
+              );
+            }),
+          ]
+        : [
+            // SPEC §6.5: MAC-pinning placement is VLAN-aware (`assumption`), so the VLAN-A vNIC
+            // is not failed over onto eth3, whose switch has no VLAN 10. It is left with no
+            // member at all; the VLAN-B vNIC stays on eth3.
+            at(by(0), 'vs1 keeps VLAN B on eth3 and has no member for the VLAN-A vNIC', (s) => {
+              const vs = vswitch(s, T1.storageVs(1));
+              return (
+                vs.activeMembers === 1 &&
+                vs.pinning[T1.segB(1)] === T1.storageNicB(1) &&
+                vs.pinning[T1.segA(1)] === undefined
+              );
+            }),
+          ]),
       alwaysFrom(T0, 'VMs keep running (latency outliers only)', (s) => allVms(s, isRunning)),
       ...(trunked
         ? [
@@ -79,14 +99,17 @@ function variant(placement: 'strict-ab' | 'tagged-both'): ScenarioDef {
     ],
     narrative: trunked
       ? 'Node 1 loses one vs1 uplink. The MAC-pinning bond moves both CVM storage vNICs to eth3 on carrier loss, and because both storage VLANs are tagged on Switch B, the TCP connections survive and NVMe never notices. VM IO sees at most a brief blip.'
-      : 'Node 1 loses one vs1 uplink. The bond moves the VLAN-A vNIC to eth3, but Switch B does not carry VLAN 10, so its frames go nowhere. The CVM never sees the carrier loss: its VLAN-A paths fall silent and are declared lost one keep-alive timeout later. New IO moves to the VLAN-B paths at once, and commands caught in flight are held for the quiesce time and retried, so VMs only see a latency spike.',
+      : 'Node 1 loses one vs1 uplink. The bond has nowhere to put the VLAN-A vNIC: Switch B does not carry VLAN 10, so (with VLAN-aware MAC pinning, an assumption) it is left without an uplink, and plain OVS would move it to eth3 where its frames go nowhere anyway. The CVM never sees the carrier loss: its VLAN-A paths fall silent and are declared lost one keep-alive timeout later. New IO moves to the VLAN-B paths at once, and commands caught in flight are held for the quiesce time and retried, so VMs only see a latency spike.',
     cite: [
       'ntnx-ahv-admin-11.2',
       'everpure-nutanix-net-bp',
       'ntnx-ncp-everpure-deploy-7.6',
       'nvme-base-spec',
     ],
-    status: 'todo',
+    // todo until the workload issues at least one IO per NVMe path per tick (src/domain/workload/io.ts:
+    // 2 reads + 2 writes, queue depth 32): with 1 + 1 a tick's two IOs can both land on the
+    // silently lost paths, so the VM reads io-stalled for that tick although IO is flowing.
+    status: trunked ? 'active' : 'todo',
   });
 }
 

@@ -200,6 +200,8 @@ export class NetworkRuntime implements NetworkQuery {
   private linkStatus = new Map<LinkId, 'up' | 'down'>();
   private linkEvents = new Map<LinkId, string>();
   private reconciling = false;
+  /** Elements that already reported `net.mtu.mismatch` (once each, not per frame). */
+  private readonly mtuReported = new Set<string>();
 
   constructor(
     spec: NetworkSpec,
@@ -552,9 +554,12 @@ export class NetworkRuntime implements NetworkQuery {
 
   // ── Tick integration ──────────────────────────────────────────────────────
 
-  /** Clear last tick's utilization (start of tick). */
+  /** Start of tick: clear last tick's utilization and apply due LACP detections. */
   beginTick(): void {
     this.util.clear();
+    // LACP detections due this tick apply before any of its traffic (see BondRuntime).
+    const now = this.host.now();
+    for (const b of this.sortedBonds()) b.fireDueLacp(now);
   }
 
   /** Periodic work in the tick phase: hashed-bond rebalancing. */
@@ -619,6 +624,33 @@ export class NetworkRuntime implements NetworkQuery {
    * Drops report the first failing element on the path the frame would have taken.
    */
   route(req: RouteRequest): RouteResult {
+    const r = this.routeFrame(req);
+    if (!r.delivered && r.reason === 'mtu' && r.dropAt !== undefined) this.reportMtu(req, r.dropAt);
+    return r;
+  }
+
+  /**
+   * `net.mtu.mismatch`, once per dropping element (view-field contract). Large frames are sized
+   * at the source endpoint's MTU and dropped where a link, port, switch or endpoint is smaller
+   * (SPEC §5.3 "MTU mismatch"); small frames (keep-alives, heartbeats) still pass, which is what
+   * makes the misconfiguration hard to spot (Everpure NET KB: MTU 9000 end to end).
+   */
+  private reportMtu(req: RouteRequest, at: string): void {
+    if (this.mtuReported.has(at)) return;
+    this.mtuReported.add(at);
+    const need = this.endpoints.get(req.src)?.mtu;
+    const have = this.links.get(at)?.mtu ?? this.nics.get(at)?.mtu ?? this.switches.get(at)?.mtu;
+    this.host.emit({
+      severity: 'warn',
+      deviceId: at,
+      code: 'net.mtu.mismatch',
+      text: `${at}: ${need ?? '?'}-byte frame from ${req.src} dropped (MTU ${have ?? 'smaller'}); small frames still pass`,
+      causeIds: this.host.causes(),
+      cite: [],
+    });
+  }
+
+  private routeFrame(req: RouteRequest): RouteResult {
     const s = this.endpoints.get(req.src);
     const d = this.endpoints.get(req.dst);
     if (!s) return drop([], [], { reason: 'no-route', at: req.src, detail: 'unknown-source' });
@@ -950,6 +982,8 @@ export class NetworkRuntime implements NetworkQuery {
         hung: s.hung,
         mlagDomain: s.mlagEnabled ? (s.domain ?? null) : null,
         flowControl: s.spec.flowControl ?? 'off',
+        // View-field contract (docs/view-fields.md, switch): `failed` = admin down or failed.
+        state: !s.adminUp || this.host.isDown(id) ? 'failed' : s.hung ? 'hung' : 'up',
       };
       const status: DeviceStatus = !s.adminUp ? 'failed' : s.hung ? 'stalled' : 'healthy';
       views.push(view(id, 'switch', s.spec.label ?? id, undefined, status, fields));

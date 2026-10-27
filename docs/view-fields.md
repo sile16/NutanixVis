@@ -22,7 +22,7 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 
 | Key | Type | Meaning |
 |---|---|---|
-| `state` | `running` \| `io-stalled` \| `paused` \| `crashed` \| `restarting` \| `off` | `running`: some of its IO completes, possibly with latency outliers (SPEC §6.4c). `io-stalled`: alive, but none of its IO completes. `paused`: suspended by the hypervisor. `crashed`: its process died unexpectedly (host power loss, self-termination). `restarting`: an HA restart is in progress. `off`: powered off, or force-shut down. |
+| `state` | `running` \| `io-stalled` \| `paused` \| `crashed` \| `restarting` \| `off` | `running`: some of its IO completes, possibly with latency outliers (SPEC §6.4c). `io-stalled`: alive, but none of its IO completes and it has outstanding IO at least one tick old (a just-issued IO is not a stall). `paused`: suspended by the hypervisor. `crashed`: its process died unexpectedly (host power loss, self-termination). `restarting`: an HA restart is in progress. `off`: powered off, or force-shut down. |
 | `host` | string \| null | AHV host it runs on now; `null` when no process exists. |
 | `instances` | JSON string[] | Hosts with a live QEMU process for this VM. Normally 0 or 1. The "no VM runs twice" invariant checks that it has ≤ 1 entry. |
 | `ioPendingS` | number | Age of its oldest outstanding IO (0 when nothing is outstanding). This measures the worst-case wait of a single command. |

@@ -76,6 +76,8 @@ export const goldenCode = (e: SimEvent): string =>
 export interface RunOptions {
   /** Keep every snapshot for `ctx.history` (default true; disable for very long fuzz runs). */
   readonly keepHistory?: boolean;
+  /** Fail the run if any timeline action is rejected (default true; fuzzers opt out). */
+  readonly failOnRejectedActions?: boolean;
 }
 
 export function runScenario(
@@ -168,6 +170,18 @@ export function runScenario(
       kind: 'at',
       t: steps[next]?.at ?? duration,
       reason: `scenario ends at t=${duration}`,
+    });
+  }
+
+  // A rejected timeline action means the scenario never did what it says (e.g. an unknown action
+  // kind): fail loudly instead of passing on an unchanged simulation.
+  for (const e of opts.failOnRejectedActions === false ? [] : events) {
+    if (e.code !== 'action.rejected') continue;
+    failures.push({
+      label: 'timeline action rejected',
+      kind: 'at',
+      t: e.t,
+      reason: e.text,
     });
   }
 

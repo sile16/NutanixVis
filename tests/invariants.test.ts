@@ -116,7 +116,8 @@ describe.skipIf(factory === undefined)('cluster invariants under random faults',
           status: 'active',
         }),
         factory,
-        { keepHistory: false },
+        // Random sequences legitimately include rejected actions (e.g. recovering a healthy device).
+        { keepHistory: false, failOnRejectedActions: false },
       );
     };
 

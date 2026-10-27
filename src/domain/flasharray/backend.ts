@@ -180,7 +180,7 @@ export class ExternalStorageBackend implements StorageBackend {
    * from NIC ids to fill the VM's `ioPaths` / `ioUplinks` (docs/view-fields.md).
    */
   pathsFor(vdisk: string): readonly string[] {
-    return [...this.nvme.pathsFor(vdisk), ...this.nvme.uplinksFor(vdisk)];
+    return this.nvme.pathsFor(vdisk);
   }
   /** Bond member NICs its IO egressed on during the last tick (vm `ioUplinks`). */
   uplinksFor(vdisk: string): readonly string[] {

@@ -275,6 +275,8 @@ export class Registry implements NutanixClusterView, VmEnv {
         if (nic !== undefined) uplinks.push(nic);
       }
     }
+    // Backends that know their NICs directly (StorageBackend.uplinksFor) take precedence.
+    for (const nic of b?.uplinksFor?.(vdisk) ?? []) if (!uplinks.includes(nic)) uplinks.push(nic);
     return { paths, uplinks };
   }
 

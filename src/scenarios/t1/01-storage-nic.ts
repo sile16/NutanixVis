@@ -109,7 +109,7 @@ function variant(placement: 'strict-ab' | 'tagged-both'): ScenarioDef {
     // todo until the workload issues at least one IO per NVMe path per tick (src/domain/workload/io.ts:
     // 2 reads + 2 writes, queue depth 32): with 1 + 1 a tick's two IOs can both land on the
     // silently lost paths, so the VM reads io-stalled for that tick although IO is flowing.
-    status: trunked ? 'active' : 'todo',
+    status: 'active',
   });
 }
 

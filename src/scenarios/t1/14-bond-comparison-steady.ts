@@ -109,7 +109,7 @@ function variant(mode: Mode, policy: Policy): ScenarioDef {
     // Active-active variants: todo until the workload issues at least one IO per path per tick
     // (src/domain/workload/io.ts: 2 reads + 2 writes); with 1 + 1 one tick touches only 2 of
     // the 4 paths, so 'IO uses every live path' cannot hold.
-    status: policy === 'active-passive' || mode === 'active-backup' ? 'active' : 'todo',
+    status: 'active',
   });
 }
 

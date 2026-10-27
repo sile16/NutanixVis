@@ -153,6 +153,7 @@ All of these are scalars.
 | `net.bond.rebalance` | vswitch | A balance-slb rebalance re-pinned a vNIC. |
 | `net.bond.lacp-timeout` | vswitch | LACP timed out a member that had no carrier loss. |
 | `net.bond.lacp-no-mlag` | vswitch | The members see different LACP partners (no MLAG). |
+| `net.bond.vlan-stranded` | vswitch | A vNIC's VLAN is carried by no surviving member (VLAN-aware MAC pinning under isolated VLANs), so it is left unpinned and its traffic is dropped until a member returns (`assumption`, SPEC §6.5). |
 | `net.bond.mode-changed` | vswitch | The runtime bond mode changed. |
 | `net.mtu.mismatch` | link or switch | A large frame was dropped for MTU. Emit it once per link, not per frame. |
 | `switch.flow-control.unsupported` | switch | Flow control other than `off` is set (Everpure NET KB). |

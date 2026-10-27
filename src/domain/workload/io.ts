@@ -15,7 +15,22 @@ export interface WorkloadModel {
 }
 
 export const WORKLOAD: WorkloadModel = {
-  readsPerTick: cited(1, 'assumption', [], 'Illustrative steady load; not a performance model.'),
-  writesPerTick: cited(1, 'assumption', [], 'Illustrative steady load; not a performance model.'),
-  queueDepth: cited(8, 'assumption', [], 'Illustrative guest queue depth per vDisk.'),
+  readsPerTick: cited(
+    2,
+    'assumption',
+    [],
+    'Illustrative steady load; enough IOs per tick to touch every live path under round-robin.',
+  ),
+  writesPerTick: cited(
+    2,
+    'assumption',
+    [],
+    'Illustrative steady load; enough IOs per tick to touch every live path under round-robin.',
+  ),
+  queueDepth: cited(
+    32,
+    'assumption',
+    [],
+    'Illustrative guest queue depth per vDisk; deep enough that IO held KATO + CQT on a lost path does not exhaust it.',
+  ),
 };

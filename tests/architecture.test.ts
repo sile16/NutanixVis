@@ -1,7 +1,7 @@
 /**
  * Layer boundaries (SPEC §4 "Boundary rule"):
  * - engine/ imports nothing from domain/, ui/, topologies/, scenarios/, fixtures/ or React.
- * - domain/ imports only engine/ (no ui/, topologies/, scenarios/, React).
+ * - domain/ imports only engine/ and the topology schema (no ui/, topology instances, scenarios/, React).
  * - topologies/ and scenarios/ never import ui/.
  * - loader/ (topology + domain → engine wiring) never imports ui/.
  */
@@ -30,6 +30,8 @@ function imports(file: string): string[] {
 function area(fromFile: string, spec: string): string {
   if (!spec.startsWith('.')) return `pkg:${spec.split('/')[0]}`;
   const rel = relative(SRC, resolve(fromFile, '..', spec));
+  // The topology *schema* (declarative types) is shared vocabulary; topology instances are not.
+  if (rel === join('topologies', 'schema')) return 'topologies-schema';
   return rel.split(sep)[0] ?? '';
 }
 

@@ -38,6 +38,8 @@ export interface Profile {
     readonly zkMembersFt2: Cited<number>;
     readonly cassandraRingDetachS: Cited<number>;
     readonly minNodes: Cited<number>;
+    /** CVM power-on to Stargate up. */
+    readonly cvmBootS: Cited<number>;
   };
 
   /** HCI data path (T2/T3). */
@@ -90,6 +92,8 @@ export interface Profile {
      * `RECONNECT_FOREVER` (-1) = never delete.
      */
     readonly controllerLossTimeoutS: Cited<number>;
+    /** Per-command NVMe IO timeout: an IO stuck on a live-but-broken queue is aborted and retried. */
+    readonly ioTimeoutS: Cited<number>;
   };
 
   /** Everpure FlashArray controller HA (Purity HA KBs). */
@@ -102,6 +106,8 @@ export interface Profile {
     readonly plannedFailoverPauseS: Cited<number>;
     readonly hostMultipathRetryS: Cited<number>;
     readonly worstCaseSingleIoS: Cited<number>;
+    /** One controller reboot during NDU (ports absent meanwhile). */
+    readonly controllerRebootS: Cited<number>;
   };
 
   readonly guest: {

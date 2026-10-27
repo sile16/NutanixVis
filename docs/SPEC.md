@@ -476,7 +476,9 @@ The integration sets the multipath and NVMe timers automatically, and they must 
    - When a bond failover keeps the VLAN reachable, the TCP connections survive and NVMe never notices.
    - When it doesn't (strict A/B), the path is lost through keep-alive (item 2), and step 3 applies.
 
-**Publication note.** The integration's real KATO, CQT and controller-loss values are documented only in non-public material. Tracked files carry labeled `assumption` values until a public source or a `lab-observed` measurement exists (lab L5), or the owner decides otherwise. The **semantics** above are public (NVMe spec).
+**Values** (published with the owner's approval, 2026-10-27; citation `everpure-nutanix-301-deck`): **KATO 5 s, controller loss 3600 s, CQT 30 s**. They are set automatically and must not be changed. A single command's worst case on a path loss is therefore about 35 s, under the 60 s guest timeout. The reconnect delay, IO timeout and path policy are still `assumption`s.
+
+**Flexibility rule.** Every timer and policy is a profile field and every behavior choice is a topology option. Real path-failover testing on a properly multipathed lab may change any of them; that is a data change, not a code change.
 
 ### 6.4a Failure-mode matrix (what fails, what detects it, what happens)
 

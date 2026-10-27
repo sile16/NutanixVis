@@ -11,12 +11,12 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 <!-- coverage:begin -->
 | Confidence | Count |
 |---|---|
-| verified | 30 |
+| verified | 33 |
 | inferred | 5 |
 | unverified | 4 |
 | assumption | 8 |
 | lab-observed | 0 |
-| **Total** | **47** |
+| **Total** | **50** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -37,6 +37,7 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `cluster.zkMembersFt2` | 5 | unverified | `ntnx-community-cvm-components`, `ntnx-bible-4i` | As above; FT2 (metadata RF5) needs ≥ 5 nodes (Bible 4i). |
 | `cluster.cassandraRingDetachS` | 1800 | verified | `ntnx-bible-4i`, `ntnx-kb-1256` | A node down for 30 min is removed from the metadata ring; re-added after it is stable. |
 | `cluster.minNodes` | 3 | verified | `ntnx-bible-4i` | FT1 without erasure coding; FT2 needs 5. |
+| `cluster.cvmBootS` | 180 | assumption |  | No published figure. Model value for CVM power-on to Stargate serving; replace from lab testing. |
 | `hci.rebuildStartDelayS` | 0 | verified | `ntnx-bible-4i` | Rebuild begins immediately on an unplanned failure. |
 | `hci.curatorPartialScanS` | 3600 | unverified | `ntnx-community-cvm-components` | Partial scan "every hour". |
 | `hci.curatorFullScanS` | 21600 | unverified | `ntnx-community-cvm-components` | Full scan "around every 6 hours". |
@@ -54,10 +55,11 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `externalStorage.pathLossDefault` | 'retry-until-array-responds' | verified | `ntnx-ncp-everpure-deploy-7.6` | Optional per-VM force-shutdown timeout restarts the VM on a node with array connectivity. |
 | `externalStorage.multipathPolicy` | 'active-active' | assumption | `spdk-nvme-multipath`, `ntnx-bible-8c` | Policy Nutanix configures is not public. SPDK supports both; round-robin active-active chosen; lab L12. |
 | `externalStorage.ioQueuesPerPath` | 4 | assumption | `nvme-tcp-spec`, `spdk-jsonrpc` | One TCP connection per NVMe/TCP queue (spec). Integration value not public; 4 is a model abstraction; lab L12. |
-| `externalStorage.keepAliveTimeoutS` | 10 | assumption | `spdk-jsonrpc` | SPDK bdev_nvme default keep_alive_timeout_ms (10 s). Integration value not public; lab L5. |
-| `externalStorage.commandQuiesceTimeS` | 0 | assumption | `nvme-base-spec` | Integration value not public. 0 = controller advertises no CQT (Linux nvmet default), so in-flight IO is retried right after the path is declared lost. Owner/lab to confirm (L5). |
+| `externalStorage.keepAliveTimeoutS` | 5 | verified | `everpure-nutanix-301-deck`, `nvme-base-spec` | Set automatically by the integration; must not be changed. Keep Alive is sent every KATO/2 (NVMe spec). |
+| `externalStorage.commandQuiesceTimeS` | 30 | verified | `everpure-nutanix-301-deck`, `nvme-base-spec` | Set automatically by the integration. In-flight commands on a lost path are held CQT before retry on another path (TP4129). |
 | `externalStorage.reconnectDelayS` | 20 | assumption | `spdk-nvme-multipath` | reconnect_delay_sec from the SPDK multipath example. Integration value not public; lab L5. |
-| `externalStorage.controllerLossTimeoutS` | -1 | assumption | `spdk-nvme-multipath`, `spdk-jsonrpc`, `ntnx-ncp-everpure-deploy-7.6` | -1 = reconnect forever (SPDK semantics, as in its multipath example); matches the documented retry-until-array-responds default. |
+| `externalStorage.controllerLossTimeoutS` | 3600 | verified | `everpure-nutanix-301-deck` | Set automatically by the integration; long enough to ride out FA controller reboots (e.g. NDU with firmware). Until it expires, IO retries (DEPLOY-GUIDE "retries I/O until the array responds"). |
+| `externalStorage.ioTimeoutS` | 30 | assumption |  | Integration value not public. 30 s mirrors the common Linux NVMe io_timeout default; replace from lab testing. |
 | `flasharray.claimExpiryDetectS` | 1 | verified | `everpure-ha-crash` | Secondary detects expired drive-quorum claims in about 1 s. |
 | `flasharray.primaryCrashPauseS` | 16 | verified | `everpure-ha-crash` | No array IO for a few seconds up to ~16 s; the model uses the documented upper bound. |
 | `flasharray.promotionMaxS` | 15 | verified | `everpure-ha-timing` |  |
@@ -66,6 +68,7 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `flasharray.plannedFailoverPauseS` | 15 | verified | `everpure-ha-planned`, `everpure-upgrade` |  |
 | `flasharray.hostMultipathRetryS` | 10 | inferred | `everpure-ha-scenarios` | Documented for generic hosts; applied to the CVM SPDK initiator by inference. |
 | `flasharray.worstCaseSingleIoS` | 60 | verified | `everpure-host-timeouts` |  |
+| `flasharray.controllerRebootS` | 300 | assumption | `everpure-upgrade` | Model value for one controller reboot during NDU (minutes; longer with firmware updates). Replace from lab testing. |
 | `guest.linuxScsiTimeoutS` | 60 | verified | `ntnx-ahv-admin-11.2` | Recommended Linux guest SCSI device timeout. |
 <!-- coverage:end -->
 

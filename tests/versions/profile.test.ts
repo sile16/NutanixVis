@@ -7,11 +7,11 @@ import { CONFIDENCES, isCited, leaves } from './helpers';
 const EXPECTED_GROUPS: Record<string, number> = {
   ahvHa: 8,
   redirector: 5,
-  cluster: 4,
+  cluster: 5,
   hci: 7,
   bond: 3,
-  externalStorage: 11,
-  flasharray: 8,
+  externalStorage: 12,
+  flasharray: 9,
   guest: 1,
 };
 

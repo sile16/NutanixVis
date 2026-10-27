@@ -115,6 +115,12 @@ const entries = {
     url: `${EVERPURE}nutanix/release-notes-nutanix-and-everpure-integration`,
     publisher: 'Everpure',
   },
+  'everpure-nutanix-301-deck': {
+    title:
+      'Nutanix + Everpure 301 Technical Deck (Everpure, 2026): "Multipathing and NVMe timers (KATO 5 s, controller loss 3600 s, CQT 30 s) are set automatically and must not be changed." Training deck, not hosted publicly; link is the Everpure Nutanix documentation hub. Publication approved by the owner (2026-10-27).',
+    url: `${EVERPURE}nutanix`,
+    publisher: 'Everpure',
+  },
   'everpure-nutanix-net-bp': {
     title: 'Network Configuration for NCP with FlashArray',
     url: `${EVERPURE}nutanix/nutanix-everpure-bp-network-config`,

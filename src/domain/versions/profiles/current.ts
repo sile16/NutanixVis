@@ -2,7 +2,7 @@
  * Behavior profile for the current release: AOS 7.6 / AHV 11.2, with Purity//FA 6.11.8+ or 6.12.x
  * for external storage. Audit table: docs/research/profile-coverage.md.
  */
-import { cited as c, RECONNECT_FOREVER } from '../cited';
+import { cited as c } from '../cited';
 import type { Profile } from '../profile';
 
 export const current: Profile = {
@@ -103,6 +103,12 @@ export const current: Profile = {
       'A node down for 30 min is removed from the metadata ring; re-added after it is stable.',
     ),
     minNodes: c(3, 'verified', ['ntnx-bible-4i'], 'FT1 without erasure coding; FT2 needs 5.'),
+    cvmBootS: c(
+      180,
+      'assumption',
+      [],
+      'No published figure. Model value for CVM power-on to Stargate serving; replace from lab testing.',
+    ),
   },
 
   hci: {
@@ -198,16 +204,16 @@ export const current: Profile = {
       'One TCP connection per NVMe/TCP queue (spec). Integration value not public; 4 is a model abstraction; lab L12.',
     ),
     keepAliveTimeoutS: c(
-      10,
-      'assumption',
-      ['spdk-jsonrpc'],
-      'SPDK bdev_nvme default keep_alive_timeout_ms (10 s). Integration value not public; lab L5.',
+      5,
+      'verified',
+      ['everpure-nutanix-301-deck', 'nvme-base-spec'],
+      'Set automatically by the integration; must not be changed. Keep Alive is sent every KATO/2 (NVMe spec).',
     ),
     commandQuiesceTimeS: c(
-      0,
-      'assumption',
-      ['nvme-base-spec'],
-      'Integration value not public. 0 = controller advertises no CQT (Linux nvmet default), so in-flight IO is retried right after the path is declared lost. Owner/lab to confirm (L5).',
+      30,
+      'verified',
+      ['everpure-nutanix-301-deck', 'nvme-base-spec'],
+      'Set automatically by the integration. In-flight commands on a lost path are held CQT before retry on another path (TP4129).',
     ),
     reconnectDelayS: c(
       20,
@@ -216,10 +222,16 @@ export const current: Profile = {
       'reconnect_delay_sec from the SPDK multipath example. Integration value not public; lab L5.',
     ),
     controllerLossTimeoutS: c(
-      RECONNECT_FOREVER,
+      3600,
+      'verified',
+      ['everpure-nutanix-301-deck'],
+      'Set automatically by the integration; long enough to ride out FA controller reboots (e.g. NDU with firmware). Until it expires, IO retries (DEPLOY-GUIDE "retries I/O until the array responds").',
+    ),
+    ioTimeoutS: c(
+      30,
       'assumption',
-      ['spdk-nvme-multipath', 'spdk-jsonrpc', 'ntnx-ncp-everpure-deploy-7.6'],
-      '-1 = reconnect forever (SPDK semantics, as in its multipath example); matches the documented retry-until-array-responds default.',
+      [],
+      'Integration value not public. 30 s mirrors the common Linux NVMe io_timeout default; replace from lab testing.',
     ),
   },
 
@@ -257,6 +269,12 @@ export const current: Profile = {
       'Documented for generic hosts; applied to the CVM SPDK initiator by inference.',
     ),
     worstCaseSingleIoS: c(60, 'verified', ['everpure-host-timeouts']),
+    controllerRebootS: c(
+      300,
+      'assumption',
+      ['everpure-upgrade'],
+      'Model value for one controller reboot during NDU (minutes; longer with firmware updates). Replace from lab testing.',
+    ),
   },
 
   guest: {

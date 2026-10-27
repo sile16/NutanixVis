@@ -537,6 +537,19 @@ export class NetworkRuntime implements NetworkQuery {
     this.reconcile();
   }
 
+  /**
+   * `vswitch.rebalance`: pin the balance-slb bucket of endpoint `vnic` (a vNIC on bond `id`) to
+   * `member`. Returns the `net.bond.rebalance` event id.
+   */
+  forceSlbPin(id: string, vnic: EndpointId, member: string): string {
+    const bond = this.requireBond(id);
+    const e = this.requireEndpoint(vnic);
+    if (e.attach.kind !== 'bond' || e.attach.id !== id) {
+      throw new NetworkError(`endpoint ${vnic} is not attached to bond ${id}`);
+    }
+    return bond.forcePin(e.spec.mac, e.spec.vlan, member, vnic);
+  }
+
   // ── Tick integration ──────────────────────────────────────────────────────
 
   /** Clear last tick's utilization (start of tick). */

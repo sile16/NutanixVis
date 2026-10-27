@@ -23,7 +23,13 @@
 import type { TimerQueue } from '../clock';
 import { fnv1a } from '../hash';
 import type { DeviceStatus, EventDraft, FlowId, SimTime, TimerHandle, ViewField } from '../types';
-import type { BondMode, BondSpec, LacpRate, NetworkConfig } from './spec';
+import {
+  type BondMode,
+  type BondSpec,
+  type LacpRate,
+  type NetworkConfig,
+  NetworkError,
+} from './spec';
 
 export const BOND_BUCKETS = 256;
 
@@ -84,6 +90,8 @@ export class BondRuntime {
   private buckets: (string | null)[] = new Array<string | null>(BOND_BUCKETS).fill(null);
   private bucketLoad: number[] = new Array<number>(BOND_BUCKETS).fill(0);
   private bucketVlans = new Map<number, Set<number>>();
+  /** Buckets pinned by `forcePin` (vswitch.rebalance): plain-OVS pins that ignore VLAN awareness. */
+  private forced = new Map<number, string>();
   private rr = 0;
   private lastRebalance: SimTime;
   private initialized = false;
@@ -208,6 +216,7 @@ export class BondRuntime {
     this.buckets = new Array<string | null>(BOND_BUCKETS).fill(null);
     this.bucketLoad = new Array<number>(BOND_BUCKETS).fill(0);
     this.bucketVlans = new Map();
+    this.forced = new Map();
     this.rr = 0;
   }
 
@@ -267,6 +276,8 @@ export class BondRuntime {
     const prevActive = this.active;
     this.eligibleList = eligible;
     this.detachedSet = detached;
+    // A forced pin lasts until its member leaves service; failover then re-pins normally.
+    for (const [b, m] of [...this.forced]) if (!eligible.includes(m)) this.forced.delete(b);
 
     if (this.modeValue === 'active-backup') {
       if (this.active === null || !eligible.includes(this.active))
@@ -388,9 +399,10 @@ export class BondRuntime {
         return this.eligibleList[0] ?? null;
       case 'balance-slb':
       case 'balance-tcp': {
-        const usable = this.usableFor(vlan);
-        if (usable.length === 0) return null;
         const b = this.bucketOf(flow, vlan);
+        const pinned = this.modeValue === 'balance-slb' ? this.forced.get(b) : undefined;
+        const usable = pinned === undefined ? this.usableFor(vlan) : [pinned];
+        if (usable.length === 0) return null;
         let m = this.buckets[b] ?? null;
         if (m === null || !usable.includes(m)) {
           m = usable[this.rr % usable.length] ?? null;
@@ -423,6 +435,8 @@ export class BondRuntime {
       case 'balance-tcp':
         return this.eligibleList;
       case 'balance-slb': {
+        const pinned = this.forced.get(slbBucket(mac, vlan));
+        if (pinned !== undefined) return [pinned];
         const usable = this.usableFor(vlan);
         const m = this.buckets[slbBucket(mac, vlan)] ?? null;
         return m !== null && usable.includes(m) ? [m] : usable;
@@ -469,7 +483,7 @@ export class BondRuntime {
         let pickGap = Number.POSITIVE_INFINITY;
         for (let b = 0; b < BOND_BUCKETS; b++) {
           const l = this.bucketLoad[b] ?? 0;
-          if (this.buckets[b] !== from || l <= 0) continue;
+          if (this.buckets[b] !== from || l <= 0 || this.forced.has(b)) continue;
           for (const to of this.eligibleList) {
             const delta = fromLoad - (load.get(to) ?? 0);
             if (to === from || l >= delta || !this.canHost(b, to)) continue;
@@ -496,6 +510,38 @@ export class BondRuntime {
     }
     this.bucketLoad.fill(0);
     return moved;
+  }
+
+  /**
+   * `vswitch.rebalance`: move the balance-slb bucket of one source MAC + VLAN onto `member`, as a
+   * load rebalance would (SPEC §7.2 T1-16). Plain-OVS semantics: the pin ignores VLAN awareness,
+   * so a VLAN can be stranded on a member whose switch does not carry it (OVS bonding docs:
+   * rebalancing moves hash buckets by load only). Periodic rebalancing leaves the bucket alone;
+   * the pin lasts until `member` leaves service. Emits `net.bond.rebalance`; returns its id.
+   */
+  forcePin(mac: string, vlan: number, member: string, vnic: string): string {
+    if (this.modeValue !== 'balance-slb') {
+      throw new NetworkError(`bond ${this.id}: rebalance needs balance-slb, not ${this.modeValue}`);
+    }
+    if (!this.eligibleList.includes(member)) {
+      throw new NetworkError(`bond ${this.id}: '${member}' is not an in-service member`);
+    }
+    const b = slbBucket(mac, vlan);
+    const from = this.buckets[b] ?? null;
+    this.buckets[b] = member;
+    this.forced.set(b, member);
+    let vl = this.bucketVlans.get(b);
+    if (!vl) {
+      vl = new Set();
+      this.bucketVlans.set(b, vl);
+    }
+    vl.add(vlan);
+    return this.env.emit({
+      severity: 'info',
+      deviceId: this.id,
+      code: 'net.bond.rebalance',
+      text: `${this.label}: rebalance pinned ${vnic} (VLAN ${vlan}) ${from ?? 'unassigned'} → ${member}`,
+    });
   }
 
   // ── View ──────────────────────────────────────────────────────────────────

@@ -120,6 +120,8 @@ export interface Profile {
     readonly worstCaseSingleIoS: Cited<number>;
     /** One controller reboot during NDU (ports absent meanwhile). */
     readonly controllerRebootS: Cited<number>;
+    /** Illustrative array service time added to IO completions (never drives timing). */
+    readonly serviceTimeMs: Cited<{ readonly read: number; readonly write: number }>;
   };
 
   readonly guest: {

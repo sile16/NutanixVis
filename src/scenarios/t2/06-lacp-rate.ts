@@ -45,7 +45,7 @@ function variant(rate: 'fast' | 'slow'): ScenarioDef {
         `LACP ${rate} detaches the member`,
         (s, ctx) =>
           T2.nodes.every((n) => vswitch(s, T2.vs(n)).activeMembers === 1) &&
-          eventSeen(ctx, 'bond.lacp.member-detached'),
+          eventSeen(ctx, 'net.bond.lacp-timeout'),
       ),
       allRunningAt(by(detect)),
       ...(rate === 'fast'

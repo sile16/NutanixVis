@@ -59,7 +59,7 @@ export default defineScenario({
     atCtx(
       TO_SLB + 5,
       'every host now runs MAC pinning on both uplinks',
-      (s, ctx) => allHostsRun('balance-slb', 2)(s) && eventSeen(ctx, 'bond.mode.changed'),
+      (s, ctx) => allHostsRun('balance-slb', 2)(s) && eventSeen(ctx, 'net.bond.mode-changed'),
     ),
     at(
       TO_TCP + 5,

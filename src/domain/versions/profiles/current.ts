@@ -310,6 +310,12 @@ export const current: Profile = {
       ['everpure-upgrade'],
       'Model value for one controller reboot during NDU (minutes; longer with firmware updates). Replace from lab testing.',
     ),
+    serviceTimeMs: c(
+      { read: 0.2, write: 0.15 },
+      'assumption',
+      [],
+      'Illustrative array service time for displayed latency only; never drives timing. Replace from lab measurements.',
+    ),
   },
 
   guest: {

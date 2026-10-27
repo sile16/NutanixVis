@@ -46,7 +46,7 @@ function variant(placement: 'strict-ab' | 'tagged-both'): ScenarioDef {
         return (
           vs.activeMembers === 1 &&
           Object.values(vs.pinning).every((m) => m === T1.storageNicB(1)) &&
-          eventSeen(ctx, 'bond.failover', { device: T1.storageVs(1) })
+          eventSeen(ctx, 'net.bond.failover', { device: T1.storageVs(1) })
         );
       }),
       alwaysFrom(T0, 'VMs keep running (latency outliers only)', (s) => allVms(s, isRunning)),

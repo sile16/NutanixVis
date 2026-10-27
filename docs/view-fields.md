@@ -148,12 +148,12 @@ All of these are scalars.
 
 | Code | deviceId | When |
 |---|---|---|
-| `link.down` | link id | A link loses carrier. It must not fire for pure configuration events, such as a rebalance. |
-| `bond.failover` | vswitch | vNICs or flows moved off a failed member. |
-| `bond.rebalance` | vswitch | A balance-slb rebalance re-pinned a vNIC. |
-| `bond.lacp.member-detached` | vswitch | LACP timed out a member that had no carrier loss. |
-| `bond.lacp.partner-mismatch` | vswitch | The members see different LACP partners (no MLAG). |
-| `bond.mode.changed` | vswitch | The runtime bond mode changed. |
+| `net.link.down` | link id | A link loses carrier. It must not fire for pure configuration events, such as a rebalance. |
+| `net.bond.failover` | vswitch | vNICs or flows moved off a failed member. |
+| `net.bond.rebalance` | vswitch | A balance-slb rebalance re-pinned a vNIC. |
+| `net.bond.lacp-timeout` | vswitch | LACP timed out a member that had no carrier loss. |
+| `net.bond.lacp-no-mlag` | vswitch | The members see different LACP partners (no MLAG). |
+| `net.bond.mode-changed` | vswitch | The runtime bond mode changed. |
 | `net.mtu.mismatch` | link or switch | A large frame was dropped for MTU. Emit it once per link, not per frame. |
 | `switch.flow-control.unsupported` | switch | Flow control other than `off` is set (Everpure NET KB). |
 | `nvme.path.lost` | cvm | The keep-alive on one path expired. |

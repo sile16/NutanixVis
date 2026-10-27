@@ -27,7 +27,7 @@ export default defineScenario({
   ],
   expect: [
     atCtx(T0, 'each bond sees two different LACP partners', (_s, ctx) =>
-      eventSeen(ctx, 'bond.lacp.partner-mismatch'),
+      eventSeen(ctx, 'net.bond.lacp-no-mlag'),
     ),
     at(T0, 'only one member per bond is aggregated', (s) =>
       T1.nodes.every((n) => {

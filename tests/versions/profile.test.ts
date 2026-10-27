@@ -11,7 +11,7 @@ const EXPECTED_GROUPS: Record<string, number> = {
   hci: 13,
   bond: 3,
   externalStorage: 12,
-  flasharray: 9,
+  flasharray: 10,
   guest: 1,
 };
 

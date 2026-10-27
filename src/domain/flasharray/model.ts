@@ -39,12 +39,6 @@ import type { FaFacts } from './facts';
 export type FaRole = 'primary' | 'secondary' | 'promoting' | 'offline';
 export type FaState = 'up' | 'crashed' | 'rebooting' | 'stalled';
 
-/**
- * Illustrative array service time added to completions (never drives timing). `assumption`: no
- * per-IO figure is modeled; a profile field is requested.
- */
-export const FA_SERVICE_MS = { read: 0.2, write: 0.15 } as const;
-
 /** What a model transition may do; implemented by device contexts and action contexts. */
 export interface FaEnv {
   readonly now: SimTime;
@@ -655,7 +649,11 @@ export class FlashArrayModel {
       payload: {
         key: cmd.key,
         status,
-        latencyMs: reqLatencyMs + (cmd.type === 'io' ? FA_SERVICE_MS[cmd.op] : FA_SERVICE_MS.write),
+        latencyMs:
+          reqLatencyMs +
+          (cmd.type === 'io'
+            ? this.profile.flasharray.serviceTimeMs.value[cmd.op]
+            : this.profile.flasharray.serviceTimeMs.value.write),
         heldS,
       },
       ...(msg.causeId === undefined ? {} : { causeId: msg.causeId }),

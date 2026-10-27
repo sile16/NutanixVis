@@ -54,7 +54,7 @@ function variant(rate: 'fast' | 'slow'): ScenarioDef {
         'LACP detaches the Switch A member',
         (s, ctx) =>
           T1.nodes.every((n) => vswitch(s, T1.storageVs(n)).activeMembers === 1) &&
-          eventSeen(ctx, 'bond.lacp.member-detached'),
+          eventSeen(ctx, 'net.bond.lacp-timeout'),
       ),
       at(by(settled), 'in the end only the paths to FA ports on Switch A are lost', (s) =>
         allCvms(s, (c) => onlyPathsLostTo(c, faInterfacesBehind(s, SW_A))),

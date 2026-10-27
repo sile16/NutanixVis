@@ -52,7 +52,7 @@ export default defineScenario({
       by(0),
       'the rebalance moves it to eth3',
       (s, ctx) =>
-        eventSeen(ctx, 'bond.rebalance', { device: T1.storageVs(1) }) &&
+        eventSeen(ctx, 'net.bond.rebalance', { device: T1.storageVs(1) }) &&
         vswitch(s, T1.storageVs(1)).pinning[T1.segA(1)] === T1.storageNicB(1),
     ),
     at(by(KATO), "node 1's VLAN-A paths are lost with no hardware failure", (s) =>
@@ -65,7 +65,7 @@ export default defineScenario({
     alwaysFrom(T0, 'no command waits longer than KATO + CQT', (s) =>
       allVms(s, (v) => v.ioPendingS <= PATH_LOSS_WORST + SLACK),
     ),
-    neverSeen(END, 'link.down'),
+    neverSeen(END, 'net.link.down'),
     ...baseInvariants(),
   ],
   narrative:

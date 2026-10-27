@@ -84,6 +84,8 @@ export interface StorageBackend extends CvmComponent {
   health(): 'ok' | 'degraded' | 'unavailable';
   /** Links/endpoints a vDisk's IO currently uses (path-usage view). */
   pathsFor?(vdisk: string): readonly string[];
+  /** Physical NICs (bond members) that carried a vDisk's IO during the last tick (vm `ioUplinks`). */
+  uplinksFor?(vdisk: string): readonly string[];
 }
 
 /** Read-only cluster facts F exposes to E and G. */

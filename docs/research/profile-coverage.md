@@ -14,9 +14,9 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | verified | 34 |
 | inferred | 5 |
 | unverified | 4 |
-| assumption | 13 |
+| assumption | 14 |
 | lab-observed | 0 |
-| **Total** | **56** |
+| **Total** | **57** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -75,6 +75,7 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `flasharray.hostMultipathRetryS` | 10 | inferred | `everpure-ha-scenarios` | Documented for generic hosts; applied to the CVM SPDK initiator by inference. |
 | `flasharray.worstCaseSingleIoS` | 60 | verified | `everpure-host-timeouts` |  |
 | `flasharray.controllerRebootS` | 300 | assumption | `everpure-upgrade` | Model value for one controller reboot during NDU (minutes; longer with firmware updates). Replace from lab testing. |
+| `flasharray.serviceTimeMs` | { read: 0.2, write: 0.15 } | assumption |  | Illustrative array service time for displayed latency only; never drives timing. Replace from lab measurements. |
 | `guest.linuxScsiTimeoutS` | 60 | verified | `ntnx-ahv-admin-11.2` | Recommended Linux guest SCSI device timeout. |
 <!-- coverage:end -->
 

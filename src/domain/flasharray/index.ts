@@ -19,7 +19,7 @@ import { FlashArrayModel } from './model';
 export { ExternalStorageBackend, FaMgmtClient } from './backend';
 export { FaArrayDevice, FaControllerDevice, FaInterfaceDevice } from './devices';
 export { type FaFacts, readFacts } from './facts';
-export { FA_SERVICE_MS, type FaRole, type FaState, FlashArrayModel } from './model';
+export { type FaRole, type FaState, FlashArrayModel } from './model';
 
 export interface ExternalStoragePart extends ReturnType<ExternalStorageDomain> {
   readonly devices: readonly EngineDevice<Profile>[];

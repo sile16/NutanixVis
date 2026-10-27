@@ -1,0 +1,178 @@
+/**
+ * T1: AHV compute cluster + external Everpure FlashArray over NVMe/TCP (SPEC §6.5).
+ *
+ * Sources:
+ * - DEPLOY-GUIDE: "Nutanix Cloud Platform with Everpure FlashArray Deployment Guide" 7.6.
+ * - NET: Everpure, "Network Configuration for NCP with FlashArray".
+ * - AHV-ADMIN: "AHV Administration Guide" 11.2, Table 9 "Bond Types".
+ */
+import { computeLayout } from './layout';
+import { option, optionSpecs, type ParamsOf, resolveParams } from './options';
+import {
+  BOND_MODES,
+  buildHost,
+  type CvmIfacePlan,
+  type DeviceInput,
+  flashArray,
+  type LinkInput,
+  lacpRateOption,
+  mlagOption,
+  nodeCountOption,
+  switchPair,
+  VLAN,
+  VLANS,
+} from './parts';
+import { defineTopology, type Topology } from './schema';
+
+export const T1_ID = 't1-ahv-flasharray';
+
+export const t1Options = {
+  // 4 nodes tolerate N−2 simultaneous node failures (DEPLOY-GUIDE "Compute Cluster High
+  // Availability"); ≥3 nodes required (DEPLOY-GUIDE limits).
+  nodeCount: nodeCountOption('node-count', 'AHV nodes', 4),
+  // Default MAC pinning: Everpure's recommendation (NET). LACP is Nutanix's preference when
+  // available (DEPLOY-GUIDE Table 2). No-bond is discouraged by both (NET).
+  vs1BondMode: option(
+    'vs1-bond-mode',
+    'vs1 (storage) uplink bond',
+    BOND_MODES,
+    'balance-slb',
+    true,
+  ),
+  lacpRate: lacpRateOption(),
+  mlag: mlagOption(),
+  // NET: "configure VLAN tagging between the nodes and the switches and between the switches
+  // and the arrays". strict-ab puts each storage VLAN on one switch only (teaching scenario).
+  vlanPlacement: option(
+    'vlan-placement',
+    'Storage VLAN placement',
+    ['tagged-both', 'strict-ab'],
+    'tagged-both',
+    true,
+  ),
+  // NET: "at least two VLANs dedicated to NVMe/TCP data storage traffic". single = misconfig.
+  storageVlans: option('storage-vlans', 'Storage VLANs', ['two', 'single'], 'two'),
+  // Jumbo frames recommended end to end, fabric at 9216 (NET; DEPLOY-GUIDE range 1280–9000).
+  // 1500-mismatch: hosts and array at 9000, switches left at 1500.
+  mtu: option('mtu', 'Storage MTU', [9000, '1500-mismatch'], 9000, true),
+  // Stargate/SPDK policy is not public: `assumption` until lab L12 (SPEC §6.4b). Touches no
+  // device field; the engine reads it from the topology's options.
+  multipathPolicy: option(
+    'multipath-policy',
+    'NVMe multipath policy (assumption)',
+    ['active-active', 'active-passive'],
+    'active-active',
+  ),
+} as const;
+
+export type T1Params = ParamsOf<typeof t1Options>;
+
+export function buildT1(params: Partial<T1Params> = {}): Topology {
+  const p = resolveParams(t1Options, params);
+  const storage = p.storageVlans === 'two' ? [VLAN.storageA, VLAN.storageB] : [VLAN.storageA];
+  const jumbo = 9000;
+  const fabricMtu = p.mtu === 9000 ? 9216 : 1500;
+
+  const devices: DeviceInput[] = [];
+  const links: LinkInput[] = [];
+  const hostBoxes = [];
+  for (let n = 1; n <= p.nodeCount; n++) {
+    const cvm: CvmIfacePlan[] = [
+      { segment: 'mgmt', vswitch: 'vs0', vlan: VLAN.mgmt, service: 'mgmt' },
+      // One vNIC + one IP per storage segment (DEPLOY-GUIDE "Creating an Internal Interface").
+      { segment: 'storage-a', vswitch: 'vs1', vlan: VLAN.storageA, service: 'external-storage' },
+    ];
+    if (p.storageVlans === 'two') {
+      cvm.push({
+        segment: 'storage-b',
+        vswitch: 'vs1',
+        vlan: VLAN.storageB,
+        service: 'external-storage',
+      });
+    }
+    const host = buildHost({
+      n,
+      role: 'external-storage-compute',
+      label: `Node ${n}`,
+      // vs0: eth0+eth2, vs1: eth1+eth3, one NIC of each to each switch (DEPLOY-GUIDE Table 2).
+      nics: [
+        { eth: 0, speedGbps: 25, mtu: 1500, to: 'sw-a' },
+        { eth: 1, speedGbps: 25, mtu: jumbo, to: 'sw-a' },
+        { eth: 2, speedGbps: 25, mtu: 1500, to: 'sw-b' },
+        { eth: 3, speedGbps: 25, mtu: jumbo, to: 'sw-b' },
+      ],
+      vswitches: [
+        // vs0: mgmt, live migration, DR, apps; Active/Backup, MTU 1500 (DEPLOY-GUIDE Table 2).
+        { name: 'vs0', bondMode: 'active-backup', lacpRate: p.lacpRate, mtu: 1500, nics: [0, 2] },
+        // vs1: NVMe/TCP data only, always bonded (DEPLOY-GUIDE Table 2).
+        { name: 'vs1', bondMode: p.vs1BondMode, lacpRate: p.lacpRate, mtu: jumbo, nics: [1, 3] },
+      ],
+      cvm,
+      vmCount: 2,
+      disks: [],
+    });
+    devices.push(...host.devices);
+    links.push(...host.links);
+    hostBoxes.push(host.layout);
+  }
+
+  const base = [VLAN.mgmt, VLAN.vm];
+  const strict = p.vlanPlacement === 'strict-ab';
+  const sw = switchPair({
+    vlansA: [...base, ...storage.filter((v) => !strict || v === VLAN.storageA)],
+    vlansB: [...base, ...storage.filter((v) => !strict || v === VLAN.storageB)],
+    mtu: fabricMtu,
+    mlag: p.mlag,
+  });
+
+  // ct0/ct1.eth10 → Switch A, ct0/ct1.eth11 → Switch B, plus mgmt (SPEC §6.5; NET). With a
+  // single storage VLAN every data port sits on that VLAN.
+  const fa = flashArray({
+    model: '//X70',
+    ports: [
+      {
+        name: 'eth0',
+        to: ['sw-a', 'sw-b'],
+        speedGbps: 1,
+        mtu: 1500,
+        vlans: [VLAN.mgmt],
+        service: 'mgmt',
+      },
+      {
+        name: 'eth10',
+        to: ['sw-a', 'sw-a'],
+        speedGbps: 25,
+        mtu: jumbo,
+        vlans: [VLAN.storageA],
+        service: 'nvme-tcp',
+      },
+      {
+        name: 'eth11',
+        to: ['sw-b', 'sw-b'],
+        speedGbps: 25,
+        mtu: jumbo,
+        vlans: [storage[1] ?? VLAN.storageA],
+        service: 'nvme-tcp',
+      },
+    ],
+  });
+
+  return defineTopology({
+    id: T1_ID,
+    title: 'AHV + Everpure FlashArray (NVMe/TCP)',
+    family: 't1',
+    description:
+      `${p.nodeCount} AHV compute nodes with an external FlashArray//X70 over NVMe/TCP. ` +
+      'vs0 (mgmt/VM) and vs1 (storage) each bond one NIC to each switch; two storage VLANs.',
+    vlans: [
+      VLANS.storageA,
+      ...(p.storageVlans === 'two' ? [VLANS.storageB] : []),
+      VLANS.mgmt,
+      VLANS.vm,
+    ],
+    devices: [...devices, ...sw.devices, ...fa.devices],
+    links: [...links, ...sw.links, ...fa.links],
+    options: optionSpecs(t1Options, p),
+    layout: computeLayout({ hosts: hostBoxes, switches: ['sw-a', 'sw-b'], fa: fa.layout }),
+  });
+}

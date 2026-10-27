@@ -18,7 +18,9 @@ const ID_RULES: Partial<Record<DeviceSpec['kind'], RegExp>> = {
   'ahv-host': /^node-[1-9]\d*$/,
   cvm: /^node-[1-9]\d*\.cvm$/,
   'cvm-interface': /^node-[1-9]\d*\.cvm\.[a-z][a-z-]*$/,
-  vswitch: /^node-[1-9]\d*\.vs\d+$/,
+  // vs0, vs1, or per-fabric storage vswitches vs1a / vs1b.
+  vswitch: /^node-[1-9]\d*\.vs\d+[a-z]?$/,
+  'host-interface': /^node-[1-9]\d*\.host-[a-z][a-z-]*$/,
   vm: /^node-[1-9]\d*\.vm-[1-9]\d*$/,
   disk: /^node-[1-9]\d*\.disk-[1-9]\d*$/,
   nic: /^(node-[1-9]\d*|fa\.ct[01])\.eth\d+$/,
@@ -55,6 +57,13 @@ export function conventionProblems(t: Topology): string[] {
       if (vs?.kind !== 'vswitch' || vs.parent !== host) {
         out.push(`${d.id}: vswitch ${d.vswitch} is not on host ${host}`);
       }
+    }
+    if (d.kind === 'host-interface') {
+      const vs = ix.get(d.vswitch);
+      if (vs?.kind !== 'vswitch' || vs.parent !== d.parent) {
+        out.push(`${d.id}: vswitch ${d.vswitch} is not on host ${d.parent}`);
+      }
+      if (ix.get(d.parent ?? '')?.kind !== 'ahv-host') out.push(`${d.id}: parent is not a host`);
     }
     if (d.kind === 'fa-interface') {
       const nic = ix.get(d.nic);
@@ -213,6 +222,13 @@ export function reachabilityProblems(t: Topology): string[] {
   const out: string[] = [];
   const ix = index(t);
   const faIfaces = ofKind(t, 'fa-interface').filter((i) => i.service === 'nvme-tcp');
+  for (const i of ofKind(t, 'host-interface')) {
+    const vs = ix.get(i.vswitch);
+    if (vs?.kind !== 'vswitch') continue;
+    if (!switchesReaching(t, vs.uplinks, i.vlan).size) {
+      out.push(`${i.id}: VLAN ${i.vlan} not carried by any reachable switch`);
+    }
+  }
   for (const i of ofKind(t, 'cvm-interface')) {
     const vs = ix.get(i.vswitch);
     if (vs?.kind !== 'vswitch') continue;

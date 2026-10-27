@@ -12,6 +12,7 @@ import {
   buildHost,
   type DeviceInput,
   flashArray,
+  HOST_MGMT,
   type LinkInput,
   nodeCountOption,
   switchPair,
@@ -19,7 +20,7 @@ import {
   VLANS,
 } from './parts';
 import { defineTopology, type Topology } from './schema';
-import { t1Options } from './t1-ahv-flasharray';
+import { forceShutdownS, t1Options } from './t1-ahv-flasharray';
 
 export const T1_LAB_ID = 't1-lab';
 
@@ -29,6 +30,7 @@ export const t1LabOptions = {
   // tagged-both. strict-ab here demonstrates the resulting reachability gap.
   vlanPlacement: { ...t1Options.vlanPlacement, default: 'tagged-both' },
   multipathPolicy: t1Options.multipathPolicy,
+  pathLossForceShutdownS: t1Options.pathLossForceShutdownS,
 } as const;
 
 export type T1LabParams = ParamsOf<typeof t1LabOptions>;
@@ -53,7 +55,9 @@ export function buildT1Lab(params: Partial<T1LabParams> = {}): Topology {
         { segment: 'storage-b', vswitch: 'vs0', vlan: VLAN.storageB, service: 'external-storage' },
       ],
       vmCount: 2,
+      vmPathLossForceShutdownS: forceShutdownS(p.pathLossForceShutdownS),
       disks: [],
+      hostIfaces: [HOST_MGMT],
     });
     devices.push(...host.devices);
     links.push(...host.links);

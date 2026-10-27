@@ -14,6 +14,8 @@ import {
   type CvmIfacePlan,
   type DeviceInput,
   flashArray,
+  HOST_MGMT,
+  ISL_ID,
   type LinkInput,
   lacpRateOption,
   mlagOption,
@@ -21,8 +23,14 @@ import {
   switchPair,
   VLAN,
   VLANS,
+  type VSwitchPlan,
 } from './parts';
 import { defineTopology, type Topology } from './schema';
+
+/** `path-loss-force-shutdown-s` choice → per-VM schema value (`off` = retry forever). */
+export function forceShutdownS(v: 'off' | 60 | 120 | 300): number | undefined {
+  return v === 'off' ? undefined : v;
+}
 
 export const T1_ID = 't1-ahv-flasharray';
 
@@ -73,6 +81,33 @@ export const t1Options = {
     ['active-active', 'active-passive'],
     'active-active',
   ),
+  // DEPLOY-GUIDE "Compute Cluster High Availability": by default a node retries IO until the
+  // array responds; an optional per-VM force-shutdown timeout restarts the VM on a node with
+  // array connectivity. Applied to every VM (`vm.pathLossForceShutdownS`). Values illustrative.
+  pathLossForceShutdownS: option(
+    'path-loss-force-shutdown-s',
+    'Per-VM path-loss force-shutdown (s)',
+    ['off', 60, 120, 300],
+    'off',
+  ),
+  // single-bond: vs1 = eth1 + eth3 bonded (DEPLOY-GUIDE Table 2). per-fabric: two storage
+  // vswitches with "No Uplink Bond" (AHV Admin Guide 11.2 Table 9), vs1a = eth1 → Switch A
+  // (storage-a), vs1b = eth3 → Switch B (storage-b); NVMe multipathing alone provides redundancy.
+  // NET discourages no-bond but allows it as an exception; seen in field deployments.
+  storageVswitchLayout: option(
+    'storage-vswitch-layout',
+    'Storage vswitch layout',
+    ['single-bond', 'per-fabric'],
+    'single-bond',
+  ),
+  // Field practice keeps storage off the ISL ("single hop"); the Cisco Validated Design allows
+  // it. Only matters with vlan-placement tagged-both.
+  islStorageVlans: option(
+    'isl-storage-vlans',
+    'Storage VLANs on the ISL',
+    ['pruned', 'allowed'],
+    'pruned',
+  ),
 } as const;
 
 export type T1Params = ParamsOf<typeof t1Options>;
@@ -87,19 +122,34 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
   const links: LinkInput[] = [];
   const hostBoxes = [];
   for (let n = 1; n <= p.nodeCount; n++) {
+    const perFabric = p.storageVswitchLayout === 'per-fabric';
     const cvm: CvmIfacePlan[] = [
       { segment: 'mgmt', vswitch: 'vs0', vlan: VLAN.mgmt, service: 'mgmt' },
       // One vNIC + one IP per storage segment (DEPLOY-GUIDE "Creating an Internal Interface").
-      { segment: 'storage-a', vswitch: 'vs1', vlan: VLAN.storageA, service: 'external-storage' },
+      {
+        segment: 'storage-a',
+        vswitch: perFabric ? 'vs1a' : 'vs1',
+        vlan: VLAN.storageA,
+        service: 'external-storage',
+      },
     ];
     if (p.storageVlans === 'two') {
       cvm.push({
         segment: 'storage-b',
-        vswitch: 'vs1',
+        vswitch: perFabric ? 'vs1b' : 'vs1',
         vlan: VLAN.storageB,
         service: 'external-storage',
       });
     }
+    const storageVswitches: VSwitchPlan[] = perFabric
+      ? [
+          { name: 'vs1a', bondMode: 'no-bond', lacpRate: p.lacpRate, mtu: jumbo, nics: [1] },
+          { name: 'vs1b', bondMode: 'no-bond', lacpRate: p.lacpRate, mtu: jumbo, nics: [3] },
+        ]
+      : [
+          // vs1: NVMe/TCP data only, always bonded (DEPLOY-GUIDE Table 2).
+          { name: 'vs1', bondMode: p.vs1BondMode, lacpRate: p.lacpRate, mtu: jumbo, nics: [1, 3] },
+        ];
     const host = buildHost({
       n,
       role: 'external-storage-compute',
@@ -114,12 +164,13 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
       vswitches: [
         // vs0: mgmt, live migration, DR, apps; Active/Backup, MTU 1500 (DEPLOY-GUIDE Table 2).
         { name: 'vs0', bondMode: 'active-backup', lacpRate: p.lacpRate, mtu: 1500, nics: [0, 2] },
-        // vs1: NVMe/TCP data only, always bonded (DEPLOY-GUIDE Table 2).
-        { name: 'vs1', bondMode: p.vs1BondMode, lacpRate: p.lacpRate, mtu: jumbo, nics: [1, 3] },
+        ...storageVswitches,
       ],
       cvm,
       vmCount: 2,
+      vmPathLossForceShutdownS: forceShutdownS(p.pathLossForceShutdownS),
       disks: [],
+      hostIfaces: [HOST_MGMT],
     });
     devices.push(...host.devices);
     links.push(...host.links);
@@ -182,8 +233,19 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
       VLANS.vm,
     ],
     devices: [...devices, ...sw.devices, ...fa.devices],
-    links: [...links, ...sw.links, ...fa.links],
+    links: [...links, ...islPlan(sw.links, storage, p.islStorageVlans), ...fa.links],
     options: optionSpecs(t1Options, p),
     layout: computeLayout({ hosts: hostBoxes, switches: ['sw-a', 'sw-b'], fa: fa.layout }),
   });
+}
+
+/** Prune the storage VLANs from the ISL (`isl-storage-vlans: pruned`): storage stays single-hop. */
+function islPlan(
+  links: readonly LinkInput[],
+  storage: readonly number[],
+  mode: 'pruned' | 'allowed',
+): LinkInput[] {
+  if (mode === 'allowed') return [...links];
+  const keep = [VLAN.mgmt, VLAN.vm].filter((v) => !storage.includes(v));
+  return links.map((l) => (l.id === ISL_ID ? { ...l, allowedVlans: keep } : l));
 }

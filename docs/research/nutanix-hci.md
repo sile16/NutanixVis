@@ -191,6 +191,33 @@ On return:
 - **LACP failure detection.** Fast mode detects within 3 s, slow mode within 90 s.
 - **Linux guest SCSI timeout.** 60 s is recommended (load-balanced VGs section).
 
+## 11. Compute-only (CO) and storage-only (SO) nodes
+
+**From the AHV 11.2 Administration Guide (official):**
+
+- **CO nodes:**
+  - "There is no Controller VM (CVM) running on the CO node (VMs use CVMs running on the HCI nodes to access disks)."
+  - Supported deployments are CO + HCI and CO + SO (the "Optimized Database Solution").
+  - Clusters with CO nodes do not support creating VLAN Subnets.
+- **SO nodes:**
+  - "AOS never schedules any VMs on the SO node."
+  - The cluster needs at least 3 functioning nodes at all times, and 3 schedulable nodes before the first SO node is added.
+  - The SO node's CVM is sized at all cores minus 2, and RAM minus 16 GiB capped at 256 GiB.
+- **Virtual switches:** SO nodes are compatible with virtual switches and don't need to be included manually.
+- **Every AHV host runs the iSCSI redirector,** which redirects logins to a healthy Stargate, preferring the local one. On a CO node there is no local Stargate, so all storage IO crosses the network (inferred).
+
+**From community sources (`unverified`, AOS 5.11 era):**
+
+- Storage for CO VMs is sourced from the HC nodes "using a heuristics-based approach". IO is served over the network, with no local storage.
+  - https://next.nutanix.com/community-blog-154/supercharging-your-nutanix-ahv-clusters-with-compute-only-nodes-33303
+  - https://next.nutanix.com/how-it-works-22/what-are-the-nutanix-compute-nodes-37488
+- A 2 HC : 1 CO ratio is recommended, starting with 4 HCI nodes, at 10 Gbps or more. At least 2 CO nodes are recommended so DB VMs can be restarted by HA.
+
+**Gaps:**
+
+- How the Stargate is selected and balanced for CO VMs.
+- What the current version of "Deployment Specifications and Considerations for Compute-Only and Storage-Only Nodes" (Prism Element Web Console Guide) says. It is not in `NutanixDocs/`; add it.
+
 ## Timers and thresholds
 
 | Name | Value | Source | Confidence |

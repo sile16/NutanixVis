@@ -29,6 +29,8 @@ The app is a browser-based, interactive failure simulator. The user picks a topo
 |---|---|---|---|
 | T1 | **Nutanix compute-only cluster (AHV) + external Everpure FlashArray over NVMe/TCP** | v1 | This is the only supported shape of the integration. It is **AHV-only and NVMe/TCP-only**. The CVMs still run Stargate, which uses an SPDK NVMe/TCP initiator, and cluster metadata (Cassandra/Zookeeper/Curator) lives on per-node FA volumes. Each vDisk maps to exactly one FA volume, with no separate change-tracking volume. |
 | T2 | **Nutanix HCI on AHV** | v1 | CVM + local disks, RF2/RF3, Autopath via the iSCSI redirector, AHV HA. |
+| T3 | **Nutanix HCI with dedicated compute-only (CO) and storage-only (SO) nodes** | v1 | CO nodes run VMs with no CVM, and their storage IO goes over the network to CVMs on HCI or SO nodes. SO nodes run only a CVM and never run VMs. There are two variants: **CO + SO** (fully disaggregated) and **CO + HCI** (mixed). |
+| T1-lab | **T1 mirror of the test drive lab**: a single NIC per node with no uplink bond | v1 | The same domain model as T1. Used to compare simulator output against lab measurements (`docs/research/lab-validation-plan.md`). |
 | — | 2-node HCI + Witness | later | |
 | — | FA ActiveDR / async with Nutanix | later | ActiveCluster is not supported on Nutanix volumes in the current release. |
 | — | Metro Availability / SyncRep | out of scope for v1 | |
@@ -231,7 +233,14 @@ type Trace   = { msgId; kind; links: LinkId[]; result: 'delivered'|'dropped'; dr
 - **Actions.** Actions are registered per device kind with an `appliesTo(device)` predicate. The UI only offers applicable actions, an improvement on the reference, which ignored irrelevant ones silently. The common actions are:
   - `fail`, `recover`, `power-off` and `reboot`
   - `link-down` / `link-up`, and `set-latency`
-  - kind-specific ones: `fa.controller.failover` (planned), `fa.ndu`, `fa.io-stall`, `cvm.stop-stargate`, `host.isolate`, `disk.fail`, `switch.fail`, `bond.set-mode`
+  - kind-specific ones: `fa.controller.failover` (planned), `fa.ndu`, `fa.io-stall`, `fa.interface.disable` / `enable` (one FA data IP), `cvm.stop-stargate`, `host.isolate`, `disk.fail`, `switch.fail`, `switch.port.prune-vlan`
+- **Runtime network-configuration actions.** These can be changed **mid-scenario**, so users can compare bond setups on the same running workload:
+  - `vswitch.set-bond-mode` sets Active-Backup, MAC pinning, LACP or no-bond. It applies to every host on that virtual switch, because Nutanix does not support mixed bond modes (AHV Admin Guide).
+  - `vswitch.set-uplinks` adds or removes NICs from the bond.
+  - `vswitch.set-lacp-rate` sets fast or slow.
+  - `fabric.set-mlag` turns MLAG on or off.
+  - `fabric.set-vlan-placement` switches between tagged on both switches and strict A/B.
+- **How the changes apply.** They take effect at the next tick. The real procedure is noted in the Explain panel. For example, enabling Active-Active (LACP) in Prism performs a rolling host reboot, and a Quick-method uplink update that takes over 30 s triggers HA (AHV Admin Guide). Simulating the rolling procedure itself is a later option.
 - **Build-up and misconfiguration actions.** These are topology options exposed as actions:
   - single storage VLAN
   - strict A/B fabrics vs trunked + ISL
@@ -328,6 +337,30 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 
 - An extent group whose replicas are all on down nodes or disks makes the owning vDisk's IO hang. Metadata ranges without quorum do the same.
 - The cluster-wide effect is labeled `unverified` (see `nutanix-hci.md` "Gaps").
+
+### 6.3a Compute-only and storage-only nodes (T3)
+
+**Compute-only (CO) nodes** (AHV Admin Guide 11.2 "AHV Compute-Only Node Configuration"):
+
+- **No local CVM or storage.** A CO node has no CVM and no local storage for VMs. Its VMs "use CVMs running on the HCI nodes to access disks" (`verified`).
+- **IO path.** The CO host's iSCSI redirector has **no local Stargate**, so every login is redirected to a Stargate on an HCI or SO node over the physical network (`inferred` from the AHV storage overview).
+  - **Stargate selection.** Nutanix describes it only as "heuristics-based" (community, `unverified`). The model assumes the vDisk's owning Stargate is spread round-robin across the CVM nodes, as an `assumption`.
+  - **Consequence: the bond carries storage IO.** On a CO node, the bond and the uplinks are in the **storage IO path**. On HCI nodes, VM→CVM traffic stays inside the host on `virbr0`. A NIC, bond or switch failure on a CO node therefore hits VM IO directly, which is a key teaching point.
+- **No data locality.** All RF replicas of a CO VM's writes are remote.
+- **HA.** CO nodes take part in AHV HA as restart targets and sources (community, `unverified` for details). Two or more CO nodes are needed for CO-to-CO restarts.
+
+**Storage-only (SO) nodes** (AHV Admin Guide "Adding an AHV Storage-Only Node"):
+
+- **No VMs.** AOS never schedules VMs on an SO node, so it is never an HA restart target.
+- **Large CVM.** The CVM gets most of the host's resources: all cores minus 2, and RAM minus 16 GiB, capped at 256 GiB.
+- **Cluster size.** The cluster must have at least 3 functioning nodes at all times, and at least 3 schedulable nodes before the first SO node is added.
+
+**Cluster services in T3**
+
+- Zookeeper, Cassandra, Stargate and Curator run only on **CVM-bearing nodes** (HCI and SO). Quorum, RF placement, FT and rebuild are counted over those nodes only.
+- CO nodes count toward HA compute capacity only.
+
+**Sizing guidance** (community 2019, `unverified`): a 2 HC : 1 CO ratio, and starting with 4 HCI nodes. The model shows this as an advisory warning, not a hard rule.
 
 ### 6.4 FlashArray + NVMe/TCP (T1)
 
@@ -490,6 +523,20 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 - The two ToRs are joined by an ISL.
 - A 5-node RF3 / FT2 variant is an option, as is a 3-block layout for block awareness.
 
+**T3 default: dedicated compute + dedicated storage**
+
+- **3 CO nodes and 4 SO nodes** (FT1, RF2). Two ToRs with an ISL.
+- Every node has 2 NICs in a bond, and the bond mode can be changed at runtime (§5.5).
+- **Variants:**
+  - **CO + HCI:** 2 CO nodes + 4 HCI nodes, so some VMs have local CVMs and some don't.
+  - **CO single-NIC:** shows why CO uplinks carry storage IO.
+
+**T1-lab: the test drive mirror**
+
+- Same as T1, but each node has a **single NIC, with no uplink bond**. The storage segments are tagged on that NIC alongside management.
+- The FA has **extra data IPs** (more interfaces or VLAN interfaces per controller), so array-side path failures can be injected by disabling individual FA IPs.
+- Node and version counts are set to match the lab once known.
+
 The layout is stored in the topology data. A dev-only **layout edit mode** lets the owner drag nodes and click "Copy layout JSON", which replaces the reference's hand-exported positions.
 
 ---
@@ -567,6 +614,22 @@ T2 (HCI AHV):
 9. Two concurrent node failures on FT2.
 10. Block failure with block awareness met vs not met.
 11. A 3/2 partition on a 5-node cluster.
+
+T3 (CO + SO / CO + HCI):
+
+1. An SO node fails. Rebuild starts, there is no VM HA event, and CO VMs whose Stargate was on that node are redirected.
+2. A CO node fails. AHV HA restarts its VMs on another CO node, or on an HCI node in the CO + HCI variant.
+3. A CO node loses one NIC. The outcome depends on the bond mode (Active-Backup, MAC pinning or LACP), and storage IO is affected, unlike on HCI.
+4. A CO node loses all uplinks. Storage IO stops at once; then isolation and HA follow.
+5. The same NIC failure on an HCI node vs a CO node, side by side. HCI VM IO keeps flowing to the local CVM; CO VM IO does not.
+6. Change the bond mode mid-scenario under load, and watch path and uplink usage redistribute.
+7. Misconfiguration: too few CVM nodes for the configured FT, or CO nodes outnumbering HCI nodes 2:1 (advisory warning).
+
+T1-lab:
+
+1. Disable one FA data IP. That path is lost, and IO continues on the others.
+2. Disable all FA IPs on one storage VLAN. Every CVM loses those paths.
+3. Prune the storage VLAN on one node's switch port. That node loses all its array paths while keeping management, which tests the path-loss handling with and without the per-VM force-shutdown timeout.
 
 ---
 
@@ -712,10 +775,10 @@ Phase 3 (serial-ish)  I integration: engine↔UI bridge, explain panel, share li
 | **A** Engine core | 1 | `src/engine/**` (except `types.ts`), `tests/engine/**` | clock and timers, device tree, VLAN L2 + bonds (active-backup / MAC pinning / LACP fast-slow), messaging rounds and traces, actions, snapshots, event log, seeded RNG, determinism property test | P0 |
 | **B** UI shell + diagram | 1 | `src/ui/**`, `tests/e2e/**` | theme and branding, layout, React Flow node and edge types, `geometry.ts` (+ unit tests), Canvas packet overlay, version selector, inspector, event log and time-control panels. All of it is driven by the **fixture snapshots**. | P0 |
 | **C** Versions + citations | 1 | `src/domain/versions/**`, `src/domain/citations.ts`, `docs/research/**`, CI public-source check | version matrix (newest AOS → supported Purity//FA), the current-release profile with every timer cited and labeled, a CI grep that blocks internal URLs | P0 |
-| **D** Topologies + layout | 1 | `src/topologies/**` | T1 and T2 default topologies plus option variants (strict A/B vs ISL, LACP vs MAC pinning, single-VLAN, MTU mismatch, 5-node), positions, layout-edit "copy JSON" helper (coordinates with B) | P0 |
+| **D** Topologies + layout | 1 | `src/topologies/**` | T1, T1-lab, T2 and T3 (CO+SO, CO+HCI) default topologies plus option variants (strict A/B vs ISL, LACP vs MAC pinning, single-VLAN, MTU mismatch, 5-node), positions, layout-edit "copy JSON" helper (coordinates with B) | P0 |
 | **H** Scenarios (test-first) | 1→3 | `src/scenarios/**`, `tests/scenarios.test.ts`, `tests/invariants.test.ts` | every §7.2 scenario written up front as `it.todo` / expected-fail, with narrative and citations; switched on as E/F/G land; fast-check invariants | P0 (format), then E/F/G |
 | **E** FlashArray + NVMe/TCP | 2 | `src/domain/flasharray/**`, `src/domain/nvme-tcp/**` | controllers (primary/secondary claim, promotion, IO delay timeout, NDU, port disappearance), FE ports, ANA all-Optimized, mgmt API endpoint, host-side initiator (keep-alive, reconnect, controller-loss) | A, C |
-| **F** Nutanix services + workload | 2 | `src/domain/nutanix/**` (except `hci/`), `src/domain/workload/**` | CVM, Stargate (interface + T1 NVMe backend), ZK ensemble, Cassandra ring, Acropolis/AHV HA (T+20/60/120, fence, 45 s self-terminate), iSCSI redirector, T1 node-failure tolerance (N−2 / N−3), per-VM path-loss handling, VM and vDisk lifecycle | A, C |
+| **F** Nutanix services + workload | 2 | `src/domain/nutanix/**` (except `hci/`), `src/domain/workload/**` | CVM, Stargate (interface + T1 NVMe backend), ZK ensemble, Cassandra ring, Acropolis/AHV HA (T+20/60/120, fence, 45 s self-terminate), iSCSI redirector (incl. CO nodes with no local Stargate), node roles (HCI / CO / SO), T1 node-failure tolerance (N−2 / N−3), per-VM path-loss handling, VM and vDisk lifecycle | A, C |
 | **G** HCI data path | 2 | `src/domain/nutanix/hci/**` | extent groups and RF placement (block awareness), Oplog sync replication, Curator rebuild, disks (SMART, 3 offline events per hour), 95% read-only | F's Stargate interface (an early F merge) |
 | **L** Lab validation | 1→3 | `docs/research/lab-validation-plan.md`, lab results, and the `confidence` fields in profiles (coordinated with C) | experiments L1–L11 on the test drive instance; assumptions upgraded to `lab-observed`; golden expectations for H | lab access and owner approval of which disruptive actions are allowed |
 | **I** Integration + polish | 3 | `src/ui/store/**` bridge, `src/app` wiring, explain panel | engine↔UI `useSyncExternalStore` bridge, live diagram, explain panel with citations and confidence badges, guided scenarios, share-link URL state, visual baselines | all |

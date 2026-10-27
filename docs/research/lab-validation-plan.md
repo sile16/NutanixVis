@@ -4,6 +4,13 @@
 
 **Status:** waiting on lab access details and the owner's confirmation of which disruptive actions are allowed (see "Questions").
 
+## Lab constraints (known)
+
+- **Single NIC per node, so no uplink bond.** Bond experiments (L4, the bond part of L12, and L13) **can't be run in this lab**. They stay simulator-only (`inferred` / `assumption`) until a bonded lab is available.
+- **Array-side failure injection.** Add **extra FA data IPs** (more interfaces, or VLAN interfaces per controller) so each CVM has more paths. Then fail individual paths by disabling single FA IPs, without touching the node's only NIC.
+- **Node-side path loss without isolating the node.** Prune the storage VLAN on one node's switch port, which requires switch access. Management stays up on the same NIC. This is the realistic way to run L1 and L2 here.
+- The simulator has a matching **T1-lab** topology, so results can be compared directly.
+
 ## Method (common to all experiments)
 
 - **Clocks.** NTP-sync everything (CVMs, hosts, FA, test VM) and record timestamps to the second.
@@ -22,11 +29,11 @@
 
 | # | Gap it closes | Injection | Measure |
 |---|---|---|---|
-| L1 | **One CVM loses all array paths while Stargate stays alive.** Does the redirector move IO to a remote CVM, or does IO retry until the array responds? | Take both `vs1` uplinks on one node admin-down, at the switch or with OVS on the host. `vs0` stays up. | VM IO timeline. Whether a remote Stargate took the vDisk (Stargate logs). HA events. |
+| L1 | **One CVM loses all array paths while Stargate stays alive.** Does the redirector move IO to a remote CVM, or does IO retry until the array responds? | Prune the storage VLAN(s) on that node's switch port. Management stays up on the same single NIC. | VM IO timeline. Whether a remote Stargate took the vDisk (Stargate logs). HA events. |
 | L2 | **Default and range of the per-VM force-shutdown timeout**, and what happens when it fires | Repeat L1 with the timeout set on the test VM | When the VM shut down, and when it restarted on another node |
 | L3 | **How long IO stalls during a redirect** | `genesis stop stargate` on one CVM, then a separate run that powers off the CVM | VM IO gap length. Time until failback after the restart (expect about 30 s stable). |
-| L4 | **Bond failover on `vs1` with MAC pinning** (no NVMe path loss expected) | One `vs1` uplink down, then one switch-side port down | VM IO gap. Whether any NVMe path drops (Stargate / SPDK logs). |
-| L5 | **NVMe keep-alive and path-loss detection** (FA side) | Disable one FA front-end port | Time until the path is marked lost. IO continuity. Time until reconnect after re-enable. |
+| L4 | *(needs a bonded lab; N/A on single-NIC)* **Bond failover on `vs1` with MAC pinning** (no NVMe path loss expected) | One `vs1` uplink down, then one switch-side port down | VM IO gap. Whether any NVMe path drops (Stargate / SPDK logs). |
+| L5 | **NVMe keep-alive and path-loss detection** (FA side) | Disable one FA data IP or interface (extra IPs added for this) | Time until the path is marked lost. IO continuity. Time until reconnect after re-enable. |
 | L6 | **FA planned controller failover** (expect ≤15 s pause) | Purity planned failover, support-assisted if the lab requires it | VM IO gap. Which paths disappear and return. |
 | L7 | **AHV HA timeline** (expect T+20 / T+60 / T+120) | IPMI power-off of one host | When the fence happened and when VMs restarted. HA status OK → Healing → Critical/OK. |
 | L8 | **Host network isolation** (expect self-terminate 45 s after the first failed IO) | All uplinks on one node down | VM state on the isolated host. When the VM restarted elsewhere. |

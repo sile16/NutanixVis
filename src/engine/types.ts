@@ -68,6 +68,7 @@ export type MessageDraft<P = unknown> = Omit<Message<P>, 'id' | 'sentAt' | 'roun
 
 export type DropReason =
   | 'link-down'
+  | 'hung'
   | 'port-down'
   | 'device-down'
   | 'endpoint-down'
@@ -90,6 +91,14 @@ export interface Trace {
   readonly result: 'delivered' | 'dropped';
   readonly dropAt?: LinkId | DeviceId;
   readonly reason?: DropReason;
+  readonly src?: EndpointId;
+  readonly dst?: EndpointId;
+  /** Illustrative path latency (sum of link latencies). */
+  readonly latencyMs?: number;
+  /** Finer drop cause, e.g. `different-vlan`, `no-uplink-carries-vlan`, `endpoint-mtu`. */
+  readonly detail?: string;
+  /** Egress NIC selected at the source, if the frame left the host. */
+  readonly egress?: string;
 }
 
 // ── Events (SPEC §5.6) ───────────────────────────────────────────────────────
@@ -233,6 +242,12 @@ export interface Device<TProfile = unknown> {
   onMessage?(msg: Message, ctx: TickContext<TProfile>): void;
   tick?(ctx: TickContext<TProfile>): void;
   postTick?(ctx: TickContext<TProfile>): void;
+  /** Called when the device (or an ancestor) goes down; its timers are cancelled right after. */
+  onFail?(ctx: TickContext<TProfile>): void;
+  /** Called when the device and all its ancestors are up again. */
+  onRecover?(ctx: TickContext<TProfile>): void;
+  /** Merged into `Snapshot.derived` after postTick. */
+  derived?(): Readonly<Record<string, ViewField | Readonly<Record<string, ViewField>>>>;
   view(): DeviceView;
 }
 

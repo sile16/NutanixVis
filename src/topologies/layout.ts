@@ -26,6 +26,7 @@ const VM = { w: 100, h: 40 };
 const DISK = { w: 40, h: 40 };
 const NIC = { w: 60, h: 40 };
 const CVM_IF = { w: 80, h: 20 };
+const HOST_IF = { w: 80, h: 20 };
 const CVM_H = HEADER + CVM_IF.h + PAD;
 const VSWITCH_H = 40;
 const NIC_GROUP_GAP = 40;
@@ -46,6 +47,8 @@ export interface HostBoxSpec {
   vms: readonly string[];
   cvm?: { id: string; ifaces: readonly string[] };
   disks: readonly string[];
+  /** Host IPs (`host-interface`), drawn in a row just above their vswitch. */
+  hostIfaces?: readonly { id: string; vswitch: string }[];
   /** NICs grouped under the vswitch they nominally belong to (stable across bond-mode changes). */
   groups: readonly { vswitch: string; nics: readonly string[] }[];
 }
@@ -82,6 +85,7 @@ function hostMetrics(h: HostBoxSpec) {
   if (h.vms.length) top += VM.h + GAP;
   if (h.cvm) top += CVM_H + GAP;
   if (h.disks.length) top += DISK.h + GAP;
+  if (h.hostIfaces?.length) top += HOST_IF.h + GAP;
   const bottom = VSWITCH_H + GAP + NIC.h;
   return { w: snapUp(Math.max(200, content + 2 * PAD)), h: snapUp(top + bottom), nicRow };
 }
@@ -119,6 +123,12 @@ function layoutHost(h: HostBoxSpec, w: number, hh: number, nicRow: number, out: 
   for (const g of h.groups) {
     const gw = groupWidth(g.nics.length);
     out[g.vswitch] = { x: gx, y: vsY, w: gw, h: VSWITCH_H };
+    // Host IPs on this vswitch sit side by side above it, left-aligned with the group.
+    (h.hostIfaces ?? [])
+      .filter((hi) => hi.vswitch === g.vswitch)
+      .forEach((hi, i) => {
+        out[hi.id] = { x: gx + i * (HOST_IF.w + GAP), y: vsY - GAP - HOST_IF.h, ...HOST_IF };
+      });
     g.nics.forEach((id, i) => {
       out[id] = { x: gx + i * (NIC.w + GAP), y: nicY, ...NIC };
     });

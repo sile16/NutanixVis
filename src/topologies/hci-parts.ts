@@ -7,6 +7,7 @@ import {
   BOND_MODES,
   type CvmIfacePlan,
   type DiskPlan,
+  HOST_MGMT,
   type HostPlan,
   type HostRole,
   type LacpRate,
@@ -65,6 +66,7 @@ export function hciHostPlan(h: HciHostParams): HostPlan {
     ...(hasCvm ? { cvm } : {}),
     vmCount: h.role === 'storage-only' ? 0 : 2,
     disks: hasCvm ? HCI_DISKS : [],
+    hostIfaces: [HOST_MGMT],
   };
 }
 

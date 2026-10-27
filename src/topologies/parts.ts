@@ -64,7 +64,8 @@ export interface NicPlan {
   to: SwitchId;
 }
 export interface VSwitchPlan {
-  name: 'vs0' | 'vs1';
+  /** `vs0`, `vs1`, or a per-fabric storage vswitch such as `vs1a` / `vs1b`. */
+  name: string;
   bondMode: BondMode;
   lacpRate: LacpRate;
   mtu: number;
@@ -73,7 +74,7 @@ export interface VSwitchPlan {
 }
 export interface CvmIfacePlan {
   segment: string;
-  vswitch: 'vs0' | 'vs1';
+  vswitch: string;
   vlan: number;
   service: 'mgmt' | 'external-storage' | 'backplane';
 }
@@ -91,8 +92,35 @@ export interface HostPlan {
   /** Absent on compute-only hosts (SPEC §6.3a). */
   cvm?: readonly CvmIfacePlan[];
   vmCount: number;
+  /** Per-VM storage path-loss force-shutdown timeout (T1); absent = retry forever. */
+  vmPathLossForceShutdownS?: number | undefined;
   disks: readonly DiskPlan[];
+  /**
+   * AHV host IPs (`host-interface`). Every AHV host has a management IP on vs0 (br0): the iSCSI
+   * redirector of a compute-only host, AHV HA polling and CO-host storage traffic use it
+   * (AHV Admin Guide 11.2 "AHV Networking"; Nutanix Bible 5a).
+   */
+  hostIfaces?: readonly HostIfacePlan[];
 }
+
+export interface HostIfacePlan {
+  /** Id suffix: `node-<n>.host-<name>`. */
+  name: string;
+  vswitch: string;
+  vlan: number;
+  service: 'mgmt';
+}
+
+/** The standard host management IP on vs0 (VLAN 100). */
+export const HOST_MGMT: HostIfacePlan = {
+  name: 'mgmt',
+  vswitch: 'vs0',
+  vlan: VLAN.mgmt,
+  service: 'mgmt',
+};
+
+/** Host management IPs use `10.0.100.<60+n>` (CVMs .1x, array .1xx). */
+export const hostIp = (vlan: number, n: number) => ip(vlan, 60 + n);
 
 const MEDIA_LABEL = { nvme: 'NVMe', ssd: 'SSD', hdd: 'HDD' } as const;
 
@@ -141,6 +169,20 @@ export function buildHost(p: HostPlan): Part & { layout: HostBoxSpec } {
       mtu: vs.mtu,
     });
   }
+  const hostIfaces = (p.hostIfaces ?? []).map((hi) => {
+    const id = `${host}.host-${hi.name}`;
+    devices.push({
+      id,
+      label: `host ${hi.name}`,
+      kind: 'host-interface',
+      parent: host,
+      vswitch: `${host}.${hi.vswitch}`,
+      vlan: hi.vlan,
+      ip: hostIp(hi.vlan, p.n),
+      service: hi.service,
+    });
+    return { id, vswitch: `${host}.${hi.vswitch}` };
+  });
   const cvmId = `${host}.cvm`;
   if (p.cvm) {
     devices.push({ id: cvmId, label: `CVM ${p.n}`, kind: 'cvm', parent: host });
@@ -159,7 +201,15 @@ export function buildHost(p: HostPlan): Part & { layout: HostBoxSpec } {
   }
   const vms = Array.from({ length: p.vmCount }, (_, i) => `${host}.vm-${i + 1}`);
   vms.forEach((id, i) => {
-    devices.push({ id, label: `VM ${p.n}-${i + 1}`, kind: 'vm', parent: host });
+    devices.push({
+      id,
+      label: `VM ${p.n}-${i + 1}`,
+      kind: 'vm',
+      parent: host,
+      ...(p.vmPathLossForceShutdownS !== undefined
+        ? { pathLossForceShutdownS: p.vmPathLossForceShutdownS }
+        : {}),
+    });
   });
   const disks: string[] = [];
   p.disks.forEach((d, i) => {
@@ -182,6 +232,7 @@ export function buildHost(p: HostPlan): Part & { layout: HostBoxSpec } {
       vms,
       ...(p.cvm ? { cvm: { id: cvmId, ifaces: p.cvm.map((i) => `${cvmId}.${i.segment}`) } } : {}),
       disks,
+      hostIfaces,
       groups: p.vswitches.map((vs) => ({
         vswitch: `${host}.${vs.name}`,
         nics: vs.nics.map(nicId),

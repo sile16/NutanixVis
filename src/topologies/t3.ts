@@ -25,6 +25,10 @@ export const T3_CO_SO_ID = 't3-co-so';
 export const T3_CO_HCI_ID = 't3-co-hci';
 
 const bondOptions = {
+  // Configured FT (SPEC §14 #6): RF2 = FT1, RF3 = FT2 (Nutanix Bible, Data Resilience). RF and FT
+  // count only CVM-bearing nodes; RF3 with fewer than 5 of them is a misconfiguration the domain
+  // reports (`cluster.ft.insufficient-nodes`), so it is allowed here.
+  replicationFactor: option('replication-factor', 'Replication factor', [2, 3], 2),
   vs0BondMode: vs0BondOption(),
   lacpRate: lacpRateOption(),
   mlag: mlagOption(),
@@ -49,6 +53,7 @@ export type T3CoSoParams = ParamsOf<typeof t3CoSoOptions>;
 export type T3CoHciParams = ParamsOf<typeof t3CoHciOptions>;
 
 interface T3Resolved {
+  replicationFactor: 2 | 3;
   coCount: number;
   storageCount: number;
   vs0BondMode: T3CoSoParams['vs0BondMode'];
@@ -91,7 +96,8 @@ function buildT3(
     family: 't3',
     description:
       `${p.coCount} compute-only nodes (no CVM: storage IO crosses the bond to remote CVMs) and ` +
-      `${p.storageCount} ${storageRole === 'hci' ? 'HCI' : 'storage-only (CVM + disks, no VMs)'} nodes.`,
+      `${p.storageCount} ${storageRole === 'hci' ? 'HCI' : 'storage-only (CVM + disks, no VMs)'} nodes, ` +
+      `RF${p.replicationFactor}.`,
     vlans: [VLANS.mgmt, VLANS.vm],
     devices: [...devices, ...sw.devices],
     links: [...links, ...sw.links],

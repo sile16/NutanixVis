@@ -111,6 +111,52 @@ describe('t1-ahv-flasharray', () => {
     expect(nb.links.some((l) => l.a === 'node-1.eth3')).toBe(true);
   });
 
+  it('every host has a mgmt host-interface on vs0 (VLAN 100), laid out above vs0', () => {
+    const his = ofKind(t, 'host-interface');
+    expect(his.map((h) => h.id)).toEqual([1, 2, 3, 4].map((n) => `node-${n}.host-mgmt`));
+    expect(his[0]).toMatchObject({ parent: 'node-1', vswitch: 'node-1.vs0', vlan: 100 });
+    const hi = t.layout['node-1.host-mgmt'];
+    const vs0 = t.layout['node-1.vs0'];
+    expect(hi && vs0 && hi.y + (hi.h ?? 0) < vs0.y).toBe(true);
+  });
+
+  it('path-loss-force-shutdown-s sets pathLossForceShutdownS on every VM', () => {
+    expect(ofKind(t, 'vm').every((v) => v.pathLossForceShutdownS === undefined)).toBe(true);
+    const s = buildT1({ pathLossForceShutdownS: 120 });
+    expect(ofKind(s, 'vm').map((v) => v.pathLossForceShutdownS)).toEqual(Array(8).fill(120));
+  });
+
+  it('per-fabric storage vswitches: vs1a (eth1, storage-a) and vs1b (eth3, storage-b), no bond', () => {
+    const s = buildT1({ storageVswitchLayout: 'per-fabric' });
+    expect(ofKind(s, 'vswitch').some((v) => v.id === 'node-1.vs1')).toBe(false);
+    expect(get(s, 'node-1.vs1a', 'vswitch')).toMatchObject({
+      bondMode: 'no-bond',
+      uplinks: ['node-1.eth1'],
+    });
+    expect(get(s, 'node-1.vs1b', 'vswitch')).toMatchObject({
+      bondMode: 'no-bond',
+      uplinks: ['node-1.eth3'],
+    });
+    expect(get(s, 'node-1.cvm.storage-a', 'cvm-interface').vswitch).toBe('node-1.vs1a');
+    expect(get(s, 'node-1.cvm.storage-b', 'cvm-interface').vswitch).toBe('node-1.vs1b');
+    expect(reachabilityProblems(s)).toEqual([]);
+    expect(
+      reachabilityProblems(
+        buildT1({ storageVswitchLayout: 'per-fabric', vlanPlacement: 'tagged-both' }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('isl-storage-vlans: pruned (default) keeps storage VLANs off the ISL', () => {
+    const isl = (x: Topology) => x.links.find((l) => l.id === 'l-sw-a--sw-b');
+    expect(isl(t)?.allowedVlans).toEqual([100, 200]);
+    const both = buildT1({ vlanPlacement: 'tagged-both' });
+    expect(switchesReaching(both, ['node-1.eth3'], 10)).toEqual(new Set(['sw-b']));
+    const allowed = buildT1({ vlanPlacement: 'tagged-both', islStorageVlans: 'allowed' });
+    expect(isl(allowed)?.allowedVlans).toBeUndefined();
+    expect(switchesReaching(allowed, ['node-1.eth3'], 10)).toEqual(new Set(['sw-a', 'sw-b']));
+  });
+
   it('option patch for a runtime change touches only the expected fields', () => {
     const { diff } = optionPatch('t1-ahv-flasharray', t, 'vs1-bond-mode', 'active-backup');
     expect(Object.keys(diff.devices.changed).every((id) => id.endsWith('.vs1'))).toBe(true);
@@ -143,6 +189,12 @@ describe('t1-lab', () => {
   });
   it('nodeCount param', () => {
     expect(count(buildT1Lab({ nodeCount: 6 }), 'ahv-host')).toBe(6);
+  });
+  it('host mgmt interface and path-loss-force-shutdown-s', () => {
+    expect(count(t, 'host-interface')).toBe(3);
+    expect(get(t, 'node-2.host-mgmt', 'host-interface').vswitch).toBe('node-2.vs0');
+    const s = buildT1Lab({ pathLossForceShutdownS: 60 });
+    expect(ofKind(s, 'vm').every((v) => v.pathLossForceShutdownS === 60)).toBe(true);
   });
 });
 
@@ -188,6 +240,11 @@ describe('t2-hci-ahv', () => {
     expect(get(s, 'sw-a', 'switch').vlans).toContain(30);
     expect(reachabilityProblems(s)).toEqual([]);
   });
+  it('every HCI host has a mgmt host-interface on vs0', () => {
+    expect(ofKind(t, 'host-interface').map((h) => [h.id, h.vswitch, h.vlan])).toEqual(
+      [1, 2, 3, 4].map((n) => [`node-${n}.host-mgmt`, `node-${n}.vs0`, 100]),
+    );
+  });
   it('bond mode param', () => {
     expect(get(buildT2({ vs0BondMode: 'balance-slb' }), 'node-3.vs0', 'vswitch').bondMode).toBe(
       'balance-slb',
@@ -216,6 +273,18 @@ describe('t3', () => {
     const t = topologies['t3-co-hci'];
     expect(roles(t)).toEqual(['compute-only', 'compute-only', 'hci', 'hci', 'hci', 'hci']);
     expect(count(t, 'vm')).toBe(12);
+  });
+  it('replication-factor option (RF2 default), and every node has a host mgmt IP', () => {
+    for (const t of [topologies['t3-co-so'], topologies['t3-co-hci']]) {
+      expect(t.options.find((o) => o.id === 'replication-factor')).toMatchObject({
+        choices: [2, 3],
+        value: 2,
+      });
+      expect(count(t, 'host-interface')).toBe(count(t, 'ahv-host'));
+    }
+    const rf3 = buildT3CoSo({ replicationFactor: 3, storageCount: 5 });
+    expect(rf3.options.find((o) => o.id === 'replication-factor')?.value).toBe(3);
+    expect(rf3.description).toMatch(/RF3/);
   });
   it('count params', () => {
     expect(

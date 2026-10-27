@@ -3,7 +3,6 @@
  * T3 rules and advisories. Profile timers are read from the current profile.
  */
 import { describe, expect, it } from 'vitest';
-import { NUTANIX_ASSUMPTIONS } from '../../../src/domain/nutanix';
 import { current as P } from '../../../src/domain/versions/profiles/current';
 import { harness } from './harness';
 
@@ -100,7 +99,7 @@ describe('Cassandra ring', () => {
     const up = h.until((s) => s.events.some((e) => e.code === 'stargate.up'), 400);
     expect(up).not.toBeNull();
     if (up === null) return;
-    const rejoin = NUTANIX_ASSUMPTIONS.cassandraRejoinStableS.value;
+    const rejoin = P.cluster.cassandraRejoinStableS.value;
     h.run(rejoin - 1);
     expect(h.f('node-2.cvm', 'ringState')).toBe('detached');
     h.run(2);

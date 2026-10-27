@@ -22,6 +22,11 @@ export interface Profile {
     readonly isolatedVmSelfTerminateS: Cited<number>;
     readonly leaderReelectionS: Cited<number>;
     readonly vswitchQuickUpdateHaTriggerS: Cited<number>;
+    /**
+     * After a per-VM path-loss force-shutdown, AHV HA restarts the VM "at the next HA cycle"
+     * (SPEC §14 #7); modeled as this many heartbeat intervals.
+     */
+    readonly forceShutdownRestartCycles: Cited<number>;
   };
 
   /** AHV iSCSI redirector / Autopath. */
@@ -40,6 +45,10 @@ export interface Profile {
     readonly minNodes: Cited<number>;
     /** CVM power-on to Stargate up. */
     readonly cvmBootS: Cited<number>;
+    /** A detached Cassandra node is re-added to the ring after it has been stable this long. */
+    readonly cassandraRejoinStableS: Cited<number>;
+    /** Host power-cycle time for `reboot` (POST + AHV boot), before its CVM starts booting. */
+    readonly hostRebootS: Cited<number>;
   };
 
   /** HCI data path (T2/T3). */

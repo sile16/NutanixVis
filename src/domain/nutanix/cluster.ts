@@ -213,7 +213,7 @@ export class ClusterDevice implements Device<Profile> {
   private evalRing(ctx: Ctx): void {
     const reg = this.reg;
     const D = ctx.profile.cluster.cassandraRingDetachS;
-    const R = reg.assumptions.cassandraRejoinStableS;
+    const R = ctx.profile.cluster.cassandraRejoinStableS;
     const live = (c: string) => reg.inQuorum(c) && reg.cvmCapable(c);
     const rf = reg.metadataRf;
     for (const id of reg.facts.ringOrder) {
@@ -415,7 +415,7 @@ export class ClusterDevice implements Device<Profile> {
   private restartVms(ctx: Ctx): void {
     const reg = this.reg;
     const P = ctx.profile.ahvHa;
-    const cycle = reg.assumptions.forceShutdownRestartCycles.value * P.heartbeatIntervalS.value;
+    const cycle = P.forceShutdownRestartCycles.value * P.heartbeatIntervalS.value;
     const load = this.load();
     for (const vm of [...reg.vms.values()].sort((a, b) => nodeOrder(a.id, b.id))) {
       if (vm.hasLiveInstance() || vm.restartNeed === 'none') continue;

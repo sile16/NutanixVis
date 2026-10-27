@@ -48,6 +48,12 @@ export const current: Profile = {
       ['ntnx-ahv-admin-11.2'],
       'Virtual switch quick update > 30 s triggers HA (> 20 s may restart AOS services).',
     ),
+    forceShutdownRestartCycles: c(
+      1,
+      'assumption',
+      ['ntnx-ncp-everpure-deploy-7.6'],
+      'SPEC §14 #7: restarted through AHV HA at the next HA cycle (one heartbeat interval).',
+    ),
   },
 
   redirector: {
@@ -108,6 +114,18 @@ export const current: Profile = {
       'assumption',
       [],
       'No published figure. Model value for CVM power-on to Stargate serving; replace from lab testing.',
+    ),
+    cassandraRejoinStableS: c(
+      600,
+      'assumption',
+      ['ntnx-bible-4i', 'ntnx-kb-1256'],
+      'Auto ring-repair re-adds a detached node after it has been stable for an unspecified time.',
+    ),
+    hostRebootS: c(
+      300,
+      'assumption',
+      [],
+      'No published figure; server POST + AHV boot takes minutes. Long enough that HA fences and restarts the VMs (as for a power loss).',
     ),
   },
 

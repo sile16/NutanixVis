@@ -174,8 +174,13 @@ export class ExternalStorageBackend implements StorageBackend {
   health(): 'ok' | 'degraded' | 'unavailable' {
     return this.nvme.health();
   }
+  /**
+   * NVMe path ids, then the bond member NICs those paths' frames egressed on, during the last
+   * tick. The contract allows links/endpoints here; the Nutanix registry splits path ids (`~`)
+   * from NIC ids to fill the VM's `ioPaths` / `ioUplinks` (docs/view-fields.md).
+   */
   pathsFor(vdisk: string): readonly string[] {
-    return this.nvme.pathsFor(vdisk);
+    return [...this.nvme.pathsFor(vdisk), ...this.nvme.uplinksFor(vdisk)];
   }
   /** Bond member NICs its IO egressed on during the last tick (vm `ioUplinks`). */
   uplinksFor(vdisk: string): readonly string[] {

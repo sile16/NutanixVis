@@ -43,5 +43,5 @@ export default defineScenario({
   narrative:
     'The switches are left at MTU 1500 while the hosts and array use jumbo frames. Keep-alives and other small frames get through, so every NVMe path looks healthy, but large IO frames are dropped, so small IO completes while large IO never does. Guests eventually hit their 60 s SCSI timeout with no path failure to point at, which makes this misconfiguration hard to spot.',
   cite: ['everpure-nutanix-net-bp', 'ntnx-ncp-everpure-deploy-7.6', 'ntnx-ahv-admin-11.2'],
-  status: 'todo',
+  status: 'active',
 });

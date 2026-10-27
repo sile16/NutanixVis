@@ -406,7 +406,12 @@ describe('path usage (SPEC §6.4b)', () => {
     });
     runTo(r, T0);
     const b = r.backend(1);
-    expect(b.pathsFor('node-1.vm-1.vd-1')).toHaveLength(4);
+    expect(b.nvme.pathsFor('node-1.vm-1.vd-1')).toHaveLength(4);
+    // The backend's `pathsFor` also lists the uplinks (the registry splits them for the VM view).
+    expect(b.pathsFor('node-1.vm-1.vd-1')).toEqual([
+      ...b.nvme.pathsFor('node-1.vm-1.vd-1'),
+      ...b.uplinksFor('node-1.vm-1.vd-1'),
+    ]);
     const bond = r.sim.net.bond('node-1.vs1');
     const pinned = new Set(
       ['node-1.cvm.storage-a', 'node-1.cvm.storage-b'].map((ep) => {
@@ -430,7 +435,7 @@ describe('path usage (SPEC §6.4b)', () => {
   it('active-passive: one path per vDisk', () => {
     const r = loadWithStubs(T1, { 'multipath-policy': 'active-passive' });
     runTo(r, T0);
-    expect(r.backend(1).pathsFor('node-1.vm-1.vd-1')).toHaveLength(1);
+    expect(r.backend(1).nvme.pathsFor('node-1.vm-1.vd-1')).toHaveLength(1);
     expect(r.backend(1).nvme.policy).toBe('active-passive');
   });
 });

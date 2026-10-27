@@ -62,7 +62,7 @@ function variant(key: 'uplink' | 'tor'): ScenarioDef {
         ? 'Node 1 loses its Switch A uplink. The active-backup bond sees the carrier loss and moves all traffic to eth1 at once, so the cluster never notices: no redirect, no HA event, no rebuild.'
         : 'Switch A fails. Every node bond sees carrier loss and moves to its Switch B uplink at once, and the ISL is no longer needed. The cluster keeps quorum and nothing is redirected, restarted or rebuilt.',
     cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-5b'],
-    status: 'todo',
+    status: 'active',
   });
 }
 

@@ -81,7 +81,10 @@ function variant(mode: Mode, placement: Placement): ScenarioDef {
       ? `${describe[mode]} Both storage VLANs exist on Switch B, so the CVM's TCP connections survive and no NVMe path is lost; VM IO blips for at most a moment and all load now runs over one uplink.`
       : `${describe[mode]} But Switch B does not carry VLAN 10, so the bond cannot save the VLAN-A paths: they fall silent and are lost one keep-alive timeout later, and IO continues on VLAN B.`,
     cite: ['ntnx-ahv-admin-11.2', 'everpure-nutanix-net-bp', 'nvme-base-spec'],
-    status: 'todo',
+    // todo until the workload issues at least one IO per NVMe path per tick (src/domain/workload/io.ts:
+    // 2 reads + 2 writes, queue depth 32): with 1 + 1 a tick's two IOs can both land on the
+    // silently lost paths, so the VM reads io-stalled for that tick although IO is flowing.
+    status: saved ? 'active' : 'todo',
   });
 }
 

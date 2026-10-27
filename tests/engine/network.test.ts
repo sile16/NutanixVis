@@ -156,6 +156,19 @@ describe('L2 delivery', () => {
     expect(s.getSnapshot().links['l-h1-eth0']?.mtu).toBe(1500);
   });
 
+  it('reports net.mtu.mismatch once per dropping link, not per frame', () => {
+    const s = probeSim(fabric({ switchMtu: 1500 }), [
+      { src: H1, dst: 'tgt.ep0', size: 'large' },
+      { src: H1, dst: 'tgt.ep0', size: 'large', srcPort: 2 },
+      { src: H1, dst: 'tgt.ep0', size: 'small', srcPort: 3 },
+    ]);
+    const first = s.tick();
+    const mtu = first.events.filter((e) => e.code === 'net.mtu.mismatch');
+    expect(mtu.map((e) => e.deviceId)).toEqual(['l-h1-eth0']);
+    expect(mtu[0]?.severity).toBe('warn');
+    expect(s.tick().events.filter((e) => e.code === 'net.mtu.mismatch')).toEqual([]);
+  });
+
   it('drops large frames at a destination endpoint with a smaller MTU', () => {
     const net = fabric();
     const spec = {

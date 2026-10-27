@@ -51,5 +51,5 @@ export default defineScenario({
   narrative:
     "With only one storage VLAN each CVM has one storage vNIC, so all of its NVMe paths share one MAC and one uplink. When Switch A fails that vNIC has to fail over, so every path on a node blips at once instead of half of them riding through on a second VLAN. The paths to the array's Switch A ports are then lost, and IO continues on the two ports behind Switch B.",
   cite: ['everpure-nutanix-net-bp', 'ntnx-ncp-everpure-deploy-7.6', 'ntnx-ahv-admin-11.2'],
-  status: 'todo',
+  status: 'active',
 });

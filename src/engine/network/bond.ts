@@ -86,6 +86,7 @@ export class BondRuntime {
   private detachedSet = new Set<string>();
   private readonly lacpDown = new Set<string>();
   private readonly lacpTimers = new Map<string, TimerHandle>();
+  private readonly lacpStart = new Map<string, { causes: readonly string[]; seconds: number }>();
   private misconfigValue: string | null = null;
   private buckets: (string | null)[] = new Array<string | null>(BOND_BUCKETS).fill(null);
   private bucketLoad: number[] = new Array<number>(BOND_BUCKETS).fill(0);
@@ -224,6 +225,7 @@ export class BondRuntime {
     const h = this.lacpTimers.get(nic);
     if (h) this.env.timers.cancel(h);
     this.lacpTimers.delete(nic);
+    this.lacpStart.delete(nic);
   }
 
   // ── State reconciliation ──────────────────────────────────────────────────
@@ -339,6 +341,10 @@ export class BondRuntime {
         causeIds: [...this.env.causes(), ...probeOf(prevActive).causeIds],
       });
     }
+    if (this.hashed) {
+      const gone = [...prevEligible].filter((m) => !eligible.includes(m));
+      if (gone.length > 0) this.failoverBuckets(gone, (m) => probeOf(m).causeIds);
+    }
     if (prevEligible.size > 0 && eligible.length === 0) {
       this.env.emit({
         severity: 'error',
@@ -349,6 +355,70 @@ export class BondRuntime {
     }
   }
 
+  /**
+   * Hashed-mode failover (SPEC §5.3 "On failover, the vNICs or flows on the dead member move to a
+   * survivor"; OVS bonding: buckets of a disabled member are redistributed at once). Buckets that
+   * were on a member that just left service move to a survivor now, so the view and the switches'
+   * MAC learning follow immediately. With VLAN awareness (balance-slb) a bucket only moves to a
+   * member that carries all its VLANs; if none does it is left unassigned (`stranded`), which is
+   * the isolated-VLAN case of SPEC §6.5 (`assumption`). Emits `net.bond.failover` if anything
+   * moved, and `net.bond.vlan-stranded` for buckets with nowhere to go.
+   */
+  private failoverBuckets(gone: readonly string[], causesOf: (m: string) => readonly string[]) {
+    const lost = new Set(gone);
+    const moves = new Map<string, number>();
+    let stranded = 0;
+    const strandedVlans = new Set<number>();
+    for (let b = 0; b < BOND_BUCKETS; b++) {
+      const from = this.buckets[b];
+      if (from == null || !lost.has(from)) continue;
+      const to = this.eligibleList.filter((m) => this.canHost(b, m));
+      const pick = to.length > 0 ? (to[this.rr++ % to.length] ?? null) : null;
+      this.buckets[b] = pick;
+      if (pick === null) {
+        stranded++;
+        for (const v of this.bucketVlans.get(b) ?? []) strandedVlans.add(v);
+        continue;
+      }
+      const key = `${from} → ${pick}`;
+      moves.set(key, (moves.get(key) ?? 0) + 1);
+    }
+    const causeIds = [...this.env.causes(), ...gone.flatMap(causesOf)];
+    if (moves.size > 0) {
+      const what = this.modeValue === 'balance-slb' ? 'vNIC (MAC+VLAN)' : 'flow';
+      this.env.emit({
+        severity: 'warn',
+        deviceId: this.id,
+        code: 'net.bond.failover',
+        text: `${this.label}: ${what} hash buckets moved off failed member(s): ${[...moves]
+          .map(([k, n]) => `${n} ${k}`)
+          .join(', ')}`,
+        causeIds,
+      });
+    }
+    // With no member left at all, `net.bond.down` already says everything.
+    if (stranded > 0 && this.eligibleList.length > 0) {
+      this.env.emit({
+        severity: 'warn',
+        deviceId: this.id,
+        code: 'net.bond.vlan-stranded',
+        text: `${this.label}: ${stranded} vNIC hash bucket(s) on VLAN ${[...strandedVlans]
+          .sort((x, y) => x - y)
+          .join(', ')} have no surviving member that carries the VLAN; their traffic stops`,
+        causeIds,
+      });
+    }
+  }
+
+  /**
+   * LACP detection of a hung member (SPEC §5.3: fast ≤3 s, slow ≤90 s, AHV Admin Guide 11.2).
+   * A member hung at the start of tick `t` is out of the aggregate from the start of tick
+   * `t + detect`, before that tick's traffic, so its flows are blackholed for exactly `detect`
+   * ticks (`inferred`: the real timeout counts from the last LACPDU, up to 1 s / 30 s before the
+   * hang, so `detect` is the upper bound). The network calls `fireDueLacp` at the start of each
+   * tick; the engine timer is kept so "fast-forward to next timer" sees the deadline, and fires
+   * the same detection if nothing else did.
+   */
   private startLacpTimer(nic: string): void {
     const cfg = this.env.config();
     const seconds = this.rate === 'fast' ? cfg.lacpFastDetectS : cfg.lacpSlowDetectS;
@@ -358,20 +428,33 @@ export class BondRuntime {
       `lacp-detect ${this.id}/${nic} (${this.rate})`,
       seconds,
       { cite: [], confidence: 'inferred' },
-      () => {
-        this.lacpTimers.delete(nic);
-        this.lacpDown.add(nic);
-        const ev = this.env.emit({
-          severity: 'warn',
-          deviceId: this.id,
-          code: 'net.bond.lacp-timeout',
-          text: `${this.label}: no LACPDUs on ${nic} for ${seconds}s (${this.rate} rate)`,
-          causeIds: startCauses,
-        });
-        this.env.withCauses([ev], () => this.env.reconcile());
-      },
+      () => this.lacpTimeout(nic),
     );
     this.lacpTimers.set(nic, handle);
+    this.lacpStart.set(nic, { causes: startCauses, seconds });
+  }
+
+  /** Detect every hung member whose LACP deadline is due at `now` (start of tick). */
+  fireDueLacp(now: SimTime): void {
+    for (const [nic, h] of [...this.lacpTimers]) if (h.dueAt <= now) this.lacpTimeout(nic);
+  }
+
+  private lacpTimeout(nic: string): void {
+    const h = this.lacpTimers.get(nic);
+    if (!h) return;
+    this.env.timers.cancel(h);
+    this.lacpTimers.delete(nic);
+    const start = this.lacpStart.get(nic);
+    this.lacpStart.delete(nic);
+    this.lacpDown.add(nic);
+    const ev = this.env.emit({
+      severity: 'warn',
+      deviceId: this.id,
+      code: 'net.bond.lacp-timeout',
+      text: `${this.label}: no LACPDUs on ${nic} for ${start?.seconds ?? '?'}s (${this.rate} rate)`,
+      causeIds: start?.causes ?? [],
+    });
+    this.env.withCauses([ev], () => this.env.reconcile());
   }
 
   // ── Forwarding ────────────────────────────────────────────────────────────

@@ -156,6 +156,63 @@ describe('balance-slb (MAC pinning)', () => {
   });
 });
 
+describe('hashed-bond failover (SPEC §5.3 "On failover")', () => {
+  const pinning = (snap: ReturnType<ReturnType<typeof probeSim>['tick']>) =>
+    JSON.parse(String(snap.devices['h1.vs1']?.fields.pinning)) as Record<string, string>;
+
+  it('balance-slb: re-pins the dead member’s vNICs at once and reports net.bond.failover', () => {
+    const s = probeSim(fabric({ mode: 'balance-slb' }), [
+      { src: H1, dst: 'tgt.ep0' },
+      { src: 'h1.cvm.ep20', dst: 'tgt.ep20' },
+    ]);
+    const before = pinning(s.tick());
+    const victim = before[H1];
+    expect(victim).toBeDefined();
+    const survivor = victim === 'h1.eth0' ? 'h1.eth1' : 'h1.eth0';
+    s.applyAction({ kind: 'fail', target: victim ?? '' });
+    const snap = s.tick();
+    expect(pinning(snap)[H1]).toBe(survivor);
+    const ev = snap.events.find((e) => e.code === 'net.bond.failover');
+    expect(ev?.deviceId).toBe('h1.vs1');
+    expect(s.causalChain(`e${ev?.seq}`)[0]?.code).toBe('action.fail');
+    expect(codes(snap)).not.toContain('net.bond.vlan-stranded');
+  });
+
+  it('balance-slb, isolated VLANs (VLAN-aware): a vNIC with no surviving carrier is stranded', () => {
+    const s = probeSim(fabric({ mode: 'balance-slb', vlansA: [10], vlansB: [20] }), [
+      { src: H1, dst: 'tgt.ep0' },
+      { src: 'h1.cvm.ep20', dst: 'tgt.ep20' },
+    ]);
+    expect(pinning(s.tick())).toEqual({ [H1]: 'h1.eth0', 'h1.cvm.ep20': 'h1.eth1' });
+    s.applyAction({ kind: 'fail', target: 'h1.eth0' });
+    const snap = s.tick();
+    expect(pinning(snap)).toEqual({ 'h1.cvm.ep20': 'h1.eth1' });
+    expect(codes(snap)).toContain('net.bond.vlan-stranded');
+    expect(codes(snap)).not.toContain('net.bond.failover');
+    expect(traceOf(snap, H1, 'tgt.ep0')).toMatchObject({
+      result: 'dropped',
+      reason: 'bond-no-member',
+      detail: 'no-uplink-carries-vlan',
+    });
+  });
+
+  it('balance-tcp: an LACP timeout moves the hung member’s flows, caused by the timeout', () => {
+    const s = probeSim(fabric({ mode: 'balance-tcp', mlag: true }), flows(H1, 'tgt.ep1', 8));
+    s.tick();
+    s.applyAction({ kind: 'hang', target: 'l-h1-eth0' });
+    s.tick(2);
+    const snap = s.tick(); // T=4: detection 3 s after the hang (T=2)
+    expect(snap.simTime).toBe(4);
+    expect(dropped(traces(snap)).length).toBeGreaterThan(0);
+    const detected = s.tick();
+    const ev = detected.events.find((e) => e.code === 'net.bond.failover');
+    expect(ev).toBeDefined();
+    expect(s.causalChain(`e${ev?.seq}`).map((e) => e.code)).toContain('net.bond.lacp-timeout');
+    expect(dropped(traces(detected))).toEqual([]);
+    expect(egresses(traces(detected))).toEqual(['h1.eth1']);
+  });
+});
+
 describe('balance-tcp (LACP)', () => {
   it('spreads several TCP flows from one MAC across both uplinks (MLAG)', () => {
     const s = probeSim(fabric({ mode: 'balance-tcp', mlag: true }), [
@@ -226,7 +283,8 @@ describe('balance-tcp (LACP)', () => {
     for (let i = 0; i < 6; i++) drops.push(dropped(traces(s.tick())).length);
     const lost = drops[0] ?? 0;
     expect(lost).toBeGreaterThan(0);
-    expect(drops).toEqual([lost, lost, lost, lost, 0, 0]); // T=1..4 lost; detected at T=4
+    // Hung from T=1; detected at the start of T=4, before its traffic: exactly 3 s blackholed.
+    expect(drops).toEqual([lost, lost, lost, 0, 0, 0]);
     const timeout = s.eventLog().find((e) => e.code === 'net.bond.lacp-timeout');
     expect(timeout?.t).toBe(4);
     expect(s.causalChain(`e${timeout?.seq}`)[0]?.code).toBe('action.hang');
@@ -243,9 +301,12 @@ describe('balance-tcp (LACP)', () => {
     const first = s.tick();
     expect(first.nextTimerAt).toBe(91);
     expect(dropped(traces(first))[0]).toMatchObject({ reason: 'port-down', detail: 'hung' });
-    expect(dropped(traces(s.runUntilNextTimer())).length).toBeGreaterThan(0); // T=91 still lost
-    expect(s.getSnapshot().simTime).toBe(91);
-    expect(dropped(traces(s.tick()))).toEqual([]);
+    expect(dropped(traces(s.tick(89))).length).toBeGreaterThan(0); // T=90 still lost
+    // Detected at the start of T=91 (90 s after the hang), before that tick's traffic.
+    const detected = s.runUntilNextTimer();
+    expect(detected.simTime).toBe(91);
+    expect(dropped(traces(detected))).toEqual([]);
+    expect(s.eventLog().find((e) => e.code === 'net.bond.lacp-timeout')?.t).toBe(91);
   });
 
   it('a hung switch (no carrier loss) is detected on every host bond', () => {

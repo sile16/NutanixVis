@@ -46,5 +46,8 @@ export default defineScenario({
   narrative:
     "Every array IP on storage VLAN 10 is disabled, on both controllers. Each CVM's VLAN-10 vNIC loses all of its paths after the keep-alive timeout, while the VLAN-20 paths carry all the IO. This is why at least two storage VLANs are recommended.",
   cite: ['everpure-nutanix-net-bp', 'nvme-base-spec', 'everpure-ana-faq'],
+  // todo until the workload issues at least one IO per NVMe path per tick (src/domain/workload/io.ts:
+  // 2 reads + 2 writes, queue depth 32): with 1 + 1 a tick's two IOs can both land on the
+  // silently lost paths, so the VM reads io-stalled for that tick although IO is flowing.
   status: 'todo',
 });

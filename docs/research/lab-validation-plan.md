@@ -33,6 +33,8 @@
 | L9 | **Node-failure tolerance N−2 / N−3** (cluster size dependent) | Power off 2 hosts at once on a 4-node cluster | Service recovery time. That no manual intervention was needed. |
 | L10 | **FA management API unreachable** (running IO should be unaffected) | Block the FA mgmt VIP from the CVM network | That IO continues. Which tasks fail, and their error text. |
 | L11 | **MTU mismatch** | Set the switch MTU to 1500 with endpoints at 9000 | Small-IO vs large-IO behavior. Alerts raised. |
+| L12 | **Multipath policy and path usage for one vDisk** (active-active vs active-passive; IO queues per path) | One VM, one vDisk, steady fio. Repeat under each `vs1` bond mode the lab allows. | Per-FA-port IO for that host (Purity per-port stats). CVM TCP connections to the FA ports (`ss`). Per-uplink counters (`ovs-appctl bond/show`, NIC stats). |
+| L13 | **MAC-pinning pinning and rebalance**: whether both storage vNICs land on different uplinks, and how fast a rebalance happens | Steady load, then skew load onto one vNIC | `ovs-appctl bond/show` hash-to-member over time |
 
 ## Questions for the owner
 

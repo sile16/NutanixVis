@@ -192,10 +192,21 @@ This keeps the reference's key property that all devices see a consistent snapsh
 - **Port, Link, Switch.** Links have `up/down`, `latencyMs` (illustrative) and `mtu`. Ports have admin and oper state. Failing a device takes its ports down.
 - **VLAN-aware L2.** Switch ports are `access(vlan)` or `trunk(vlans[])`, and an ISL is just a trunk link. Delivery is computed by BFS over up links in the frame's VLAN, which replaces the reference's flooding with no MAC learning. The result is the same, but it is deterministic and cheaper.
 - **Endpoint.** An IP interface on a VLAN, owned by a device (CVM storage vNIC, FA ct0.eth10, FA mgmt, Prism VIP). Messages go endpoint-to-endpoint.
-- **Bond (AHV OVS).**
-  - Modes: `active-backup` (default), `balance-slb` and `balance-tcp` (LACP, with a `fast` or `slow` timer).
-  - Bonds decide which member link a frame egresses on.
-  - LACP failure detection follows the documented fast ≤3 s and slow ≤90 s timers, so a slow-LACP member failure blackholes its hashes until detection.
+- **Flows.** Every message carries a flow identity: `{srcMac, vlan, srcIp, dstIp, srcPort, dstPort}`. Bonds pick a member link by that identity, so how paths spread over uplinks falls out of the model rather than being scripted.
+- **Bond (AHV OVS virtual switch).** Modes follow AHV Admin Guide 11.2 Table 9. Each mode decides which member link each flow egresses on:
+
+  | Mode (Prism name) | OVS mode | Member selection | Switch requirement | Max per-vNIC bandwidth |
+  |---|---|---|---|---|
+  | Active-Backup | `active-backup` | All flows use the single active member | None | 1 link |
+  | Active-Active with MAC pinning | `balance-slb` | Per **source MAC + VLAN**: each vNIC is pinned to one member. Hash buckets are periodically **rebalanced** by load; the OVS default interval is 10 s, and whether Nutanix overrides it is an `assumption`. | Plain trunk ports. **No LAG/LACP.** | 1 link |
+  | Active-Active | `balance-tcp` + LACP | Per **L4 flow**: each TCP connection is hashed to a member | LAG + LACP. Across two switches this needs **MLAG/vPC**. Fast rate (1 s) by default, with fallback to active-backup. | All links |
+  | No uplink bond | — | 0 or 1 uplink | None | 1 link |
+
+- **Failure detection in bonds:**
+  - **Carrier loss** (NIC, cable or switch port down) is detected immediately in every mode.
+  - **Failures without carrier loss** (a hung switch, a unidirectional link) are only detected by LACP: within about 3 s on the fast rate, or up to 90 s on slow (AHV Admin Guide).
+  - On failover, the vNICs or flows on the dead member move to a survivor, and the switches relearn the MACs.
+  - **Misplacement.** If the VLAN a vNIC uses is not carried on the surviving member's switch, its traffic blackholes. The bond is not VLAN-aware.
 - **MTU mismatch.** Messages are tagged with a size class (`small` for heartbeats and keep-alives, `large` for 1 MiB IO). Large frames are dropped on links whose MTU is lower than the endpoint MTU, so the "small IO works, large IO stalls" misconfiguration can be shown.
 - **Latency.** Latency accumulates along the path into IO latency reported by VMs. It is illustrative only and never drives timing.
 
@@ -376,6 +387,39 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 - Per the default path-loss handling, VM IO retries until the array returns.
 - The exact guest-visible effect (how long until guest OS IO errors) is an `assumption` (**[OPEN-7]**).
 
+### 6.4b Path usage: how one vDisk's IO spreads (T1)
+
+This model drives both the IO distribution and the **path-usage view** in the UI.
+
+**Layers, top to bottom**
+
+1. **vDisk → CVM.** Each vDisk is locked to exactly one Stargate, normally the CVM on the VM's host, and that Stargate holds the NVMe Persistent Reservation (BIBLE-ARCH). A vDisk's IO therefore only ever leaves through **that one node's** `vs1` uplinks. IO is spread across nodes by VM placement, not by multipathing.
+2. **CVM storage vNICs.** Each storage segment (internal interface with External Storage enabled, one VLAN) gives each CVM **one vNIC and one IP** (DEPLOY-GUIDE "Creating an Internal Interface"). With the recommended ≥2 storage VLANs (NET), each CVM has ≥2 storage vNICs, each with its own MAC.
+3. **NVMe paths.** One NVMe controller connects each CVM storage vNIC to each FA target port on the same VLAN. In the default topology that is 2 vNICs × 2 FA ports per VLAN = **4 paths per CVM**, all ANA Optimized.
+   - **Connections per path.** Each path is several TCP connections: 1 admin queue + Q IO queues, as defined by the NVMe/TCP spec. Q is an `assumption`, default 4.
+4. **Multipath policy** (Stargate/SPDK). The policy Nutanix configures **is not public**. SPDK supports both of these, so the simulator offers both as a profile option with the `assumption` label until lab L12 settles it:
+   - `active-active` (default): round-robin of each vDisk's IO across all live Optimized paths.
+   - `active-passive`: one active path per vDisk, with vDisks spread across paths and failover on path loss.
+5. **Bond.** The bond maps each path's TCP connections onto uplinks (§5.3).
+
+**Can one vDisk use both uplinks?**
+
+| `vs1` bond | Multipath active-active | Multipath active-passive |
+|---|---|---|
+| Active-Backup | **No.** Every path is on the single active uplink. | No |
+| MAC pinning (balance-slb) | **Yes, but split by vNIC.** The VLAN-A vNIC is pinned to one uplink and the VLAN-B vNIC usually to the other. Pinning is by hash, so both can land on the same uplink until a rebalance. | **No** for one vDisk, whose single path is on one uplink. Many vDisks spread across both uplinks. |
+| LACP (balance-tcp) | **Yes.** Each path's TCP connections are hashed across both uplinks. | **Partly.** A single path's IO-queue connections can still hash to both uplinks. |
+
+**Failover interplay** (see §6.4a):
+
+- **Bond-level failures** (a node NIC, cable or switch port) are absorbed by the bond when the VLAN exists on the surviving switch. No NVMe path is lost.
+- **Multipath-level failures** (FA ports, FA controller, a switch or the FA-side links) remove paths. The policy then redistributes IO over the paths that remain.
+
+**UI: path-usage view**
+
+- Selecting a VM or vDisk highlights its owning CVM, its active NVMe paths, and the uplink each path's connections use, with per-uplink and per-FA-port share bars.
+- A node-level toggle shows **bond member utilization** and the vNIC → uplink pinning, which updates live on rebalance and failover.
+
 ### 6.4a Failure-mode matrix (what fails, what detects it, what happens)
 
 This is the reference that E, F, G and H implement. Each row is about **one** failure layer.
@@ -434,7 +478,9 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 - **Two storage VLANs**, **tagged on both switches** (default), following NET's VLAN-tagging recommendation.
 - The FA has ct0.eth10 and ct1.eth10 on Switch A, and ct0.eth11 and ct1.eth11 on Switch B, plus FA mgmt.
 - **Options:**
-  - **Strict A/B**, where each VLAN exists on only one switch. Bond failover then can't save a path, which is a teaching scenario.
+  - **Bond mode** for `vs1`: Active-Backup, MAC pinning (default), or LACP. LACP needs an MLAG toggle; LACP without MLAG across two switches is a misconfiguration.
+  - **Multipath policy:** active-active (default) or active-passive. This is an `assumption` until lab L12.
+  - **Strict A/B**, where each VLAN exists on only one switch. Bond failover then can't save a path, and with MAC pinning a rebalance can strand a vNIC on the wrong switch even without a failure. Both are teaching scenarios.
   - **Single-VLAN** misconfiguration.
   - **MTU** 1500 vs 9000 mismatch.
 
@@ -502,6 +548,11 @@ T1 (AHV + FlashArray):
 11. Misconfiguration: single storage VLAN, then a switch failure.
 12. Misconfiguration: MTU mismatch.
 13. The FA mgmt API is unreachable, so snapshots fail while IO continues.
+14. **Bond comparison, steady state.** The same VM under Active-Backup, MAC pinning and LACP, showing which uplinks its vDisk's paths and connections use, combined with the active-active and active-passive multipath policies.
+15. **Bond comparison, one node NIC down.** In each mode, check whether any NVMe path is lost, how long the blip lasts, and how the load redistributes.
+16. **MAC pinning + strict A/B.** A rebalance pins the VLAN-A vNIC to the uplink on Switch B, and its paths blackhole with no hardware failure (misconfiguration).
+17. **LACP across two switches without MLAG** (misconfiguration).
+18. **LACP slow rate with a hung switch** (no carrier loss): hashes blackhole for up to 90 s, compared with about 3 s on the fast rate.
 
 T2 (HCI AHV):
 

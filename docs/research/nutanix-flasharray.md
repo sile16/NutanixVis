@@ -117,6 +117,26 @@ The bond only saves a path if the VLAN is present on the surviving uplink's swit
 - The SPDK path selection policy.
 - The order in which the bond and the initiator react to a switch failure.
 
+## 2b. Bond types and path spreading
+
+From the AHV 11.2 Administration Guide, Table 9 "Bond Types":
+
+- **Active-Backup.** Recommended for `vs0`. "transmits all traffic over a single active adapter."
+- **Active-Active with MAC pinning (balance-slb).** "Places each VM NIC on a single adapter at a time. Do not use this bond type with link aggregation protocols such as LACP." Maximum host throughput is 2 links, and per-vNIC throughput is 1 link.
+- **Active-Active (balance-tcp).** "LACP and link aggregation required. … balancing VM NIC TCP and UDP sessions among adapters." Defaults to "Speed—Fast (1s)" and "Mode—Active fallback-active-backup".
+- **No Uplink Bond.** 0 or 1 uplinks. Every other bond type needs at least 2 uplinks per node.
+- **Uniformity.** Do not mix bond modes across hosts in a cluster.
+
+From the deployment guide ("Creating an Internal Interface"): each storage segment uses one VLAN on `vs1`, and **each host takes one IP from the segment's pool**. So the number of storage vNICs per CVM equals the number of storage segments. Everpure recommends at least 2 (NET).
+
+**Not documented publicly:**
+
+- The Stargate/SPDK multipath policy. SPDK's NVMe bdev supports both active-passive and active-active (round-robin or queue-depth selection).
+- The number of IO queues (TCP connections) per NVMe controller.
+- Whether Nutanix tunes the OVS `balance-slb` rebalance interval. The OVS default is 10 s.
+
+These are `assumption` values in the model and are tested by lab experiments L12 and L13.
+
 ## 3. FlashArray controller HA
 
 **Architecture.**

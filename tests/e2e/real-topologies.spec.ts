@@ -189,13 +189,16 @@ test('reset clears the Explain selection (event numbers restart)', async ({ page
   await expect(page.getByTestId('explain-panel')).toContainText('Last tick');
 });
 
-test('an action the engine rejects says why; forms show the current value', async ({ page }) => {
+test('forms show the current value; enabling MLAG pairs an unpaired switch', async ({ page }) => {
+  // (Rejected-action messages are covered by src/ui/panels/action-params.test.ts.)
   await open(page, 't1-ahv-flasharray');
   await selectDevice(page, 'sw-a');
   const form = page.getByTestId('action-fabric.set-mlag').locator('xpath=ancestor::form');
   await expect(form.locator('option', { hasText: '(current)' })).toHaveText('off (current)');
   await applyAction(page, 'fabric.set-mlag', { MLAG: 'on' });
-  await expect(page.getByTestId('action-rejected-fabric.set-mlag')).toContainText('MLAG domain');
+  await expect(page.getByTestId('action-rejected-fabric.set-mlag')).toHaveCount(0);
+  await page.getByTestId('step').click();
+  await expect(form.locator('option', { hasText: '(current)' })).toHaveText('on (current)');
 });
 
 test('the FlashArray VIP is drawn in the controller that holds it, and follows failover', async ({

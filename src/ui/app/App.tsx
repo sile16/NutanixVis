@@ -14,7 +14,7 @@ import { Button, Select } from '../components/controls';
 import { Diagram } from '../diagram/diagram';
 import { RightRail } from '../panels/right-rail';
 import { SimProvider } from '../store/sim-context';
-import { type ThemePref, useUi } from '../store/ui-store';
+import { type ThemePref, topologyFromHash, useUi } from '../store/ui-store';
 import { usePlayback } from '../store/use-playback';
 import { catalog } from './catalog';
 import { loadThemePref, saveThemePref, useResolvedTheme } from './theme';
@@ -28,6 +28,30 @@ const THEME_NEXT: Readonly<Record<ThemePref, ThemePref>> = {
   light: 'dark',
   dark: 'system',
 };
+
+/**
+ * Keep `#topology=<id>` and the selected topology in sync both ways: picking a topology writes the
+ * hash (so reload and shared links keep it), and editing the hash or going back switches.
+ */
+function useTopologyHash(topologyId: string) {
+  const setTopology = useUi((s) => s.setTopology);
+  useEffect(() => {
+    if (topologyFromHash(window.location.hash) === topologyId) return;
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    params.set('topology', topologyId);
+    window.history.replaceState(null, '', `#${params.toString()}`);
+  }, [topologyId]);
+  useEffect(() => {
+    const onHash = () => {
+      const id = topologyFromHash(window.location.hash);
+      if (id && id !== useUi.getState().topologyId && catalog.some((t) => t.id === id)) {
+        setTopology(id);
+      }
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [setTopology]);
+}
 
 function PlaybackDriver() {
   usePlayback();
@@ -153,6 +177,7 @@ export function App() {
 
   const entry = catalog.find((t) => t.id === topologyId) ?? catalog[0];
   if (!entry) throw new Error('fixture catalog is empty');
+  useTopologyHash(entry.id);
   const resolved = resolveVersions(matrix, versions);
   const selection = toVersionSelection(matrix, resolved, entry.hasFlashArray);
   // biome-ignore lint/correctness/useExhaustiveDependencies: rebuild on topology/version/reset only

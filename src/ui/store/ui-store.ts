@@ -3,6 +3,32 @@
  * Simulation state never lives here; it comes from `Simulation` snapshots (see `use-sim.ts`).
  */
 import { create } from 'zustand';
+import {
+  parseTrafficFilter,
+  presetFilter,
+  type TrafficFilter,
+  type TrafficPreset,
+  toggleCategory,
+} from '../diagram/traffic';
+
+const TRAFFIC_KEY = 'nutanixvis.traffic';
+
+function loadTrafficFilter(): TrafficFilter {
+  try {
+    return parseTrafficFilter(window.localStorage.getItem(TRAFFIC_KEY));
+  } catch {
+    return parseTrafficFilter(null);
+  }
+}
+
+function saveTrafficFilter(f: TrafficFilter): TrafficFilter {
+  try {
+    window.localStorage.setItem(TRAFFIC_KEY, JSON.stringify(f));
+  } catch {
+    // storage unavailable (private mode): the choice lasts for this page only
+  }
+  return f;
+}
 
 export type Selection =
   | { readonly type: 'device'; readonly id: string }
@@ -43,6 +69,8 @@ export interface UiState {
   layoutEdit: boolean;
   explainEvent: number | null;
   theme: ThemePref;
+  /** Which traffic categories the overlay, glow and hover card show (kept across topologies). */
+  traffic: TrafficFilter;
 
   select(sel: Selection | null): void;
   setHoveredLink(h: UiState['hoveredLink']): void;
@@ -62,6 +90,8 @@ export interface UiState {
   setLayoutEdit(on: boolean): void;
   explain(seq: number | null): void;
   setTheme(t: ThemePref): void;
+  toggleTraffic(category: string): void;
+  setTrafficPreset(preset: TrafficPreset): void;
 }
 
 const DEFAULT_TOPOLOGY = 't1-ahv-flasharray';
@@ -76,6 +106,20 @@ function initialTopology(): string {
   if (typeof window === 'undefined') return DEFAULT_TOPOLOGY;
   return topologyFromHash(window.location.hash) ?? DEFAULT_TOPOLOGY;
 }
+
+/**
+ * State reset whenever the simulation is rebuilt. Event sequence numbers restart with a new
+ * simulation, so a remembered `explainEvent` would point at an unrelated event; hover and context
+ * menus refer to elements of the old run.
+ */
+const freshRun = (s: UiState) => ({
+  simEpoch: s.simEpoch + 1,
+  queued: 0,
+  actionsApplied: 0,
+  explainEvent: null,
+  hoveredLink: null,
+  contextMenu: null,
+});
 
 export const useUi = create<UiState>()((set) => ({
   topologyId: initialTopology(),
@@ -96,6 +140,7 @@ export const useUi = create<UiState>()((set) => ({
   layoutEdit: false,
   explainEvent: null,
   theme: 'system',
+  traffic: typeof window === 'undefined' ? presetFilter('all') : loadTrafficFilter(),
 
   select: (selection) => set({ selection, contextMenu: null }),
   setHoveredLink: (hoveredLink) => set({ hoveredLink }),
@@ -109,18 +154,14 @@ export const useUi = create<UiState>()((set) => ({
   noteTicked: () => set((s) => (s.queued === 0 ? s : { queued: 0 })),
   setTopology: (topologyId) =>
     set((s) => ({
+      ...freshRun(s),
       topologyId,
-      simEpoch: s.simEpoch + 1,
       selection: null,
       bondUtilHost: null,
-      queued: 0,
-      actionsApplied: 0,
       playing: false,
     })),
-  setVersions: (versions) =>
-    set((s) => ({ versions, simEpoch: s.simEpoch + 1, queued: 0, actionsApplied: 0 })),
-  resetSim: () =>
-    set((s) => ({ simEpoch: s.simEpoch + 1, queued: 0, actionsApplied: 0, playing: false })),
+  setVersions: (versions) => set((s) => ({ ...freshRun(s), versions })),
+  resetSim: () => set((s) => ({ ...freshRun(s), playing: false })),
   togglePackets: () => set((s) => ({ showPackets: !s.showPackets })),
   setActivityTicks: (activityTicks) => set({ activityTicks }),
   setBondUtilHost: (bondUtilHost) => set({ bondUtilHost }),
@@ -128,4 +169,7 @@ export const useUi = create<UiState>()((set) => ({
   explain: (explainEvent) =>
     set(explainEvent === null ? { explainEvent } : { explainEvent, tab: 'explain' }),
   setTheme: (theme) => set({ theme }),
+  toggleTraffic: (category) =>
+    set((s) => ({ traffic: saveTrafficFilter(toggleCategory(s.traffic, category)) })),
+  setTrafficPreset: (preset) => set({ traffic: saveTrafficFilter(presetFilter(preset)) }),
 }));

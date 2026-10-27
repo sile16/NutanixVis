@@ -36,6 +36,9 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    # Same image the Linux visual baselines were rendered in, so fonts/rendering match.
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -44,7 +47,6 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm e2e
         env:
           CI: "true"

@@ -2,26 +2,26 @@
  * App shell (SPEC §8): header (brand, topology picker, version selector, clock, time controls),
  * the diagram in the centre and the tabbed right rail.
  *
- * Until integration, topologies and simulations come from the fixture catalog and the version
- * matrix from a fixture (see `src/fixtures`). Stream I swaps both for the real modules.
+ * Topologies come from `src/topologies` via the loader (`./catalog`), plus fixture demo entries
+ * with scripted traffic; versions come from the real version matrix.
  */
 import { Eye, EyeOff, Monitor, Moon, Move, RotateCcw, Sun } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
-import { type CatalogEntry, fixtureCatalog } from '../../fixtures/catalog';
-import { fixtureVersionMatrix } from '../../fixtures/version-matrix';
+import { matrix as versionMatrix } from '../../domain/versions';
+import type { CatalogEntry } from '../../fixtures/catalog';
 import { Button, Select } from '../components/controls';
 import { Diagram } from '../diagram/diagram';
 import { RightRail } from '../panels/right-rail';
 import { SimProvider } from '../store/sim-context';
 import { type ThemePref, useUi } from '../store/ui-store';
 import { usePlayback } from '../store/use-playback';
+import { catalog } from './catalog';
 import { loadThemePref, saveThemePref, useResolvedTheme } from './theme';
 import { SimClock, TimeControls } from './time-controls';
 import { VersionSelector } from './version-selector';
 import { resolveVersions, toVersionSelection } from './versions';
 
-const matrix = fixtureVersionMatrix;
-const catalog = fixtureCatalog;
+const matrix = versionMatrix;
 const THEME_NEXT: Readonly<Record<ThemePref, ThemePref>> = {
   system: 'light',
   light: 'dark',

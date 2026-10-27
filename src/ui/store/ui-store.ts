@@ -61,8 +61,21 @@ export interface UiState {
   setTheme(t: ThemePref): void;
 }
 
+const DEFAULT_TOPOLOGY = 't1-ahv-flasharray';
+
+/** `#topology=<id>` in the URL picks the initial topology (first step toward share links). */
+export function topologyFromHash(hash: string): string | null {
+  const v = new URLSearchParams(hash.replace(/^#/, '')).get('topology');
+  return v && v.length > 0 ? v : null;
+}
+
+function initialTopology(): string {
+  if (typeof window === 'undefined') return DEFAULT_TOPOLOGY;
+  return topologyFromHash(window.location.hash) ?? DEFAULT_TOPOLOGY;
+}
+
 export const useUi = create<UiState>()((set) => ({
-  topologyId: 't1-ahv-flasharray',
+  topologyId: initialTopology(),
   versions: { nutanix: '', flasharray: undefined },
   simEpoch: 0,
   selection: null,

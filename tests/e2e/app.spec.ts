@@ -5,8 +5,9 @@ import { expect, type Page, test } from '@playwright/test';
 const T1_DEVICES = 61;
 const T1_LINKS = 21;
 
+/** UI-behavior tests run on the scripted fixture demo (deterministic traffic and failures). */
 async function open(page: Page) {
-  await page.goto('./');
+  await page.goto('./#topology=demo-t1-ahv-flasharray');
   await expect(page.getByTestId('node-sw-a')).toBeVisible();
 }
 
@@ -60,21 +61,18 @@ test('Step advances the clock; fast-forward jumps to the next timer', async ({ p
   await expect(page.getByTestId('node-sw-a')).toHaveAttribute('data-status', 'failed');
 });
 
-test('version selector filters FlashArray releases by Nutanix release', async ({ page }) => {
+test('version selector shows the real matrix and filters FlashArray releases', async ({ page }) => {
+  // Multi-release filtering is unit-tested against the fixture matrix (src/ui/app/app-logic.test.ts);
+  // here we check the live matrix (src/domain/versions/matrix.ts) end to end.
   await open(page);
   const nutanix = page.getByTestId('nutanix-version');
   const fa = page.getByTestId('flasharray-version');
   await expect(nutanix).toHaveValue('aos-7.6');
   await expect(fa).toHaveValue('purity-6.12');
-  await expect(fa.locator('option')).toHaveText(['Purity//FA 6.12', 'Purity//FA 6.11.8']);
+  await expect(fa.locator('option')).toHaveText(['Purity//FA 6.12.x', 'Purity//FA 6.11.8+']);
 
-  await nutanix.selectOption('fixture-aos-7.5');
-  await expect(fa.locator('option')).toHaveText(['Purity//FA 6.11.8']);
-  await expect(fa).toHaveValue('purity-6.11.8');
-
-  await nutanix.selectOption('aos-7.6');
-  await expect(fa.locator('option')).toHaveCount(2);
-  await expect(fa).toHaveValue('purity-6.11.8'); // still supported, so kept
+  await fa.selectOption('purity-6.11');
+  await expect(fa).toHaveValue('purity-6.11');
 
   // Topologies without an array hide the FlashArray select.
   await page.getByTestId('topology-select').selectOption('t2-hci-ahv');

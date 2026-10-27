@@ -398,8 +398,9 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 
 | Failure | Detector and timer | IO effect | VM / HA effect | Data effect |
 |---|---|---|---|---|
-| **One NVMe path down** (NIC, port, cable) | Initiator keep-alive, value `assumption` (not public) | IO continues on the remaining paths, all ANA Optimized. Generic multipath retry is about 10 s (HA-Scenarios). | None | None (no RF; the array owns the data) |
-| **One storage switch down** | As above, for each affected path | Each CVM loses the paths through that switch | None | None |
+| **One node storage NIC or cable down** (`vs1` member) | **Bond first.** MAC pinning fails over on link state. LACP detects in ≤3 s (fast) or ≤90 s (slow). | **Trunked VLANs (default):** the CVM's storage interface moves to the surviving uplink, **no NVMe path is lost**, and only a brief blip occurs (`inferred`). **Strict A/B:** the moved interface lands on a switch without its VLAN, so the paths on that VLAN are lost and NVMe multipath takes over (next row). | None | None |
+| **One NVMe path down** (FA port, FA-side cable, or an unrecoverable node-side path) | Initiator keep-alive, value `assumption` (not public) | IO continues on the remaining paths, all ANA Optimized. Generic multipath retry is about 10 s (HA-Scenarios). | None | None (no RF; the array owns the data) |
+| **One storage switch down** | Bond (node side) + keep-alive (FA side) | Node interfaces move to the surviving uplink through the bond. Paths to **FA ports cabled to the dead switch** are lost, and IO continues through the FA ports on the other switch. | None | None |
 | **FA primary controller down** | Secondary sees claim expiry in about 1 s, then promotes | Array-wide pause from a few seconds up to about 16 s. The controller's ports disappear. | None, if the pause is under the guest timeout | None |
 | **FA secondary controller down** | — | Only IO on its paths stalls, then retries on the primary's paths | None | None |
 | **FA IO stall on primary** | IO delay timeout of 15 s, then giveback | Pause of 15 s plus promotion | None | None |
@@ -420,13 +421,21 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 
 **T1 default: AHV + FlashArray**
 
-- **4 AHV nodes**, which gives FT1 plus HA headroom. A 5-node FT2 variant is an option.
+- **4 AHV nodes**, which tolerate 2 simultaneous node failures (N−2, DEPLOY-GUIDE). A 5-node variant shows the N−3 regime.
 - Each node has two virtual switches, each with 2 NICs (DEPLOY-GUIDE Table 2):
   - `vs0` carries mgmt, live migration, DR and application traffic, in Active/Backup.
-  - `vs1` carries NVMe/TCP data only. It uses **Active/Active with LACP when available, otherwise Active/Active with MAC pinning**. Both modes are options, and the default is LACP.
+  - `vs1` carries NVMe/TCP data only, and its NICs are always bonded.
+- **`vs1` bond mode** (see `docs/research/nutanix-flasharray.md` §2a):
+  - **Default: Active/Active with MAC pinning.** This is Everpure's recommendation (NET), it is acceptable to Nutanix, and it needs no MLAG.
+  - **Option: LACP**, which Nutanix prefers when available (DEPLOY-GUIDE). It needs MLAG/vPC across the two switches and has fast/slow detection timers.
+  - **Option: no-bond.** Both vendors discourage it, and it is shown as a misconfiguration.
 - On `vs1`, one NIC goes to Switch A and one to Switch B.
-- The FA has ct0.eth10 (A), ct0.eth11 (B), ct1.eth10 (A) and ct1.eth11 (B), plus FA mgmt.
-- Options: strict A/B, or both VLANs on both switches with an ISL; single-VLAN misconfiguration; MTU 1500 vs 9000 mismatch.
+- **Two storage VLANs**, **tagged on both switches** (default), following NET's VLAN-tagging recommendation.
+- The FA has ct0.eth10 and ct1.eth10 on Switch A, and ct0.eth11 and ct1.eth11 on Switch B, plus FA mgmt.
+- **Options:**
+  - **Strict A/B**, where each VLAN exists on only one switch. Bond failover then can't save a path, which is a teaching scenario.
+  - **Single-VLAN** misconfiguration.
+  - **MTU** 1500 vs 9000 mismatch.
 
 **T2 default: Nutanix HCI on AHV**
 
@@ -604,7 +613,7 @@ Questions 1, 2, 4 and 5 are resolved: AHV only, public repo, React, and the newe
 3. **Logos.** Are any Everpure or Nutanix logos or brand assets cleared for use?
 6. **T1, one CVM loses all NVMe paths.** The deployment guide says IO retries until the array responds, unless a per-VM force-shutdown timeout is set. Before that point, does the iSCSI redirector move VM IO to a remote CVM whose Stargate still has paths, or does the VM stall? The default model is a stall, labeled `assumption`.
 7. **T1, full array loss.** Do VMs pause, or do guests see IO errors, and when? Is there a public source for the integration's NVMe keep-alive, reconnect and controller-loss values and its path policy?
-8. **T1 fabric default.** The bond default is settled: LACP, with MAC pinning as an option, per the deployment guide. Still open: should the default storage fabric be strict A/B (no ISL) or trunked with an ISL? The deployment guide's sample uses 4 storage VLANs, one per FA NIC port.
+8. **T1 bond default.** The proposal is MAC pinning (Everpure KB) with both VLANs tagged on both switches, with LACP and strict A/B as options. Confirm this, or pick LACP (Nutanix's preference).
 9. **Scope.** Is ActiveCluster or ActiveDR wanted in v1, or later?
 
 ---

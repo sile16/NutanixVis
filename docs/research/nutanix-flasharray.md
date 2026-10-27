@@ -76,6 +76,13 @@
 - **Virtual switches** (DEPLOY-GUIDE Table 2): two virtual switches, each with at least 2 physical NICs.
   - `vs0` carries management, live migration, DR replication and application traffic. Its bond is Active/Backup or Active/Active, and its MTU is 1500.
   - `vs1` carries **storage data only**. Its bond is **Active/Active with LACP when available, otherwise Active/Active with MAC pinning**. Nutanix recommends LACP on the switch ports that carry storage traffic.
+- **Everpure bonding guidance** (NET):
+  - "You should configure the Ethernet interfaces on the Nutanix nodes in Active/Active with MAC pinning for NVMe/TCP traffic."
+  - "Nutanix and Everpure do not recommend configuring Ethernet interfaces using No-Bond modes, but as with many recommendations there can be exceptions." Customers with such a need should confirm with their Nutanix team.
+- **Storage VLANs and switches** (NET):
+  - Use "at least two VLANs dedicated to NVMe/TCP data storage traffic". More are allowed, with limited benefit.
+  - "configure VLAN tagging between the nodes and the switches and between the switches and the arrays."
+  - Dedicated switches per VLAN, trunked switches, and vPC/MLAG are all acceptable designs.
 - **Jumbo frames.** MTU 9000 is optional but recommended end to end. The supported range is 1280–9000 (DEPLOY-GUIDE). Use MTU 9216 on the fabric (NET).
 - **FA storage ports.** 2 or 4 interfaces per controller, at 25 or 100 GbE. The sample configuration gives each FA NIC port its own subnet and VLAN, 4 VLANs in total (DEPLOY-GUIDE Table 11).
 - **Everpure guidance** (NET, CFG):
@@ -86,6 +93,29 @@
 - **ANA.** A physical FA reports **every path as ANA Optimized**, including paths on the secondary controller (ANA-FAQ).
 - **Initiator timers.** The keep-alive, reconnect and controller-loss values used by the integration are **not publicly documented** (gap), so they are labeled `assumption` in the model. TCP-BP gives generic host guidance that does not apply to this integration.
 - **Path selection policy.** Not publicly documented (gap). The model assumes round-robin across live Optimized paths.
+
+## 2a. Bond vs individual NICs: why this differs from generic Linux NVMe/TCP guidance
+
+**The generic pattern.** Everpure's generic host guidance for Linux NVMe/TCP and iSCSI is to use **unbonded NICs on separate subnets, with multipathing in the host OS** (native NVMe multipath or dm-multipath). That pattern assumes the OS that owns the initiator also owns the physical NICs.
+
+**Why it doesn't apply here.** In this integration that is not true:
+
+1. **The initiator is inside a VM.** It is SPDK, running in the CVM as part of Stargate (BIBLE-ARCH). The AHV host OS does no NVMe/TCP, and there is no multipathd.
+2. **The CVM reaches the network through an AHV virtual switch.** Its storage interfaces are vNICs on `vs1`, and `vs1` reaches the wire through an OVS bond of at least 2 physical NICs (DEPLOY-GUIDE Table 2). The physical NICs can't be handed to the initiator directly.
+3. **Multipathing still happens above the bond, but in Nutanix's software.** BIBLE-ARCH says multipathing and queue depth are "entirely done in software by Nutanix and the storage vendor" and that "No manual protocol network configuration is required." Paths come from the CVM's storage interfaces on at least 2 VLANs times the FA target ports.
+
+**The result: two failure-handling layers.**
+
+- **Bond (below):** handles a node NIC or cable failure by moving the vNIC's MAC to the surviving uplink.
+- **NVMe multipath (above):** handles the loss of an FA port, an FA controller, a switch-to-FA link, or a path the bond couldn't save.
+
+The bond only saves a path if the VLAN is present on the surviving uplink's switch. That is the practical reason for NET's VLAN-tagging recommendation. The two-layer interaction is `inferred` from the documented components; neither vendor publishes it as a failure walkthrough.
+
+**Not publicly documented:**
+
+- How many storage interfaces or IPs each CVM gets per VLAN.
+- The SPDK path selection policy.
+- The order in which the bond and the initiator react to a switch failure.
 
 ## 3. FlashArray controller HA
 

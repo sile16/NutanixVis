@@ -25,7 +25,7 @@ const aos76: NutanixRelease = {
   ahv: '11.2',
   profileId: 'current',
   flasharray: [
-    { id: 'purity-6.12', label: 'Purity//FA 6.12.x' },
+    { id: 'purity-6.12', label: 'Purity//FA 6.12.x (6.12.1+ recommended)' },
     { id: 'purity-6.11', label: 'Purity//FA 6.11.8+' },
   ],
   cite: aos76Cite,

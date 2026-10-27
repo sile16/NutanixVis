@@ -859,7 +859,7 @@ Stream H raised these while writing the acceptance scenarios. Each is labeled wi
 
 ## 15. Field deployment input (2026-10-27)
 
-Owner-supplied field practice from deployment walkthroughs. Items that come only from internal recordings are kept in `docs/internal/` until the owner approves citing them.
+Owner-supplied field practice from deployment walkthroughs. The full comparison of designs, with pros and cons, is in `docs/research/storage-network-configs.md`. Setup and verification commands are in `docs/commands.md`.
 
 ### 15.1 Storage network layout: three supported shapes, all modeled
 
@@ -879,3 +879,4 @@ Owner-supplied field practice from deployment walkthroughs. Items that come only
 - **Jumbo frames.** Field practice treats MTU 9000 as required on the storage vswitch and interface. The deployment guide calls it recommended, with a 1500 default. The existing `mtu` option covers both; scenario narratives should say that 9000 end to end is the norm.
 - **Pod quota counts provisioned size, not used size** (DEPLOY-GUIDE also warns about quota limits). Add a misconfiguration scenario: VM or disk create fails once provisioned capacity exceeds the quota, while running IO is unaffected.
 - **UI: vDisk → FA volume name.** Prism Central shows each vDisk's backing FA volume name. Show it in the VM and vDisk inspector.
+- **Version notes.** Purity 6.12.0 is the minimum, and **6.12.1+ is recommended** (shown in the selector label). **R3 arrays cannot run 6.12.x**, so they use 6.11.8; backlog: an FA model/generation topology option that filters the FlashArray list. Upgrade Purity first and never upgrade both at once; this is backlog for a guided NDU/upgrade scenario.

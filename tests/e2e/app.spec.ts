@@ -69,7 +69,10 @@ test('version selector shows the real matrix and filters FlashArray releases', a
   const fa = page.getByTestId('flasharray-version');
   await expect(nutanix).toHaveValue('aos-7.6');
   await expect(fa).toHaveValue('purity-6.12');
-  await expect(fa.locator('option')).toHaveText(['Purity//FA 6.12.x', 'Purity//FA 6.11.8+']);
+  await expect(fa.locator('option')).toHaveText([
+    'Purity//FA 6.12.x (6.12.1+ recommended)',
+    'Purity//FA 6.11.8+',
+  ]);
 
   await fa.selectOption('purity-6.11');
   await expect(fa).toHaveValue('purity-6.11');

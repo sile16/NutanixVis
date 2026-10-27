@@ -4,6 +4,7 @@ import {
   alwaysFrom,
   at,
   baseInvariants,
+  before,
   by,
   cvm,
   derived,
@@ -21,7 +22,8 @@ const SECOND = nodeId(3);
 
 /** After the rebuild and the ring detach have both finished, a second failure is survivable. */
 function afterRebuild(): ScenarioDef {
-  // Rebuild duration is modeled by stream G; the detach at 30 min comes later, so wait for both.
+  // Wait for both the ring detach (30 min) and the rebuild (data ÷ rate, about 32 min with the
+  // default assumptions, see t2-02); the first expectation guards this if those change.
   const SECOND_AT = T0 + P.cluster.cassandraRingDetachS + 600;
   const END = by(HA.restartByS, SECOND_AT) + 30;
   return defineScenario({
@@ -54,7 +56,7 @@ function afterRebuild(): ScenarioDef {
     narrative:
       'Node 4 fails, Curator restores every extent group to two copies on the remaining nodes, and after 30 minutes node 4 is detached from the metadata ring. When node 3 fails later, every piece of data and metadata still has a live majority, so storage stays up and HA restarts the VMs on the last two nodes. The cluster now has no failure tolerance left.',
     cite: ['ntnx-bible-4i', 'ntnx-bible-5b', 'ntnx-kb-1256'],
-    status: 'todo',
+    status: 'active',
   });
 }
 
@@ -62,7 +64,10 @@ function afterRebuild(): ScenarioDef {
 function duringRebuild(): ScenarioDef {
   const SECOND_AT = T0 + 30;
   const RETURN_AT = SECOND_AT + 600;
-  const END = by(HA.restartByS, RETURN_AT) + 30;
+  // Node 4's replicas are reachable again once its CVM has booted and Stargate is up
+  // (`cluster.cvmBootS`, SPEC §14 #9), not when HA restarts VMs.
+  const BACK_BY = by(P.cluster.cvmBootS, RETURN_AT);
+  const END = BACK_BY + 30;
   return defineScenario({
     id: 't2-08-second-failure-during-rebuild',
     title: 'T2 FT1: a second node fails while the rebuild is still running',
@@ -92,13 +97,19 @@ function duringRebuild(): ScenarioDef {
       at(RETURN_AT, 'VMs whose extents are unreachable hang', (s) =>
         vms(s).some((v) => v.ioPendingS > 0),
       ),
-      at(END, 'data was unavailable, not lost: it returns with node 4', storageAvailable),
+      at(
+        before(P.cluster.cvmBootS, RETURN_AT),
+        "still unavailable while node 4's CVM boots",
+        (s) => !storageAvailable(s),
+      ),
+      at(BACK_BY, 'data was unavailable, not lost: it returns with node 4', storageAvailable),
+      at(END, 'and stays available', storageAvailable),
       ...baseInvariants(),
     ],
     narrative:
-      'Node 4 fails and Curator starts rebuilding, but node 3 fails before it finishes. Extent groups whose two copies were on nodes 3 and 4, and metadata ranges that lost their majority, become unreachable, and IO to them hangs. The data is unavailable rather than lost: when node 4 returns, those replicas are reachable again.',
+      'Node 4 fails and Curator starts rebuilding, but node 3 fails before it finishes. Extent groups whose two copies were on nodes 3 and 4, and metadata ranges that lost their majority, become unreachable, and IO to them hangs. The data is unavailable rather than lost: when node 4 returns and its CVM has booted, those replicas are reachable again.',
     cite: ['ntnx-bible-4i', 'ntnx-community-beyond-ft'],
-    status: 'todo',
+    status: 'active',
   });
 }
 

@@ -11,10 +11,10 @@ Scope: AHV only (ESXi is out of scope), current release behavior only. Historica
 
 | Component | Role | Leader? | Failover |
 |---|---|---|---|
-| Zookeeper / Zeus | Cluster config (Zeus is the client library) | Yes | Runs on 3 or 5 nodes depending on redundancy factor. A new leader is elected if the leader stops responding [1]. If a block fails, the ZK role migrates to another node and returns later [2]. Migration timing is UNVERIFIED. |
+| Zookeeper / Zeus | Cluster config (Zeus is the client library) | Yes | Runs on 3 or 5 nodes depending on redundancy factor (community copy of the Bible, so UNVERIFIED). A new leader is elected if the leader stops responding [1]. If a block fails, the ZK role migrates to another node and returns later [2]. Migration timing is UNVERIFIED. |
 | Cassandra / Medusa | Metadata ring (consistent hashing) | Per-key owner | Writes need a Paxos majority [3]. Metadata RF3 under FT1, RF5 under FT2 [2]. |
 | Stargate | Data IO, runs on every CVM | No | The hypervisor path redirects to another CVM (§3) |
-| Curator | Background MapReduce: rebuild, ILM | Yes | Full scan about every 6 h, partial scan about every 1 h [1] |
+| Curator | Background MapReduce: rebuild, ILM | Yes | Full scan about every 6 h, partial scan about every 1 h [1] (community only; the Bible gives no schedule) |
 | Prism | UI/API | Yes | Other nodes forward to the leader. VIP move timing is UNVERIFIED. |
 | Acropolis (AHV) | Scheduler, HA, network controller | Yes, plus a worker per CVM [4] | New leader about T+20 s after the leader's host fails [5] |
 | Cerebro | Replication/DR | Yes (from memory) | UNVERIFIED |
@@ -50,15 +50,15 @@ Data locality [4]:
 The failure matrix says: no HA event, no failed IO, and latency may rise [2].
 
 **AHV**
-- QEMU talks to an iSCSI redirector at `127.0.0.1:3261`, which health-checks the local Stargate with iSCSI NOPs, roughly every 1 s judging by log timestamps.
+- QEMU talks to an iSCSI redirector at `127.0.0.1:3261`, which health-checks the local Stargate with iSCSI NOPs. The Bible says only "regularly"; the 1 s cadence is inferred from log timestamps.
 - When NOPs fail, the redirector marks the local Stargate unhealthy, and QEMU's retried login is redirected to a healthy remote Stargate.
 - **Failback:** once the local Stargate recovers, the remote one quiesces and kills its sessions, and QEMU logs in locally again [5].
-- How long IO pauses during redirect is **UNVERIFIED**. No published number exists; the model assumes a few seconds.
+- How long IO pauses during redirect is **UNVERIFIED**. No published AHV number exists, so the profile assumes 3 s (`redirector.redirectStallS`, lab L3).
 
 
-**Shared rules** [9]
-- **Trigger:** a process failing to respond 2 or more times in 30 s triggers a redirect.
-- **Failback:** happens after the original CVM has been stable for at least 30 s.
+**Shared rules** [9]. The blog is archived; the text was re-checked on 2026-10-27. It describes Autopath generically, and applying it to the AHV redirector is `inferred`.
+- **Trigger:** "If any process fails to respond two or more times in a 30-second period", the storage path is redirected.
+- **Failback:** "the data path will not be restored until the original CVM has been stable for at least 30 seconds."
 
 **Rebuild** starts as soon as Stargate is down, with no delay timer [6].
 
@@ -142,7 +142,7 @@ The failure matrix says: no HA event, no failed IO, and latency may rise [2].
   - Losing 2 of 3 ZK members loses ZK quorum.
   - The result "may bring down the storage interface and limit access for all consumers" [16]. There is no official outcome table, so this is **UNVERIFIED**.
 - **Read-only modes:**
-  - Capacity at or above 95% [2].
+  - Capacity at or above 95% [2]. Prism warns by default at 75% of resilient capacity [2].
   - On a 2-node cluster, a node failure plus an SSD failure on the survivor [17].
   - On a 1-node cluster, an SSD failure.
 - **2-node clusters:**
@@ -222,7 +222,7 @@ On return:
 
 | Name | Value | Source | Confidence |
 |---|---|---|---|
-| Autopath trigger | ≥2 misses in 30 s | [9] | inferred (blog now 404) |
+| Autopath trigger | ≥2 misses in 30 s | [9] | inferred (archived blog) |
 | Autopath failback hold | 30 s stable | [9] | inferred |
 | AHV redirector NOP interval | ~1 s | [5] | inferred from logs |
 | AHV HA libvirt heartbeat | 1 s | [5] | verified |
@@ -233,9 +233,12 @@ On return:
 | Acropolis leader re-election | ~T20 | [5] | verified |
 | Rebuild start | immediate | [2][6] | verified |
 | Cassandra ring detach | 30 min | [2], KB-1256 | verified |
-| Curator partial / full scan | ~1 h / ~6 h | [1] | verified |
+| Curator partial / full scan | ~1 h / ~6 h | [1] | unverified (community) |
 | Disk permanently offline | 3 offline events per hour | [2] | verified |
 | Stargate read-only | 95% capacity | [2] | verified |
+| Resilient-capacity warning | 75% (default) | [2] | verified |
+| ZK members FT1 / FT2 | 3 / 5 | [1] | unverified (community copy of the Bible) |
+| balance-slb rebalance | 10 s (OVS default) | OVS bonding docs | assumption (AHV tuning not public) |
 | vDisk owner migration | 300 s of remote IO | [4] | verified |
 | Oplog bypass (sequential) | >1.5 MB outstanding | [3] | verified |
 | LACP detection | fast ≤3 s / slow ≤90 s | AHV Admin Guide | verified |
@@ -265,7 +268,7 @@ These need portal or KB access, or Nutanix engineering:
 6. https://next.nutanix.com/how-it-works-22/data-rebuild-when-cvm-is-down-and-oplog-question-37706
 7. https://joshodgers.com/tag/cvm/
 8. (removed: ESXi-only source, out of scope)
-9. https://nutanix.com/blog/nutanix-controller-failure-will-users-notice (now 404; text known from search snippets)
+9. https://nutanix.com/blog/nutanix-controller-failure-will-users-notice (live URL 404; archived copy: https://web.archive.org/web/20250212144800/https://www.nutanix.com/blog/nutanix-controller-failure-will-users-notice)
 10. https://www.joshodgers.com/2018/05/30/nutanix-resiliency-part-1-node-failure-rebuild-performance/
 11. https://next.nutanix.com/how-it-works-22/understanding-alert-node-marked-to-be-detached-state-37501
 12. https://next.nutanix.com/ahv-virtualization-27/degraded-node-detection-42859

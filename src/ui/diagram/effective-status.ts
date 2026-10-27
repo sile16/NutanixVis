@@ -34,7 +34,7 @@ export function effectiveDevices(
     let out: EffectiveDevice = d;
     const parent = parentOf(d);
     const reason = typeof d.fields.downReason === 'string' ? d.fields.downReason : undefined;
-    if (d.fields.down === true && d.status !== 'failed') {
+    if (d.fields.down === true) {
       out = { ...d, status: 'failed', ...(reason ? { downReason: reason } : {}) };
     } else if (parent !== undefined && !seen.has(parent) && d.status !== 'failed') {
       seen.add(id);

@@ -22,6 +22,7 @@ import type { DeviceNode } from '../flow';
 import {
   Badges,
   BOND_MODE_LABEL,
+  BOND_MODE_SHORT,
   frameStyle,
   GroupFrame,
   LeafCard,
@@ -196,13 +197,16 @@ export function IfaceNode({ data, selected, width }: P) {
   );
 }
 
-export function VswitchNode({ data, selected }: P) {
+export function VswitchNode({ data, selected, width }: P) {
   const mode = String(data.device.fields.bondMode ?? '');
+  const full = BOND_MODE_LABEL[mode] ?? mode;
+  // Single-NIC hosts get a narrow vswitch card: the short mode name still fits.
+  const label = (width ?? 200) < 110 ? (BOND_MODE_SHORT[mode] ?? full) : full;
   return (
     <LeafCard data={data} selected={selected} className="bg-panel-2">
-      <span className="truncate text-[10px]">
+      <span className="truncate text-[10px]" title={`${data.device.label} · ${full}`}>
         <span className="font-semibold">{data.device.label}</span>
-        <span className="text-ink-muted"> · {BOND_MODE_LABEL[mode] ?? mode}</span>
+        <span className="text-ink-muted"> · {label}</span>
       </span>
     </LeafCard>
   );

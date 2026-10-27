@@ -5,6 +5,7 @@
  */
 import { PanelRight } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useRef } from 'react';
+import { useClampedPosition } from '../components/clamp';
 import { useSim, useSimControls, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 
@@ -19,6 +20,7 @@ export function ContextMenu() {
   useSnapshot(); // re-render when applicability changes
   const { apply } = useSimControls();
   const ref = useRef<HTMLDivElement>(null);
+  const pos = useClampedPosition(ref, menu ? { x: menu.x, y: menu.y } : null);
 
   useEffect(() => {
     if (!menu) return;
@@ -56,7 +58,7 @@ export function ContextMenu() {
       tabIndex={-1}
       onKeyDown={onKeyDown}
       className="fixed z-50 min-w-44 rounded-md border border-border bg-panel p-1 text-sm shadow-lg"
-      style={{ left: menu.x, top: menu.y }}
+      style={{ left: pos?.x ?? menu.x, top: pos?.y ?? menu.y }}
       data-testid="context-menu"
     >
       <div className="truncate px-2 py-1 font-mono text-[11px] text-ink-muted">

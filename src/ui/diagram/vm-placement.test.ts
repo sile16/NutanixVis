@@ -108,7 +108,7 @@ describe('relocateFloatingIps', () => {
   it('draws the VIP inside the controller that holds it, below its ports', () => {
     const p = relocateFloatingIps(fa('fa.ct0.eth0'), faLayout);
     expect(p.devices['fa.vir0']?.parent).toBe('fa.ct0');
-    expect(p.layout['fa.vir0']).toEqual({ x: 20, y: 122 + 6 + 8, w: 170, h: 16 });
+    expect(p.layout['fa.vir0']).toEqual({ x: 20, y: 122 + 6 + 8, w: 190, h: 16 });
   });
 
   it('follows the VIP to the new primary after a failover', () => {

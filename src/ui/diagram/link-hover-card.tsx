@@ -1,5 +1,7 @@
 import { CircleCheck, CircleX } from 'lucide-react';
+import { useRef } from 'react';
 import { formatSimTime } from '../app/format';
+import { useClampedPosition } from '../components/clamp';
 import { useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import type { TraceHistoryEntry } from './hooks';
@@ -11,6 +13,8 @@ const MAX_ROWS = 8;
 export function LinkHoverCard({ history }: { history: readonly TraceHistoryEntry[] }) {
   const hovered = useUi((s) => s.hoveredLink);
   const snapshot = useSnapshot();
+  const ref = useRef<HTMLDivElement>(null);
+  const pos = useClampedPosition(ref, hovered ? { x: hovered.x + 14, y: hovered.y + 14 } : null);
   if (!hovered) return null;
   const link = snapshot.links[hovered.id];
   if (!link) return null;
@@ -20,9 +24,10 @@ export function LinkHoverCard({ history }: { history: readonly TraceHistoryEntry
   const label = (id: string) => snapshot.devices[id]?.label ?? id;
   return (
     <div
+      ref={ref}
       role="tooltip"
       className="pointer-events-none fixed z-50 w-72 rounded-md border border-border bg-panel p-2 text-xs shadow-lg"
-      style={{ left: hovered.x + 14, top: hovered.y + 14 }}
+      style={{ left: pos?.x ?? hovered.x + 14, top: pos?.y ?? hovered.y + 14 }}
       data-testid="link-hover-card"
     >
       <div className="mb-1 flex items-center justify-between gap-2">

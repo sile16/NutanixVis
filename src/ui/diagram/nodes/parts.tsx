@@ -175,3 +175,11 @@ export const BOND_MODE_LABEL: Readonly<Record<string, string>> = {
   'balance-tcp': 'LACP',
   'no-bond': 'No bond',
 };
+
+/** Short bond-mode names for narrow vswitch cards (full name in the tooltip). */
+export const BOND_MODE_SHORT: Readonly<Record<string, string>> = {
+  'active-backup': 'A/B',
+  'balance-slb': 'SLB',
+  'balance-tcp': 'LACP',
+  'no-bond': '1 NIC',
+};

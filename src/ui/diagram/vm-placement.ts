@@ -86,7 +86,7 @@ function isUnder(devices: Readonly<Record<string, DeviceView>>, id: string, ance
 }
 
 const VIP_H = 16;
-const VIP_MIN_W = 170;
+const VIP_MIN_W = 190;
 
 /**
  * Draw a floating FlashArray IP (the management VIP, `fa.vir0`) inside the controller that

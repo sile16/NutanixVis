@@ -9,34 +9,41 @@ import {
   ConnectionMode,
   Controls,
   type EdgeChange,
+  type FitViewOptions,
   type NodeChange,
   Panel,
   ReactFlow,
 } from '@xyflow/react';
 import { useCallback, useMemo, useState } from 'react';
-import type { Snapshot } from '../../engine/types';
+import type { DeviceView, Snapshot } from '../../engine/types';
 import { PAUSED_REPLAY_MS, playbackSchedule } from '../store/playback';
 import { useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import { glowOpacity } from './activity-window';
 import { ContextMenu } from './context-menu';
+import { effectiveDevices } from './effective-status';
 import { buildEdges, buildNodes, type CableEdge, type DeviceNode } from './flow';
 import { computeLinkGeometries, type Point } from './geometry';
-import { useActivityWindow, usePrefersReducedMotion, useTraceHistory } from './hooks';
+import {
+  useActivityWindow,
+  usePrefersReducedMotion,
+  usePreviousSnapshot,
+  useTraceHistory,
+} from './hooks';
 import { computeLayout, type LayoutMap, moveDevice, portKey } from './layout';
 import { LayoutEditPanel } from './layout-edit-panel';
 import { Legend } from './legend';
 import { LinkHoverCard } from './link-hover-card';
 import { PacketOverlay } from './packet-overlay';
 import { bondUtilization, computePathUsage } from './path-usage';
-import type { ReplayContext } from './replay';
-import { trafficStyle } from './traffic';
+import { type DropContext, deadChecker, dropKey, type ReplayContext } from './replay';
+import { categoryOrder, isCategoryVisible, trafficStyle } from './traffic';
 import { edgeTypes, nodeTypes } from './types';
-import { relocateVms } from './vm-placement';
+import { relocateFloatingIps, relocateVms } from './vm-placement';
 
 /** Layout depends only on structure (ids, parents, kinds, cable ends), not on per-tick state. */
-function structureKey(s: Snapshot): string {
-  const d = Object.values(s.devices)
+function structureKey(devices: Readonly<Record<string, DeviceView>>, s: Snapshot): string {
+  const d = Object.values(devices)
     .map((x) => `${x.id}<${x.parent ?? ''}:${x.kind}`)
     .sort()
     .join('|');
@@ -47,6 +54,11 @@ function structureKey(s: Snapshot): string {
   return `${d}//${l}`;
 }
 
+/** Keep the bottom-left legend from covering the diagram on fit. */
+const FIT_VIEW: FitViewOptions = {
+  padding: { top: '16px', right: '16px', left: '16px', bottom: '150px' },
+};
+
 export function Diagram({
   baseLayout,
   colorMode,
@@ -55,6 +67,7 @@ export function Diagram({
   colorMode: ColorMode;
 }) {
   const snapshot = useSnapshot();
+  const prev = usePreviousSnapshot();
   const selection = useUi((s) => s.selection);
   const select = useUi((s) => s.select);
   const openContextMenu = useUi((s) => s.openContextMenu);
@@ -64,18 +77,32 @@ export function Diagram({
   const bondUtilHost = useUi((s) => s.bondUtilHost);
   const playing = useUi((s) => s.playing);
   const speed = useUi((s) => s.speed);
+  const traffic = useUi((s) => s.traffic);
   const reducedMotion = usePrefersReducedMotion();
-  const history = useTraceHistory(snapshot);
+  const history = useTraceHistory();
 
   const [editedLayout, setEditedLayout] = useState<LayoutMap | null>(null);
   const layoutMap = editedLayout ?? baseLayout;
 
-  // Draw VMs under the host they currently run on (AHV HA restarts move them).
-  const placedView = relocateVms(snapshot.devices, layoutMap);
-  const key = structureKey({ ...snapshot, devices: placedView.devices });
+  // Draw VMs under the host they currently run on (AHV HA restarts move them), and the array's
+  // floating management IP inside the controller that currently holds it.
+  const placed = useMemo(() => {
+    const vms = relocateVms(snapshot.devices, layoutMap);
+    const vips = relocateFloatingIps(vms.devices, vms.layout);
+    return { ...vms, devices: vips.devices, layout: vips.layout };
+  }, [snapshot.devices, layoutMap]);
+  // What is drawn: a failed device's children are drawn failed too.
+  const shown = useMemo(() => effectiveDevices(placed.devices), [placed.devices]);
+  const restartedFrom = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const [vm, from] of placed.movedFrom) out.set(vm, snapshot.devices[from]?.label ?? from);
+    return out;
+  }, [placed.movedFrom, snapshot.devices]);
+
+  const key = structureKey(placed.devices, snapshot);
   // biome-ignore lint/correctness/useExhaustiveDependencies: recompute on structure, not per tick
   const { dl, geometries } = useMemo(() => {
-    const layout = computeLayout(placedView.devices, snapshot.links, placedView.layout);
+    const layout = computeLayout(placed.devices, snapshot.links, placed.layout);
     const ends = Object.values(snapshot.links).flatMap((l) => {
       const a = layout.anchors.get(portKey(l.a.device, l.a.port));
       const b = layout.anchors.get(portKey(l.b.device, l.b.port));
@@ -87,9 +114,12 @@ export function Diagram({
   const selectedId = selection?.id ?? null;
   // Activity views aggregate a rolling window so multipath round-robin doesn't flicker.
   const activityTicks = useUi((s) => s.activityTicks);
-  const win = useActivityWindow(snapshot, activityTicks);
+  const win = useActivityWindow(activityTicks);
   const pathUsage = useMemo(
-    () => (selection?.type === 'device' ? computePathUsage(win.snapshot, selection.id) : null),
+    () =>
+      selection?.type === 'device'
+        ? computePathUsage(win.snapshot, selection.id, win.vmPaths.get(selection.id))
+        : null,
     [win, selection],
   );
 
@@ -129,12 +159,25 @@ export function Diagram({
   }, [win]);
 
   const nodes = useMemo<DeviceNode[]>(
-    () => buildNodes(snapshot, dl, { selectedId, pathUsage, utilLabels, draggable: layoutEdit }),
-    [snapshot, dl, selectedId, pathUsage, utilLabels, layoutEdit],
+    () =>
+      buildNodes(shown, dl, {
+        selectedId,
+        pathUsage,
+        utilLabels,
+        draggable: layoutEdit,
+        restartedFrom,
+      }),
+    [shown, dl, selectedId, pathUsage, utilLabels, layoutEdit, restartedFrom],
   );
   const edges = useMemo<CableEdge[]>(
-    () => buildEdges(snapshot, geometries, { selectedId, pathUsage, glow, labels: edgeLabels }),
-    [snapshot, geometries, selectedId, pathUsage, glow, edgeLabels],
+    () =>
+      buildEdges(snapshot.links, shown, geometries, {
+        selectedId,
+        pathUsage,
+        glow,
+        labels: edgeLabels,
+      }),
+    [snapshot.links, shown, geometries, selectedId, pathUsage, glow, edgeLabels],
   );
 
   const replayCtx = useMemo<ReplayContext>(
@@ -149,6 +192,26 @@ export function Diagram({
     [snapshot.links, geometries, dl],
   );
 
+  // Traffic filter (legend): hidden categories are neither animated nor glowing.
+  const visibleTraces = useMemo(
+    () => snapshot.traces.filter((t) => isCategoryVisible(traffic, t.category)),
+    [snapshot.traces, traffic],
+  );
+  const drops = useMemo<DropContext>(
+    () => ({
+      previous: new Set(
+        (prev?.traces ?? []).filter((t) => t.result === 'dropped').map((t) => dropKey(t)),
+      ),
+      isDead: deadChecker(shown, snapshot.links),
+    }),
+    [prev, shown, snapshot.links],
+  );
+  const legendCategories = useMemo(
+    () => [...new Set(win.snapshot.traces.map((t) => t.category))].sort(categoryOrder),
+    [win],
+  );
+  const anyDropped = useMemo(() => win.snapshot.traces.some((t) => t.result === 'dropped'), [win]);
+
   const onNodesChange = useCallback(
     (changes: NodeChange<DeviceNode>[]) => {
       for (const c of changes) {
@@ -157,9 +220,7 @@ export function Diagram({
           const parent = dl.placed.get(c.id)?.parent;
           const pr = parent ? dl.placed.get(parent)?.rect : undefined;
           const abs = { x: c.position.x + (pr?.x ?? 0), y: c.position.y + (pr?.y ?? 0) };
-          setEditedLayout((prev) =>
-            moveDevice(prev ?? baseLayout, dl, snapshot.devices, c.id, abs),
-          );
+          setEditedLayout((p) => moveDevice(p ?? baseLayout, dl, snapshot.devices, c.id, abs));
         }
       }
     },
@@ -208,23 +269,29 @@ export function Diagram({
         selectionKeyCode={null}
         deleteKeyCode={null}
         fitView
-        fitViewOptions={{ padding: 0.06 }}
+        fitViewOptions={FIT_VIEW}
         minZoom={0.2}
         maxZoom={3}
       >
         <Background gap={24} size={1} />
-        <Controls showInteractive={false} position="bottom-right" />
+        <Controls showInteractive={false} position="bottom-right" fitViewOptions={FIT_VIEW} />
         {animate ? (
           <PacketOverlay
-            traces={snapshot.traces}
+            traces={visibleTraces}
             version={snapshot.version}
             ctx={replayCtx}
+            drops={drops}
             windowMs={replayWindow}
             loop={!playing}
           />
         ) : null}
         <Panel position="bottom-left">
-          <Legend traces={snapshot.traces} animated={animate} reducedMotion={reducedMotion} />
+          <Legend
+            categories={legendCategories}
+            dropped={anyDropped}
+            animated={animate}
+            reducedMotion={reducedMotion}
+          />
         </Panel>
         {layoutEdit ? (
           <Panel position="top-right">

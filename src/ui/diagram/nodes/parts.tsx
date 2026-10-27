@@ -46,16 +46,27 @@ export function nodeAttrs(data: DeviceNodeData, selected: boolean | undefined) {
     'data-selected': selected ? 'true' : 'false',
     'data-dim': data.dim ? 'true' : 'false',
     'data-inpath': data.inPath ? 'true' : 'false',
-    title: `${data.device.label} · ${data.device.status}`,
+    title: `${data.device.label} · ${data.device.status}${
+      data.device.downReason ? ` (${data.device.downReason})` : ''
+    }`,
   } as const;
 }
 
-export function Badges({ badges, compact }: { badges: readonly string[]; compact?: boolean }) {
+export function Badges({
+  badges,
+  compact,
+  iconOnly,
+}: {
+  badges: readonly string[];
+  compact?: boolean;
+  /** Icon only (full label as tooltip / accessible name), for narrow cards. */
+  iconOnly?: boolean;
+}) {
   if (badges.length === 0) return null;
   return (
-    <span className="flex flex-nowrap gap-0.5">
+    <span className="flex shrink-0 flex-nowrap gap-0.5">
       {badges.map((b) => (
-        <RoleBadge key={b} badge={b} compact={compact ?? false} />
+        <RoleBadge key={b} badge={b} compact={compact ?? false} iconOnly={iconOnly ?? false} />
       ))}
     </span>
   );
@@ -70,11 +81,14 @@ export function GroupFrame({
   title,
   subtitle,
   tone = 'default',
+  iconBadges = false,
   children,
 }: {
   data: DeviceNodeData;
   selected: boolean | undefined;
   Icon: LucideIcon;
+  /** Narrow frames: badges as icons only, so they are never clipped. */
+  iconBadges?: boolean;
   /** Vendor mark shown instead of the generic icon (e.g. Everpure on the array). */
   logo?: ReactNode;
   title: string;
@@ -112,7 +126,7 @@ export function GroupFrame({
         {subtitle ? <span className="truncate text-[10px] text-ink-muted">{subtitle}</span> : null}
         <StatusIcon status={device.status} size={frame.header > 24 ? 13 : 11} />
         <span className="ml-auto shrink-0">
-          <Badges badges={device.badges} compact={frame.header < 28} />
+          <Badges badges={device.badges} compact={frame.header < 28} iconOnly={iconBadges} />
         </span>
       </div>
       {children}

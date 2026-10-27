@@ -39,8 +39,15 @@ const jsonList = (v: unknown): string[] => {
   }
 };
 
-/** `history` is oldest first; the last element is the current snapshot. */
-export function buildActivityWindow(history: readonly Snapshot[]): ActivityWindow {
+/**
+ * `history` is oldest first; the last element is the current snapshot. `visible` (the legend's
+ * traffic filter) only decides which traces feed the per-link glow (`links`); the snapshot view
+ * keeps every trace, so path usage and bond shares count independently of the filter.
+ */
+export function buildActivityWindow(
+  history: readonly Snapshot[],
+  visible: (category: TrafficCategory) => boolean = () => true,
+): ActivityWindow {
   const current = history[history.length - 1];
   if (!current) throw new Error('activity window needs at least one snapshot');
   const traces: Trace[] = [];
@@ -60,6 +67,7 @@ export function buildActivityWindow(history: readonly Snapshot[]): ActivityWindo
       util.set(id, u);
     }
     for (const t of s.traces) {
+      if (!visible(t.category)) continue;
       t.links.forEach((id, k) => {
         const e = perLink.get(id) ?? { age, counts: new Map(), count: 0, dropped: false };
         e.age = Math.min(e.age, age);

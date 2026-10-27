@@ -7,21 +7,43 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useMemo,
   useSyncExternalStore,
 } from 'react';
 import type { ActionRequest, Simulation, Snapshot } from '../../engine/types';
+import { SnapshotHistory } from './snapshot-history';
 import { useUi } from './ui-store';
 
-const SimContext = createContext<Simulation | null>(null);
+interface SimBundle {
+  readonly sim: Simulation;
+  /** Every tick's snapshot (recorded outside React, so batched playback loses none). */
+  readonly history: SnapshotHistory;
+}
+
+const SimContext = createContext<SimBundle | null>(null);
 
 export function SimProvider({ sim, children }: { sim: Simulation; children: ReactNode }) {
-  return <SimContext.Provider value={sim}>{children}</SimContext.Provider>;
+  // One history per simulation: a reset or topology switch starts an empty one.
+  const value = useMemo(() => ({ sim, history: new SnapshotHistory(sim) }), [sim]);
+  // Dev builds only: expose the live simulation for debugging from the console.
+  if (import.meta.env.DEV && typeof window !== 'undefined') {
+    (window as unknown as { __nvSim?: Simulation }).__nvSim = sim;
+  }
+  return <SimContext.Provider value={value}>{children}</SimContext.Provider>;
+}
+
+function useBundle(): SimBundle {
+  const b = useContext(SimContext);
+  if (!b) throw new Error('useSim must be used inside <SimProvider>');
+  return b;
 }
 
 export function useSim(): Simulation {
-  const sim = useContext(SimContext);
-  if (!sim) throw new Error('useSim must be used inside <SimProvider>');
-  return sim;
+  return useBundle().sim;
+}
+
+export function useSnapshotHistory(): SnapshotHistory {
+  return useBundle().history;
 }
 
 export function useSnapshot(): Snapshot {

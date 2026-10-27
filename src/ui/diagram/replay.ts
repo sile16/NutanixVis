@@ -8,7 +8,7 @@
  * packet travels its links in order at constant speed over the first `TRAVEL` share of the round
  * window. A dropped packet stops at `dropAt` (half-way along a link, or at a device) and bursts.
  */
-import type { LinkView, Trace } from '../../engine/types';
+import type { DeviceView, LinkView, Trace } from '../../engine/types';
 import type { LinkGeometry, Point } from './geometry';
 import { distance, polylineSampler } from './geometry';
 
@@ -110,13 +110,68 @@ export function roundCount(traces: readonly Trace[]): number {
   return traces.reduce((m, t) => Math.max(m, t.round + 1), 1);
 }
 
+/** Identity of a drop site: where and why. Repeats of the same key are "the same drop". */
+export const dropKey = (t: Trace): string => `${t.dropAt ?? ''}|${t.reason ?? ''}`;
+
+export interface DropContext {
+  /** Drop keys seen in the previous tick (see `dropKey`). */
+  readonly previous: ReadonlySet<string>;
+  /** True if `id` (a link or device) is down: link `down`, device `failed`/`offline`. */
+  readonly isDead: (id: string) => boolean;
+}
+
+/** `DropContext.isDead` over a snapshot's devices and links. */
+export function deadChecker(
+  devices: Readonly<Record<string, DeviceView>>,
+  links: Readonly<Record<string, LinkView>>,
+): (id: string) => boolean {
+  return (id) => {
+    const l = links[id];
+    if (l) return l.status === 'down';
+    const d = devices[id];
+    if (!d) return false;
+    return d.status === 'failed' || d.status === 'offline' || d.fields.down === true;
+  };
+}
+
+/**
+ * Which dropped traces are persistent rather than news. Peers keep sending to a dead host every
+ * tick (HA polls, ZK, replication) and every one is dropped at the same port: replaying a red
+ * burst there each tick reads as blinking. A drop is persistent if it lands on something that is
+ * down, or if the same (site, reason) already dropped last tick; only the others burst.
+ */
+export function persistentDrops(traces: readonly Trace[], ctx: DropContext): boolean[] {
+  return traces.map(
+    (t) =>
+      t.result === 'dropped' &&
+      ((t.dropAt !== undefined && ctx.isDead(t.dropAt)) || ctx.previous.has(dropKey(t))),
+  );
+}
+
+/** Drop sites of persistent drops (deduplicated), drawn as a steady marker instead of a burst. */
+export function steadyDropPoints(
+  paths: readonly (TracePath | null)[],
+  steady: readonly boolean[],
+): Point[] {
+  const out = new Map<string, Point>();
+  paths.forEach((p, i) => {
+    if (!p || !steady[i] || p.dropU === null) return;
+    const at = p.at(p.dropU);
+    out.set(`${Math.round(at.x)},${Math.round(at.y)}`, at);
+  });
+  return [...out.values()];
+}
+
 /**
  * Sprites to draw at `phase` ∈ [0, 1] of the tick window. `paths[i]` is `tracePath(traces[i])`.
+ * `steady[i]` marks a persistent drop: the packet still travels to the drop site, then vanishes
+ * without a burst (the overlay draws a steady marker there instead).
  */
 export function spritesAt(
   traces: readonly Trace[],
   paths: readonly (TracePath | null)[],
   phase: number,
+  steady: readonly boolean[] = [],
 ): Sprite[] {
   const rounds = roundCount(traces);
   const out: Sprite[] = [];
@@ -141,6 +196,7 @@ export function spritesAt(
       out.push({ kind: 'packet', x: p.x, y: p.y, category: t.category });
       return;
     }
+    if (steady[i]) return;
     const progress = (travel - stopAt) / BURST;
     if (progress > 1) return;
     const p = path.at(stopAt);

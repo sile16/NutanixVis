@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Snapshot, Trace } from '../../engine/types';
+import { useSnapshot, useSnapshotHistory } from '../store/sim-context';
+import { useUi } from '../store/ui-store';
 import { type ActivityWindow, buildActivityWindow } from './activity-window';
+import { isCategoryVisible } from './traffic';
 
 export function usePrefersReducedMotion(): boolean {
   const query = '(prefers-reduced-motion: reduce)';
@@ -22,42 +25,53 @@ export interface TraceHistoryEntry {
   readonly traces: readonly Trace[];
 }
 
-/** The last `depth` ticks' traces (newest first), for the link hover card. */
-export function useTraceHistory(snapshot: Snapshot, depth = 3): readonly TraceHistoryEntry[] {
-  const ref = useRef<{ topology: string; entries: TraceHistoryEntry[] }>({
-    topology: snapshot.topologyId,
-    entries: [],
-  });
-  const cur = ref.current;
-  if (cur.topology !== snapshot.topologyId) {
-    cur.topology = snapshot.topologyId;
-    cur.entries = [];
-  }
-  if (cur.entries[0]?.version !== snapshot.version) {
-    cur.entries = [
-      { version: snapshot.version, simTime: snapshot.simTime, traces: snapshot.traces },
-      ...cur.entries.filter((e) => e.version < snapshot.version),
-    ].slice(0, depth);
-  }
-  return cur.entries;
+/**
+ * The last `depth` ticks' traces (newest first), for the link hover card. Read from the shared
+ * snapshot history, so batched playback (×20, ×60) does not skip ticks; hidden traffic
+ * categories (legend filter) are left out.
+ */
+export function useTraceHistory(depth = 3): readonly TraceHistoryEntry[] {
+  const snapshot = useSnapshot();
+  const history = useSnapshotHistory();
+  const traffic = useUi((s) => s.traffic);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the history grows per snapshot
+  return useMemo(
+    () =>
+      history
+        .last(depth)
+        .map((s) => ({
+          version: s.version,
+          simTime: s.simTime,
+          traces: s.traces.filter((t) => isCategoryVisible(traffic, t.category)),
+        }))
+        .reverse(),
+    [history, snapshot, depth, traffic],
+  );
 }
 
 /**
- * Rolling window of the last `ticks` snapshots (oldest first), for flicker-free activity views.
- * Resets on a new topology or when time goes backwards (a new simulation).
+ * Rolling window of the last `ticks` ticks (oldest first), for flicker-free activity views. Every
+ * view (diagram, inspector) reads the same per-simulation history, so they always agree, and a
+ * new simulation (reset, topology or version switch) starts empty.
  */
-export function useActivityWindow(snapshot: Snapshot, ticks: number): ActivityWindow {
-  const ref = useRef<Snapshot[]>([]);
+export function useActivityWindow(ticks: number): ActivityWindow {
+  const snapshot = useSnapshot();
+  const history = useSnapshotHistory();
+  const traffic = useUi((s) => s.traffic);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the history grows per snapshot
+  return useMemo(
+    () => buildActivityWindow(history.last(ticks), (c) => isCategoryVisible(traffic, c)),
+    [history, snapshot, ticks, traffic],
+  );
+}
+
+/** The snapshot just before the current one (for "new this tick" checks), if any. */
+export function usePreviousSnapshot(): Snapshot | undefined {
+  const snapshot = useSnapshot();
+  const history = useSnapshotHistory();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the history grows per snapshot
   return useMemo(() => {
-    const buf = ref.current;
-    const last = buf[buf.length - 1];
-    if (last && (last.topologyId !== snapshot.topologyId || snapshot.simTime < last.simTime)) {
-      buf.length = 0;
-    }
-    const tail = buf[buf.length - 1];
-    if (tail && tail.simTime === snapshot.simTime) buf[buf.length - 1] = snapshot;
-    else buf.push(snapshot);
-    while (buf.length > Math.max(1, ticks)) buf.shift();
-    return buildActivityWindow(buf);
-  }, [snapshot, ticks]);
+    const last = history.last(2);
+    return last.length === 2 ? last[0] : undefined;
+  }, [history, snapshot]);
 }

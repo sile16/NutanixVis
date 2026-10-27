@@ -3,18 +3,25 @@
  * the simulation says apply to it (`availableActions`), including parameterised ones such as
  * bond-mode changes. VMs get the path-usage view (SPEC §6.4b); hosts get bond utilization.
  */
-import { ArrowUpRight, Gauge, Route } from 'lucide-react';
+import { ArrowUpRight, Gauge, History, Route } from 'lucide-react';
 import { type ReactNode, useMemo, useState } from 'react';
 import type { ActionSpec, DeviceView, LinkView, Snapshot, ViewField } from '../../engine/types';
 import { humanizeKey } from '../app/format';
 import { Button, Select, ShareBar } from '../components/controls';
 import { RoleBadge, StatusPill } from '../components/status';
+import { type EffectiveDevice, effectiveDevices } from '../diagram/effective-status';
 import { useActivityWindow } from '../diagram/hooks';
 import { BOND_MODE_LABEL } from '../diagram/nodes/parts';
-import { ancestorOfKind, bondUtilization, computePathUsage } from '../diagram/path-usage';
+import {
+  ancestorOfKind,
+  bondUtilization,
+  computePathUsage,
+  isBondKind,
+} from '../diagram/path-usage';
 import { trafficStyle } from '../diagram/traffic';
 import { useSim, useSimControls, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
+import { currentChoice, initialParams, rejectionReason } from './action-params';
 
 function formatField(v: ViewField): string {
   if (v === null) return '—';
@@ -89,25 +96,26 @@ function ActionForm({
   current: DeviceView | LinkView;
 }) {
   const { apply } = useSimControls();
+  const sim = useSim();
+  const snapshot = useSnapshot();
   const manual = useUi((s) => s.manual);
   const params = Object.entries(spec.params ?? {});
-  const initial = () => {
-    const out: Record<string, string | number> = {};
-    const fields = 'fields' in current ? current.fields : {};
-    for (const [key, p] of params) {
-      const fieldVal =
-        key === 'mode' ? fields.bondMode : key === 'rate' ? fields.lacpRate : undefined;
-      const match = p.choices.find((c) => c === fieldVal);
-      out[key] = match ?? p.choices[0] ?? '';
-    }
-    return out;
-  };
-  const [values, setValues] = useState(initial);
+  const [values, setValues] = useState(() => initialParams(spec, current));
+  // Sim time at which this form last applied: show the reason if the engine rejected it.
+  const [appliedAt, setAppliedAt] = useState<number | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the log grows per snapshot version
+  const rejected = useMemo(
+    () =>
+      appliedAt === null ? null : rejectionReason(sim.eventLog(), spec.kind, target, appliedAt),
+    [appliedAt, sim, spec.kind, target, snapshot.version],
+  );
   return (
     <form
       className="flex flex-wrap items-end gap-2 rounded-md border border-border bg-panel-2 p-2"
       onSubmit={(e) => {
         e.preventDefault();
+        // Queued actions apply at the start of the next tick.
+        setAppliedAt(sim.getSnapshot().simTime + 1);
         apply(
           params.length ? { kind: spec.kind, target, params: values } : { kind: spec.kind, target },
         );
@@ -132,6 +140,7 @@ function ActionForm({
           {p.choices.map((c) => (
             <option key={String(c)} value={String(c)}>
               {key === 'mode' ? (BOND_MODE_LABEL[String(c)] ?? String(c)) : String(c)}
+              {currentChoice(spec, key, current) === c ? ' (current)' : ''}
             </option>
           ))}
         </Select>
@@ -144,6 +153,15 @@ function ActionForm({
       >
         {manual ? 'Queue' : 'Apply'}
       </Button>
+      {rejected ? (
+        <p
+          role="status"
+          className="w-full text-[11px] text-status-failed"
+          data-testid={`action-rejected-${spec.kind}`}
+        >
+          Not applied: {rejected}
+        </p>
+      ) : null}
     </form>
   );
 }
@@ -170,13 +188,22 @@ function Actions({ target, view }: { target: string; view: DeviceView | LinkView
   );
 }
 
-function PathUsageSection({ snapshot, vmId }: { snapshot: Snapshot; vmId: string }) {
+function PathUsageSection({ vmId }: { vmId: string }) {
   // Same rolling window as the diagram, so shares don't jump with per-tick round-robin.
   const activityTicks = useUi((s) => s.activityTicks);
-  const win = useActivityWindow(snapshot, activityTicks);
-  const usage = computePathUsage(win.snapshot, vmId);
+  const win = useActivityWindow(activityTicks);
+  const usage = computePathUsage(win.snapshot, vmId, win.vmPaths.get(vmId));
   const windowLabel = win.ticks === 1 ? 'last tick' : `last ${win.ticks} ticks`;
   if (!usage) return null;
+  // An HCI VM whose vDisks are served by its own host's CVM: IO stays on virbr0.
+  const local =
+    usage.scope === 'host' &&
+    usage.cvmId !== undefined &&
+    usage.hostId !== undefined &&
+    usage.cvmId.startsWith(`${usage.hostId}.`);
+  const toArray = usage.targets.every((t) =>
+    ancestorOfKind(win.snapshot.devices, t.deviceId, 'fa-array'),
+  );
   return (
     <Section title="Path usage" testId="path-usage">
       <div className="mb-2 flex items-center gap-1 text-xs">
@@ -188,6 +215,12 @@ function PathUsageSection({ snapshot, vmId }: { snapshot: Snapshot; vmId: string
           <span className="text-ink-muted">none (compute-only)</span>
         )}
       </div>
+      {local ? (
+        <p className="mb-2 text-xs" data-testid="path-usage-local">
+          Served by the local CVM over virbr0: this VM's IO has no network path. Below: all storage
+          traffic of its host.
+        </p>
+      ) : null}
       <p className="mb-1 text-[11px] text-ink-muted">
         Uplinks ({usage.traceCount} storage messages, {windowLabel})
       </p>
@@ -208,7 +241,9 @@ function PathUsageSection({ snapshot, vmId }: { snapshot: Snapshot; vmId: string
       </div>
       {usage.targets.length ? (
         <>
-          <p className="mb-1 text-[11px] text-ink-muted">Array ports</p>
+          <p className="mb-1 text-[11px] text-ink-muted">
+            {toArray ? 'Array ports' : 'Far-end ports (serving CVM)'}
+          </p>
           <div className="flex flex-col gap-1">
             {usage.targets.map((s) => (
               <ShareBar
@@ -222,18 +257,20 @@ function PathUsageSection({ snapshot, vmId }: { snapshot: Snapshot; vmId: string
           </div>
         </>
       ) : null}
-      <p className="mt-2 text-[10px] text-ink-muted">
-        Paths are per host until traces carry a VM/vDisk id. Highlighted on the diagram.
+      <p className="mt-2 text-[10px] text-ink-muted" data-testid="path-usage-scope">
+        {usage.scope === 'vm'
+          ? "This VM's own paths (its ioPaths / ioUplinks). Highlighted on the diagram."
+          : "All storage traffic of this VM's host. Highlighted on the diagram."}
       </p>
     </Section>
   );
 }
 
-function BondSection({ snapshot, hostId }: { snapshot: Snapshot; hostId: string }) {
+function BondSection({ hostId }: { hostId: string }) {
   const bondUtilHost = useUi((s) => s.bondUtilHost);
   const setBondUtilHost = useUi((s) => s.setBondUtilHost);
   const activityTicks = useUi((s) => s.activityTicks);
-  const win = useActivityWindow(snapshot, activityTicks);
+  const win = useActivityWindow(activityTicks);
   const bonds = bondUtilization(win.snapshot, hostId);
   if (bonds.length === 0) return null;
   const on = bondUtilHost === hostId;
@@ -274,11 +311,51 @@ function BondSection({ snapshot, hostId }: { snapshot: Snapshot; hostId: string 
   );
 }
 
-function DeviceInspector({ device }: { device: DeviceView }) {
+/** Where a VM runs now versus its topology host (AHV HA restarts move it). */
+function VmPlacement({ vm }: { vm: DeviceView }) {
   const snapshot = useSnapshot();
+  const host = vm.fields.host;
+  const origin = vm.parent;
+  if (typeof host === 'string' && host !== origin) {
+    return (
+      <div className="mt-1 text-xs text-ink-muted" data-testid="vm-placement">
+        Runs on <DeviceLink id={host} />
+        {origin ? (
+          <>
+            {' '}
+            · <History size={11} className="inline" aria-hidden="true" /> restarted by AHV HA from{' '}
+            <DeviceLink id={origin} />
+            <span className="sr-only"> (original host)</span>
+          </>
+        ) : null}
+      </div>
+    );
+  }
+  if (host === null && origin) {
+    return (
+      <div className="mt-1 text-xs text-ink-muted" data-testid="vm-placement">
+        Not running · topology host <DeviceLink id={origin} />
+      </div>
+    );
+  }
+  return origin && snapshot.devices[origin] ? (
+    <div className="mt-1 text-xs text-ink-muted" data-testid="vm-placement">
+      Runs on <DeviceLink id={origin} />
+    </div>
+  ) : null;
+}
+
+function DeviceInspector({ device: raw }: { device: DeviceView }) {
+  const snapshot = useSnapshot();
+  const shown = useMemo(() => effectiveDevices(snapshot.devices), [snapshot.devices]);
+  const device: EffectiveDevice = shown[raw.id] ?? raw;
   const children = Object.values(snapshot.devices).filter((d) => d.parent === device.id);
-  const host = ancestorOfKind(snapshot.devices, device.id, 'ahv-host');
-  const showBond = device.kind === 'ahv-host' || device.kind === 'vswitch';
+  const hostField = device.kind === 'vm' ? device.fields.host : undefined;
+  const host =
+    typeof hostField === 'string'
+      ? snapshot.devices[hostField]
+      : ancestorOfKind(snapshot.devices, device.id, 'ahv-host');
+  const showBond = device.kind === 'ahv-host' || isBondKind(device.kind);
   return (
     <div data-testid="inspector-device">
       <header className="px-3 py-2">
@@ -288,6 +365,11 @@ function DeviceInspector({ device }: { device: DeviceView }) {
           </h2>
           <StatusPill status={device.status} />
         </div>
+        {device.downReason ? (
+          <div className="text-[11px] text-status-failed" data-testid="inspector-down-reason">
+            {device.downReason}
+          </div>
+        ) : null}
         <div className="font-mono text-[11px] text-ink-muted">
           {device.kind} · {device.id}
         </div>
@@ -298,7 +380,9 @@ function DeviceInspector({ device }: { device: DeviceView }) {
             ))}
           </div>
         ) : null}
-        {device.parent ? (
+        {device.kind === 'vm' ? (
+          <VmPlacement vm={raw} />
+        ) : device.parent ? (
           <div className="mt-1 text-xs text-ink-muted">
             In <DeviceLink id={device.parent} />
           </div>
@@ -307,8 +391,8 @@ function DeviceInspector({ device }: { device: DeviceView }) {
       <Section title="State">
         <Fields fields={device.fields} />
       </Section>
-      {device.kind === 'vm' ? <PathUsageSection snapshot={snapshot} vmId={device.id} /> : null}
-      {showBond && host ? <BondSection snapshot={snapshot} hostId={host.id} /> : null}
+      {device.kind === 'vm' ? <PathUsageSection vmId={device.id} /> : null}
+      {showBond && host ? <BondSection hostId={host.id} /> : null}
       <Actions target={device.id} view={device} />
       {children.length ? (
         <Section title="Contains">
@@ -326,7 +410,12 @@ function DeviceInspector({ device }: { device: DeviceView }) {
 }
 
 function LinkInspector({ link }: { link: LinkView }) {
-  const total = Object.values(link.util).reduce((s, v) => s + v, 0);
+  // Utilization over the same activity window as the diagram glow.
+  const activityTicks = useUi((s) => s.activityTicks);
+  const win = useActivityWindow(activityTicks);
+  const util = win.snapshot.links[link.id]?.util ?? link.util;
+  const total = Object.values(util).reduce((s, v) => s + v, 0);
+  const windowLabel = win.ticks === 1 ? 'last tick' : `last ${win.ticks} ticks`;
   return (
     <div data-testid="inspector-link">
       <header className="px-3 py-2">
@@ -347,12 +436,12 @@ function LinkInspector({ link }: { link: LinkView }) {
       <Section title="State">
         <Fields fields={{ status: link.status, mtu: link.mtu, latencyMs: link.latencyMs }} />
       </Section>
-      <Section title="Utilization (last tick)">
+      <Section title={`Utilization (${windowLabel})`}>
         {total === 0 ? (
           <p className="text-xs text-ink-muted">No delivered traffic.</p>
         ) : (
-          <div className="flex flex-col gap-1">
-            {Object.entries(link.util).map(([c, n]) => (
+          <div className="flex flex-col gap-1" data-testid="link-util">
+            {Object.entries(util).map(([c, n]) => (
               <ShareBar
                 key={c}
                 label={trafficStyle(c).label}

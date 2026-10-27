@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { LinkView, Trace } from '../../engine/types';
 import { type Anchor, linkGeometry } from './geometry';
-import { orientLinks, roundCount, spritesAt, tracePath } from './replay';
+import {
+  deadChecker,
+  dropKey,
+  orientLinks,
+  persistentDrops,
+  roundCount,
+  spritesAt,
+  steadyDropPoints,
+  tracePath,
+} from './replay';
 
 const link = (id: string, a: string, b: string): LinkView => ({
   id,
@@ -108,5 +117,63 @@ describe('spritesAt', () => {
     expect(spritesAt([drop], paths, 0.1)[0]?.kind).toBe('packet');
     const burst = spritesAt([drop], paths, 0.5)[0];
     expect(burst).toMatchObject({ kind: 'burst', x: 0, y: 50 });
+  });
+});
+
+describe('persistent drops (no blinking at a dead host)', () => {
+  const toDead = trace({
+    msgId: 'a',
+    links: ['l1'],
+    result: 'dropped',
+    dropAt: 'l1',
+    reason: 'link-down',
+  });
+  const fresh = trace({
+    msgId: 'b',
+    links: ['l1'],
+    result: 'dropped',
+    dropAt: 'sw',
+    reason: 'no-route',
+  });
+  const ok = trace({ msgId: 'c' });
+  const devices = {
+    sw: {
+      id: 'sw',
+      kind: 'switch',
+      label: 'sw',
+      status: 'healthy' as const,
+      badges: [],
+      fields: {},
+    },
+  };
+
+  it('treats drops on a down link or failed device as persistent, new drop sites as news', () => {
+    const isDead = deadChecker(devices, { ...links, l1: { ...links.l1, status: 'down' } });
+    expect(persistentDrops([toDead, fresh, ok], { previous: new Set(), isDead })).toEqual([
+      true,
+      false,
+      false,
+    ]);
+  });
+
+  it('treats a drop site that also dropped last tick as persistent', () => {
+    const isDead = deadChecker(devices, links);
+    expect(persistentDrops([fresh], { previous: new Set([dropKey(fresh)]), isDead })).toEqual([
+      true,
+    ]);
+    // Same site, different reason: a state change, so it bursts again.
+    const other = trace({ ...fresh, reason: 'vlan-not-carried' });
+    expect(persistentDrops([other], { previous: new Set([dropKey(fresh)]), isDead })).toEqual([
+      false,
+    ]);
+  });
+
+  it('draws no burst for a persistent drop, only a steady marker', () => {
+    const paths = [tracePath(toDead, ctx)];
+    expect(spritesAt([toDead], paths, 0.1, [true])[0]?.kind).toBe('packet');
+    expect(spritesAt([toDead], paths, 0.5, [true])).toHaveLength(0);
+    expect(spritesAt([toDead], paths, 0.5, [false])[0]?.kind).toBe('burst');
+    expect(steadyDropPoints([...paths, ...paths], [true, true])).toEqual([{ x: 0, y: 50 }]);
+    expect(steadyDropPoints(paths, [false])).toEqual([]);
   });
 });

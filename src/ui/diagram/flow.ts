@@ -4,7 +4,8 @@
  * only the renderer.
  */
 import { type Edge, type Node, type NodeHandle, Position } from '@xyflow/react';
-import type { DeviceView, LinkView, Snapshot } from '../../engine/types';
+import type { LinkView } from '../../engine/types';
+import { type EffectiveDevice, effectiveLinkStatus } from './effective-status';
 import type { LinkGeometry, Point, Side } from './geometry';
 import { type DiagramLayout, groupFrame } from './layout';
 import type { PathUsage } from './path-usage';
@@ -34,6 +35,8 @@ const KIND_TO_TYPE: Readonly<Record<string, NodeKind>> = {
   'cvm-interface': 'iface',
   'host-interface': 'iface',
   vswitch: 'vswitch',
+  // The engine's network view names a host virtual switch `bond` (docs/view-fields.md: `vswitch`).
+  bond: 'vswitch',
   disk: 'disk',
 };
 
@@ -48,7 +51,10 @@ export interface PortHandle {
 }
 
 export type DeviceNodeData = {
-  device: DeviceView;
+  /** The device as drawn: status may be the effective one (see `effective-status.ts`). */
+  device: EffectiveDevice;
+  /** AHV HA restarted this VM away from its topology host: that host's label. */
+  restartedFrom: string | null;
   isGroup: boolean;
   frame: { pad: number; header: number };
   ports: readonly PortHandle[];
@@ -81,11 +87,16 @@ const POSITION: Readonly<Record<Side, Position>> = {
   left: Position.Left,
 };
 
-/** React Flow handle bounds whose computed endpoint equals our anchor (width = height = 1). */
-function handleBounds(p: PortHandle): NodeHandle {
+/**
+ * React Flow handle bounds whose computed endpoint equals our anchor (width = height = 1).
+ * Each port is declared as both a source and a target: on the first render React Flow still has
+ * its default `ConnectionMode.Strict` (our `Loose` prop is synced in an effect), so a source-only
+ * handle at a cable's `b` end fails the lookup and logs error 008 for every cable.
+ */
+function handleBounds(p: PortHandle, type: 'source' | 'target'): NodeHandle {
   const base = {
     id: p.id,
-    type: 'source' as const,
+    type,
     position: POSITION[p.side],
     width: 1,
     height: 1,
@@ -107,10 +118,12 @@ export interface NodeBuildOptions {
   readonly pathUsage: PathUsage | null;
   readonly utilLabels: ReadonlyMap<string, string>;
   readonly draggable: boolean;
+  /** VM id → label of the host AHV HA restarted it away from. */
+  readonly restartedFrom?: ReadonlyMap<string, string>;
 }
 
 export function buildNodes(
-  snapshot: Snapshot,
+  devices: Readonly<Record<string, EffectiveDevice>>,
   dl: DiagramLayout,
   opts: NodeBuildOptions,
 ): DeviceNode[] {
@@ -123,8 +136,9 @@ export function buildNodes(
   const nodes: DeviceNode[] = [];
   for (const id of dl.order) {
     const placed = dl.placed.get(id);
-    const device = snapshot.devices[id];
+    const device = devices[id];
     if (!placed || !device) continue;
+    const restartedFrom = opts.restartedFrom?.get(id) ?? null;
     const parentRect = placed.parent ? dl.placed.get(placed.parent)?.rect : undefined;
     const ports = portsByDevice.get(id) ?? [];
     const { w, h } = placed.rect;
@@ -141,14 +155,17 @@ export function buildNodes(
       measured: { width: w, height: h },
       // zIndexMode="manual": nested devices stack by depth; cables (z 0) run beneath them all.
       zIndex: placed.depth + 1,
-      handles: ports.map(handleBounds),
+      handles: ports.flatMap((p) => [handleBounds(p, 'source'), handleBounds(p, 'target')]),
       selected: opts.selectedId === id,
       draggable: opts.draggable,
       connectable: false,
       deletable: false,
-      ariaLabel: `${device.label} (${device.kind}), ${device.status}`,
+      ariaLabel: `${device.label} (${device.kind}), ${device.status}${
+        device.downReason ? ` (${device.downReason})` : ''
+      }${restartedFrom ? `, restarted from ${restartedFrom}` : ''}`,
       data: {
         device,
+        restartedFrom,
         isGroup: placed.isGroup,
         frame: groupFrame(device.kind),
         ports,
@@ -172,14 +189,18 @@ export interface EdgeBuildOptions {
 }
 
 export function buildEdges(
-  snapshot: Snapshot,
+  links: Readonly<Record<string, LinkView>>,
+  devices: Readonly<Record<string, EffectiveDevice>>,
   geometries: ReadonlyMap<string, LinkGeometry>,
   opts: EdgeBuildOptions,
 ): CableEdge[] {
   const edges: CableEdge[] = [];
-  for (const link of Object.values(snapshot.links)) {
-    const g = geometries.get(link.id);
+  for (const raw of Object.values(links)) {
+    const g = geometries.get(raw.id);
     if (!g) continue;
+    // A cable to a failed device is drawn down even before the engine reports it.
+    const status = effectiveLinkStatus(raw, devices);
+    const link = status === raw.status ? raw : { ...raw, status };
     const inPath = opts.pathUsage?.linkIds.has(link.id) ?? false;
     const glow = opts.glow.get(link.id);
     edges.push({

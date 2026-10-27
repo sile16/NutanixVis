@@ -1,12 +1,12 @@
 /**
- * Path-usage view (SPEC §6.4b), first version. Pure functions over a `Snapshot`.
+ * Path-usage view (SPEC §6.4b). Pure functions over a `Snapshot`.
  *
- * A vDisk's IO only ever leaves through its owning Stargate's node (normally the CVM on the VM's
- * host), so a VM's paths are the storage traces that start or end on that host's NICs. The
- * contract does not (yet) tag traces with a source VM/vDisk, so this is per-host for now; see the
- * stream B report for the proposed `Trace.src` / `Trace.flowOwner` additions.
+ * Per VM: a VM's `ioPaths` (NVMe path ids, `cvmIface~faIface`) and `ioUplinks` view fields name
+ * the paths and NICs its vDisk IO used (docs/view-fields.md), so traces are matched by endpoints.
+ * Fallback per host: an HCI VM served locally over virbr0 has no network path at all, so its view
+ * is the storage traffic that starts or ends on its host's NICs.
  */
-import type { DeviceView, LinkView, Snapshot, TrafficCategory } from '../../engine/types';
+import type { DeviceView, LinkView, Snapshot, Trace, TrafficCategory } from '../../engine/types';
 import { isStorageCategory } from './traffic';
 
 export interface Share {
@@ -23,6 +23,8 @@ export interface PathUsage {
   readonly vmId: string;
   readonly hostId: string | undefined;
   readonly cvmId: string | undefined;
+  /** `vm`: only this VM's own paths; `host`: every storage trace of its host (fallback). */
+  readonly scope: 'vm' | 'host';
   readonly linkIds: ReadonlySet<string>;
   readonly deviceIds: ReadonlySet<string>;
   /** Host uplinks (NIC cables) carrying this VM's storage traffic. */
@@ -54,6 +56,28 @@ export function isDescendant(devices: Snapshot['devices'], id: string, ancestor:
   return false;
 }
 
+/** Device kinds that are a host's virtual switch / bond (the engine view uses `bond`). */
+export const isBondKind = (kind: string): boolean => kind === 'vswitch' || kind === 'bond';
+
+/** A bond's member NICs: `uplinks` (comma list) or `members` (JSON list). */
+export function bondMembers(d: DeviceView): string[] {
+  const csv = d.fields.uplinks;
+  if (typeof csv === 'string' && csv.trim() !== '') {
+    return csv
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  const json = d.fields.members;
+  if (typeof json !== 'string') return [];
+  try {
+    const v: unknown = JSON.parse(json);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 const deviceLabel = (devices: Snapshot['devices'], id: string): string => {
   const d = devices[id];
   if (!d) return id;
@@ -78,10 +102,29 @@ function shares(
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-export function computePathUsage(snapshot: Snapshot, vmId: string): PathUsage | null {
+/** Data IO (no health checks or keep-alives): what a single VM's paths carry. */
+const isIoCategory = (c: string): boolean => c.startsWith('io-') || c === 'nvme-io';
+
+/** A VM's own IO over the activity window (`ActivityWindow.vmPaths`). */
+export interface VmIo {
+  readonly paths: ReadonlySet<string>;
+  readonly uplinks: ReadonlySet<string>;
+}
+
+/**
+ * Path usage for a VM. With `vmIo` (its `ioPaths` / `ioUplinks` view fields over the window) only
+ * that VM's own traffic is counted: NVMe/TCP traces whose `src~dst` is one of its paths (T1), or
+ * IO traces between its host and its owning CVM over one of its uplinks (CO nodes, redirects).
+ * Without them (HCI VMs served locally over virbr0) it falls back to the host's storage traffic.
+ */
+export function computePathUsage(snapshot: Snapshot, vmId: string, vmIo?: VmIo): PathUsage | null {
   const vm = snapshot.devices[vmId];
   if (vm?.kind !== 'vm') return null;
-  const host = ancestorOfKind(snapshot.devices, vmId, 'ahv-host');
+  const hostField = vm.fields.host;
+  const host =
+    typeof hostField === 'string' && snapshot.devices[hostField]
+      ? snapshot.devices[hostField]
+      : ancestorOfKind(snapshot.devices, vmId, 'ahv-host');
   const hostId = host?.id;
   const owner = vm.fields.ownerCvm;
   const cvmId =
@@ -90,6 +133,8 @@ export function computePathUsage(snapshot: Snapshot, vmId: string): PathUsage | 
       : hostId && snapshot.devices[`${hostId}.cvm`]
         ? `${hostId}.cvm`
         : undefined;
+  const scope: PathUsage['scope'] =
+    vmIo && (vmIo.paths.size > 0 || vmIo.uplinks.size > 0) ? 'vm' : 'host';
   const linkIds = new Set<string>();
   const deviceIds = new Set<string>([vmId]);
   if (cvmId) deviceIds.add(cvmId);
@@ -97,16 +142,34 @@ export function computePathUsage(snapshot: Snapshot, vmId: string): PathUsage | 
   const targets = new Map<string, { deviceId: string; count: number }>();
   let traceCount = 0;
 
+  const under = (id: string | undefined, ancestor: string | undefined): boolean =>
+    id !== undefined && ancestor !== undefined && isDescendant(snapshot.devices, id, ancestor);
   const hostEnd = (l: LinkView | undefined): string | undefined => {
     if (!l || !hostId) return undefined;
-    if (isDescendant(snapshot.devices, l.a.device, hostId)) return l.a.device;
-    if (isDescendant(snapshot.devices, l.b.device, hostId)) return l.b.device;
+    if (under(l.a.device, hostId)) return l.a.device;
+    if (under(l.b.device, hostId)) return l.b.device;
     return undefined;
   };
   const isSwitch = (id: string) => snapshot.devices[id]?.kind === 'switch';
+  const touchesUplink = (t: Trace): boolean =>
+    t.links.some((id) => {
+      const l = snapshot.links[id];
+      return !!l && !!vmIo && (vmIo.uplinks.has(l.a.device) || vmIo.uplinks.has(l.b.device));
+    });
+  const isVmTrace = (t: Trace): boolean => {
+    if (!vmIo || !isIoCategory(t.category)) return false;
+    if (vmIo.paths.size > 0) {
+      return vmIo.paths.has(`${t.src}~${t.dst}`) || vmIo.paths.has(`${t.dst}~${t.src}`);
+    }
+    const ends = [t.src, t.dst];
+    return (
+      ends.some((e) => under(e, hostId)) && ends.some((e) => under(e, cvmId)) && touchesUplink(t)
+    );
+  };
 
   for (const t of snapshot.traces) {
-    if (!isStorageCategory(t.category) || t.links.length === 0) continue;
+    if (t.links.length === 0) continue;
+    if (scope === 'vm' ? !isVmTrace(t) : !isStorageCategory(t.category)) continue;
     const first = snapshot.links[t.links[0] ?? ''];
     const last = snapshot.links[t.links[t.links.length - 1] ?? ''];
     const fromHost = hostEnd(first);
@@ -136,15 +199,16 @@ export function computePathUsage(snapshot: Snapshot, vmId: string): PathUsage | 
     }
   }
   // The vswitch(es) whose uplinks carry the traffic.
+  const used = new Set([...uplinks.values()].map((u) => u.deviceId));
   for (const d of Object.values(snapshot.devices)) {
-    if (d.kind !== 'vswitch' || d.parent !== hostId) continue;
-    const members = String(d.fields.uplinks ?? '').split(',');
-    if ([...uplinks.values()].some((u) => members.includes(u.deviceId))) deviceIds.add(d.id);
+    if (!isBondKind(d.kind) || d.parent !== hostId) continue;
+    if (bondMembers(d).some((m) => used.has(m))) deviceIds.add(d.id);
   }
   return {
     vmId,
     hostId,
     cvmId,
+    scope,
     linkIds,
     deviceIds,
     uplinks: shares(uplinks, snapshot),
@@ -175,13 +239,10 @@ export function bondUtilization(snapshot: Snapshot, hostId: string): BondUtiliza
   const out: BondUtilization[] = [];
   const links = Object.values(snapshot.links);
   const vswitches = Object.values(snapshot.devices)
-    .filter((d) => d.kind === 'vswitch' && d.parent === hostId)
+    .filter((d) => isBondKind(d.kind) && d.parent === hostId)
     .sort((a, b) => a.id.localeCompare(b.id));
   for (const vs of vswitches) {
-    const nicIds = String(vs.fields.uplinks ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const nicIds = bondMembers(vs);
     const raw = nicIds.map((nicId) => {
       const l = links.find((x) => x.a.device === nicId || x.b.device === nicId);
       const byCategory = l?.util ?? {};

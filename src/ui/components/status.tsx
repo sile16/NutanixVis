@@ -12,6 +12,7 @@ import {
   CircleX,
   Crown,
   FlaskConical,
+  Hourglass,
   Lightbulb,
   type LucideIcon,
   PowerOff,
@@ -76,14 +77,39 @@ const BADGES: Readonly<Record<string, { label: string; short: string; Icon: Luci
   zk: { label: 'ZK member', short: 'ZK', Icon: Vote },
   'acropolis-leader': { label: 'Acropolis leader', short: 'Acropolis', Icon: Crown },
   'fa-primary': { label: 'Primary controller', short: 'Primary', Icon: Star },
+  'fa-promoting': { label: 'Promoting to primary', short: 'Promoting', Icon: Hourglass },
+  'io-paused': { label: 'Array IO paused', short: 'IO paused', Icon: CirclePause },
 };
 
 export const badgeLabel = (b: string): string => BADGES[b]?.label ?? b;
 
-/** A role badge. `compact` shows the short label; the full one is the tooltip / accessible name. */
-export function RoleBadge({ badge, compact = false }: { badge: string; compact?: boolean }) {
+/**
+ * A role badge. `compact` shows the short label, `iconOnly` just the icon; the full label is
+ * always the tooltip and accessible name.
+ */
+export function RoleBadge({
+  badge,
+  compact = false,
+  iconOnly = false,
+}: {
+  badge: string;
+  compact?: boolean;
+  iconOnly?: boolean;
+}) {
   const meta = BADGES[badge];
   const Icon = meta?.Icon;
+  if (iconOnly && Icon) {
+    return (
+      <span
+        title={meta.label}
+        className="inline-flex shrink-0 items-center rounded border border-accent/40 bg-accent/10 px-px text-accent-ink"
+        data-badge={badge}
+      >
+        <Icon size={9} strokeWidth={2.5} aria-hidden="true" />
+        <span className="sr-only">{meta.label}</span>
+      </span>
+    );
+  }
   return (
     <span
       title={meta?.label ?? badge}

@@ -13,7 +13,7 @@
 | Key | Document |
 |---|---|
 | DEPLOY-GUIDE | Nutanix: *Nutanix Cloud Platform with Everpure FlashArray Deployment Guide*, NCP with Everpure FlashArray 7.6 (portal.nutanix.com). A local copy is in `NutanixDocs/` (git-ignored). |
-| COMPAT | Nutanix: *NCP with Everpure FlashArray Compatibility and Interoperability Matrix 7.6* (Sept 22, 2026). The matrix table is an image in the PDF and needs a manual read. |
+| COMPAT | Nutanix: *NCP with Everpure FlashArray Compatibility and Interoperability Matrix 7.6* (Sept 22, 2026). The PDF contains **no table**: its matrix page links to the portal's [External Storage Compatibility Matrix](https://portal.nutanix.com/page/compatibility-interoperability-matrix/storage), which renders with JavaScript and could not be read (checked 2026-10-27). |
 | REQ | [Requirements, Limits and Feature Compatibility](https://support.everpuredata.com/r/nutanix/nutanix-and-everpure-requirements-limits-and-compatibility) |
 | RN | [Release Notes: Nutanix and Everpure Integration](https://support.everpuredata.com/r/nutanix/release-notes-nutanix-and-everpure-integration) |
 | NET | [Network Configuration for NCP with FlashArray](https://support.everpuredata.com/r/nutanix/nutanix-everpure-bp-network-config) |
@@ -40,9 +40,14 @@
 - **Shape.**
   - The FlashArray is external block storage for a Nutanix Cloud Infrastructure compute cluster (NCI-C).
   - It is **AHV only and NVMe/TCP only** (REQ). RDMA/iSER is not supported for the storage segment (DEPLOY-GUIDE).
-- **Versions.**
-  - The current Nutanix release is AOS 7.6 with AHV 11.
-  - Supported Purity//FA versions come from COMPAT and REQ. The research found 6.11.8+ and 6.12.x (RN); confirm this against COMPAT when building the version matrix.
+- **Versions** (re-checked 2026-10-27; matrix in `src/domain/versions/matrix.ts`):
+  - The current Nutanix release is **AOS 7.6 with AHV 11.2**. The AHV 11.2 Administration Guide documents AOS 7.6 behavior; REQ requires AHV 11.0 or later.
+  - **Supported Purity//FA with AOS 7.6: 6.11.8+ and 6.12.x.**
+    - DEPLOY-GUIDE Table 9 ("Everpure FlashArray Requirements for NVMe/TCP") lists Purity//FA 6.11.8.
+    - RN and REQ: the AOS 7.6 features (1:1 vDisk→volume with no metadata volume, 10,000 vDisks, FA async/ActiveDR/SafeMode) need Purity//FA 6.11.8+ or 6.12.0+.
+    - REQ gives **6.10.3** as the integration minimum, but that pairing lacks the 1:1 mapping and is capped at 5,000 vDisks, so it is not the current behavior. The matrix omits it. Listing it would need its own profile and a `vdiskVolumeMapping` type wider than `'1:1'`.
+    - No Purity//FA line newer than 6.12 appears in RN or REQ.
+  - **Confidence:** high for 6.11.8+ and 6.12.x, since three public Nutanix and Everpure sources agree. The portal COMPAT matrix itself could not be read.
 - **Supported arrays** (DEPLOY-GUIDE):
   - //X20, //X50, //X70, //X90
   - //XL130, //XL170, //XL190
@@ -91,8 +96,8 @@
   - No LAG across FA controllers. NVMe/TCP on port 4420.
 - **FA management.** Each controller has a management interface plus a controller virtual IP that moves to whichever controller is primary (DEPLOY-GUIDE Tables 3 and 10).
 - **ANA.** A physical FA reports **every path as ANA Optimized**, including paths on the secondary controller (ANA-FAQ).
-- **Initiator timers.** The keep-alive, reconnect and controller-loss values used by the integration are **not publicly documented** (gap), so they are labeled `assumption` in the model. TCP-BP gives generic host guidance that does not apply to this integration.
-- **Path selection policy.** Not publicly documented (gap). The model assumes round-robin across live Optimized paths.
+- **Initiator timers.** The keep-alive, reconnect and controller-loss values used by the integration are **not publicly documented** (gap), so they are labeled `assumption` in the model. The assumed values come from public SPDK docs: keep-alive 10 s (the `bdev_nvme` default), reconnect delay 20 s and controller loss -1, meaning forever (SPDK's multipath example). TCP-BP needs a support login and could not be read on 2026-10-27.
+- **Path selection policy.** Not publicly documented (gap). The model assumes SPDK `active_active` with round-robin across live Optimized paths, which SPDK says uses ANA-optimized paths only while any exist ([SPDK NVMe Multipath](https://spdk.io/doc/nvme_multipath.html)).
 
 ## 2a. Bond vs individual NICs: why this differs from generic Linux NVMe/TCP guidance
 
@@ -143,7 +148,7 @@ These are `assumption` values in the model and are tested by lab experiments L12
 - The back end is active/passive. Only the **primary** owns the drives, through a heartbeat claim on a drive quorum.
 - Front-end ports on **both** controllers serve IO. The secondary forwards IO to the primary (HA-Explained).
 
-**Failure behavior.**
+**Failure behavior.** The HA KBs below need a support login and were not re-read on 2026-10-27, so these values are from the earlier pass.
 
 | Event | Behavior | Source |
 |---|---|---|
@@ -176,19 +181,20 @@ These are `assumption` values in the model and are tested by lab experiments L12
 
 | Name | Value | Source | Confidence |
 |---|---|---|---|
-| NVMe keep-alive / reconnect / controller-loss (integration) | — | not public | assumption |
+| NVMe keep-alive / reconnect / controller-loss (integration) | 10 s / 20 s / forever (model) | SPDK docs (not the integration) | assumption |
 | FA IO delay timeout | 15 s | HA-IODelay | verified |
 | FA promotion | ≤15 s | HA-Timing | verified |
 | FA total failover objective | ≤30 s | HA-Timing | verified |
 | FA primary crash: detection / pause | ~1 s / a few s to ~16 s | HA-Crash | verified |
 | FA planned failover pause | ≤15 s | HA-Planned | verified |
 | FA worst-case single IO | 60 s | HOST-TMO | verified |
-| Multipath retry after path loss | ~10 s | HA-Scenarios | verified (generic host) |
+| Multipath retry after path loss | ~10 s | HA-Scenarios | inferred (verified for generic hosts) |
 | AHV HA timeline | 1 s poll; T20 / T60 / T120 | BIBLE-AHV | verified |
 | Isolated VM self-terminate | 45 s | BIBLE-AHV | verified |
 | Node-failure tolerance | N−2 (<5 nodes) / N−3 (≥5) | DEPLOY-GUIDE | verified |
 | Path-loss default | retry until array responds | DEPLOY-GUIDE | verified |
-| Max vDisks per cluster | 10,000 | DEPLOY-GUIDE | verified |
+| Max vDisks per cluster | 10,000 (AOS 7.6 + Purity//FA 6.11.8+/6.12.0+) | DEPLOY-GUIDE, REQ, RN | verified |
+| Max nodes per cluster | 32 | DEPLOY-GUIDE, REQ | verified |
 | Minimum cluster size | 3 nodes | DEPLOY-GUIDE | verified |
 
 ## Gaps (need a public source or an owner decision)
@@ -197,4 +203,5 @@ These are `assumption` values in the model and are tested by lab experiments L12
 - Whether the redirector moves IO to a remote CVM when only the local CVM's array paths are lost.
 - The guest-visible effect of a long array outage.
 - The default length of the per-VM force-shutdown timeout, if one exists.
-- The COMPAT matrix table, which is an image in the PDF, so the supported Purity//FA list must be read manually.
+- The portal External Storage Compatibility Matrix, which COMPAT links to, could not be read. The supported Purity//FA list currently rests on DEPLOY-GUIDE, REQ and RN.
+- The Purity//FA HA KBs (HA-*, HOST-TMO) and TCP-BP need a support login and could not be re-read on 2026-10-27. Their values are kept from the earlier pass.

@@ -9,6 +9,7 @@ import { Eye, EyeOff, Monitor, Moon, Move, RotateCcw, Sun } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { matrix as versionMatrix } from '../../domain/versions';
 import type { CatalogEntry } from '../../fixtures/catalog';
+import { VendorLogo } from '../components/brand';
 import { Button, Select } from '../components/controls';
 import { Diagram } from '../diagram/diagram';
 import { RightRail } from '../panels/right-rail';
@@ -64,7 +65,12 @@ function Header({ entry, themePref }: { entry: CatalogEntry; themePref: ThemePre
     <header className="flex flex-wrap items-end gap-x-4 gap-y-2 border-b border-border bg-panel px-4 py-2">
       <div className="mr-2 self-center">
         <h1 className="text-lg font-bold leading-tight tracking-tight">NutanixVis</h1>
-        <p className="text-[11px] leading-tight text-ink-muted">Failure scenario simulator</p>
+        <p className="flex items-center gap-1.5 text-[11px] leading-tight text-ink-muted">
+          Failure scenario simulator for
+          <VendorLogo vendor="nutanix" height={10} />
+          <span aria-hidden="true">+</span>
+          <VendorLogo vendor="everpure" height={12} />
+        </p>
       </div>
       <Select
         label="Topology"

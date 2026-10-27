@@ -14,6 +14,7 @@ import {
   Server,
   SquareStack,
 } from 'lucide-react';
+import { EverpureMark } from '../../components/brand';
 import { StatusIcon, StatusPill } from '../../components/status';
 import type { DeviceNode } from '../flow';
 import {
@@ -91,6 +92,7 @@ export function ArrayNode({ data, selected }: P) {
       data={data}
       selected={selected}
       Icon={Database}
+      logo={<EverpureMark size={data.frame.header > 24 ? 16 : 13} />}
       title={
         data.device.label.startsWith('FlashArray')
           ? `Everpure ${data.device.label}`

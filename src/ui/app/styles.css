@@ -129,3 +129,14 @@ body {
 .react-flow__edge:focus-visible .nv-edge {
   stroke: var(--color-focus);
 }
+
+/* Vendor logos: light/dark variants swap with the resolved theme (public/brand/README.md). */
+.nv-logo-dark {
+  display: none;
+}
+[data-theme="dark"] .nv-logo-light {
+  display: none;
+}
+[data-theme="dark"] .nv-logo-dark {
+  display: inline-block;
+}

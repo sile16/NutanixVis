@@ -66,6 +66,7 @@ export function GroupFrame({
   data,
   selected,
   Icon,
+  logo,
   title,
   subtitle,
   tone = 'default',
@@ -74,6 +75,8 @@ export function GroupFrame({
   data: DeviceNodeData;
   selected: boolean | undefined;
   Icon: LucideIcon;
+  /** Vendor mark shown instead of the generic icon (e.g. Everpure on the array). */
+  logo?: ReactNode;
   title: string;
   subtitle?: string;
   tone?: 'default' | 'strong';
@@ -94,11 +97,13 @@ export function GroupFrame({
         className="flex items-center gap-1.5 overflow-hidden rounded-t-lg bg-group-header px-2"
         style={{ height: frame.header }}
       >
-        <Icon
-          size={frame.header > 24 ? 14 : 12}
-          className="shrink-0 text-ink-muted"
-          aria-hidden="true"
-        />
+        {logo ?? (
+          <Icon
+            size={frame.header > 24 ? 14 : 12}
+            className="shrink-0 text-ink-muted"
+            aria-hidden="true"
+          />
+        )}
         <span
           className={clsx('shrink-0 font-semibold', frame.header > 24 ? 'text-xs' : 'text-[10px]')}
         >

@@ -317,7 +317,12 @@ describe('storage NIC loss: strict A/B vs tagged on both switches', () => {
   });
 
   it('tagged both: the bond moves the vNIC and no NVMe path is lost', () => {
-    const r = loadWithStubs(T1, { 'vlan-placement': 'tagged-both' });
+    // The moved vNIC lands on sw-b while the VLAN-A FA ports are on sw-a, so the ISL must carry
+    // the storage VLANs for the bond to save the path.
+    const r = loadWithStubs(T1, {
+      'vlan-placement': 'tagged-both',
+      'isl-storage-vlans': 'allowed',
+    });
     runTo(r, T0);
     r.sim.applyAction({ kind: 'fail', target: 'node-1.eth1' });
     const w = watch(r, T0 + KATO + CQT + 10);

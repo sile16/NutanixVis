@@ -20,7 +20,7 @@ In every design, NVMe multipathing runs inside the CVM (Stargate's NVMe/TCP init
 - Matches the Everpure KB and the Cisco Validated Design.
 - No switch-side LAG or MLAG needed.
 - Both uplinks carry traffic, since each storage interface is pinned to a different NIC.
-- With VLANs on both switches, a single NIC or cable failure is absorbed by the bond, and no NVMe path is lost.
+- With VLANs on both switches **and the storage VLANs allowed on the ISL**, a single NIC or cable failure is absorbed by the bond, and no NVMe path is lost. The moved interface reaches the FA ports on the other switch across the ISL. With the ISL pruned, those paths are lost anyway.
 
 **Cons**
 - The bond isn't VLAN-aware. With **isolated** VLANs (VLAN A only on switch A), a failover or rebalance can move an interface onto a switch that doesn't carry its VLAN. Its paths then go silent and are lost after KATO.
@@ -68,7 +68,7 @@ In every design, NVMe multipathing runs inside the CVM (Stargate's NVMe/TCP init
 
 | Choice | Options | Trade-off |
 |---|---|---|
-| VLAN placement (`vlan-placement`) | **Isolated** (VLAN A only on switch A, B only on B; default) vs **both VLANs on both switches** | Isolated keeps fabrics independent and is the typical storage design. Both-on-both lets a MAC-pinning bond save a path on NIC failure, but usually requires the ISL. |
+| VLAN placement (`vlan-placement`) | **Isolated** (VLAN A only on switch A, B only on B; default) vs **both VLANs on both switches** | Isolated keeps fabrics independent and is the typical storage design. Both-on-both lets a MAC-pinning bond save a path on NIC failure, but **only if the ISL carries the storage VLANs** (`isl-storage-vlans: allowed`). |
 | Storage VLANs on the ISL (`isl-storage-vlans`) | **Pruned** (default) vs allowed | Pruned keeps a single hop and avoids ISL latency and bottlenecks. Allowed (permitted by the Cisco Validated Design) adds redundancy for design A with both-on-both. |
 | Switch-port mode | Node ports trunk, FA ports **access** (untagged) | It's simpler to tag on the switch side. An untagged CVM interface on an access port avoids most "network validation failed" setup errors. |
 | MTU | 9000 everywhere (fabric 9216) vs 1500 | A mismatch anywhere fails large IO while small IO and keep-alives still work, which is hard to diagnose. Verify with `ping -M do -s 8972` (see `docs/commands.md`). |

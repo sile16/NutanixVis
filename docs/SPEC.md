@@ -825,3 +825,30 @@ Phase 3 (serial-ish)  I integration: engine↔UI bridge, explain panel, share li
 
 - **Before P0:** the directory has to become a git repo (`git init` plus an initial commit of the docs), because worktrees need one.
 - **GitHub remote:** creating it (presumably `NutanixVis` under the owner's account) and enabling Pages, with the source set to Actions, is an outward-facing step that needs the owner's go-ahead.
+
+---
+
+## 14. Scenario decisions (integrator, 2026-10-27)
+
+Stream H raised these while writing the acceptance scenarios. Each is labeled with its confidence. Items marked **(owner)** need the owner's confirmation.
+
+| # | Question | Decision | Confidence |
+|---|---|---|---|
+| 1 | T1-10: both switches fail. vs0 shares sw-a/sw-b, so every host is also isolated. | No side has a quorum majority, so there is no fencing and no HA restart. VM IO **retries until the array responds** (DEPLOY-GUIDE), so VMs are `io-stalled` and do not self-terminate. They resume when the fabric returns. | `inferred` **(owner)** |
+| 2 | T1-05 NDU: controller reboot time, and the final primary. | Add `flasharray.controllerRebootS` to the profile (`assumption`). The upgrade does **not** fail back: the controller upgraded first ends as primary. | `assumption` / `inferred` |
+| 3 | T1-17: LACP without MLAG. | Follow the engine's OVS-like behavior: only members to one partner aggregate (`lacpState: partial`). Redundancy is lost but traffic is not blackholed. | `inferred` |
+| 4 | T1-18 / T2-06: slow LACP with a hung member. | **T1:** if the path's admin-queue connection hashes to the hung member, keep-alive fails, the path is lost after KATO, and IO continues elsewhere. Stuck IO-queue connections wait for an NVMe IO timeout, a new profile field `externalStorage.ioTimeoutS` (`assumption`). **T2:** if host-management flows blackhole past the 40 s disconnect timeout, AHV HA triggers (AHV Admin Guide). | `inferred` + `assumption` |
+| 5 | T3-01: a CO host's redirector detecting a dead remote Stargate. | Same NOP/miss/window timers as for a local Stargate. | `inferred` |
+| 6 | T3-07: configured FT for T3. | Add `replication-factor` (2 / 3) to T3 topologies. RF/FT count only CVM-bearing nodes. | decided |
+| 7 | T1-lab-3: what starts the force-shutdown timer, and the restart delay. | Counts from the **first IO that could not complete** on that VM. On expiry the VM is powered off and restarted through AHV HA on a node with array connectivity, at the next HA cycle. | `assumption` (lab L2) |
+| 8 | T2-04: initial Acropolis leader. | Deterministic: the lowest node id (`node-1`). | decided (model) |
+| 9 | CVM boot time. | Add `cluster.cvmBootS` to the profile (`assumption`). Failback is still gated by the 30 s stable rule after `stargate.up`. | `assumption` |
+
+### Phase 2 contract backlog (from stream H)
+
+- **New actions:**
+  - `vm.snapshot` (T1-13), owned by the FlashArray domain.
+  - `vswitch.rebalance {vnic, member}` (T1-16), owned by the engine bond runtime, so the stranded-vNIC case is deterministic.
+- **New option:** `path-loss-force-shutdown-s` for T1 and T1-lab. It sets `vm.pathLossForceShutdownS` on all VMs.
+- **New profile fields:** `flasharray.controllerRebootS`, `externalStorage.ioTimeoutS`, `cluster.cvmBootS`.
+- **View fields:** the view-field contract in `docs/view-fields.md` is adopted. Domain streams must produce those fields and event codes.

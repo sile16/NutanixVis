@@ -7,28 +7,29 @@
  * accepts, and registers the full form so `evaluate` (used by the runner) can pass the context.
  * Called without a runner (e.g. by the UI), the wrapper falls back to a one-tick context.
  */
-import type { SimEvent, SimTime, Snapshot } from '../engine/types';
+import type { Snapshot } from '../engine/types';
+import type { Predicate as ContractPredicate, ScenarioContext } from './define';
 
-export interface ScenarioContext {
-  readonly now: SimTime;
-  /** Every event since t=0, oldest first, including the current tick's. */
-  readonly events: readonly SimEvent[];
-  /** Every snapshot since t=0, oldest first; the last element is the current one. */
-  readonly history: readonly Snapshot[];
-}
+export type { ScenarioContext } from './define';
 
+/** Snapshot-only predicate (most helpers). Assignable to the contract's `(s, ctx)` predicate. */
 export type Predicate = (s: Snapshot) => boolean;
-export type CtxPredicate = (s: Snapshot, ctx: ScenarioContext) => boolean;
+export type CtxPredicate = ContractPredicate;
 
 const full = new WeakMap<Predicate, CtxPredicate>();
 
+/**
+ * Wrap a context-aware predicate so it also works where only a snapshot is available (e.g. the
+ * UI's guided tour), falling back to a one-tick context. Kept for existing scenario files; new ones
+ * may pass `(s, ctx) => …` directly, since the contract now accepts it.
+ */
 export function withCtx(fn: CtxPredicate): Predicate {
   const fallback: Predicate = (s) => fn(s, { now: s.simTime, events: s.events, history: [s] });
   full.set(fallback, fn);
   return fallback;
 }
 
-export function evaluate(that: Predicate, s: Snapshot, ctx: ScenarioContext): boolean {
-  const withContext = full.get(that);
-  return withContext ? withContext(s, ctx) : that(s);
+export function evaluate(that: ContractPredicate, s: Snapshot, ctx: ScenarioContext): boolean {
+  const withContext = full.get(that as Predicate);
+  return withContext ? withContext(s, ctx) : that(s, ctx);
 }

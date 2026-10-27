@@ -7,6 +7,8 @@
  * apply at the start of the next tick (`Simulation.applyAction`), so they show from snapshot t+1.
  */
 import type { SimEvent, SimTime, Simulation, Snapshot } from '../engine/types';
+import { loadSimulation } from '../loader/simulation';
+import { type TopologyId, topologyIds } from '../topologies';
 import { evaluate, type ScenarioContext } from './context';
 import type { ScenarioDef } from './define';
 
@@ -21,12 +23,23 @@ export interface SimulationRequest {
 export type SimulationFactory = (req: SimulationRequest) => Simulation;
 
 /**
- * The real factory, once the engine and domain streams land.
- * TODO(integrator): return `(req) => createSimulation(buildTopology(req.topology, req.options),
- * resolveVersions(req.versions), req.seed)` (or the engine's equivalent).
+ * The real factory: topology + options + versions → engine simulation via the loader. Domain
+ * device models plug in through `loadSimulation({ domain })` as they land (Phase 2).
  */
-export function defaultSimulationFactory(): SimulationFactory | undefined {
-  return undefined;
+export function defaultSimulationFactory(): SimulationFactory {
+  return (req) => {
+    if (!isTopologyId(req.topology)) throw new Error(`unknown topology ${req.topology}`);
+    return loadSimulation({
+      topologyId: req.topology,
+      options: req.options,
+      seed: req.seed,
+      ...(req.versions ? { versions: req.versions } : {}),
+    }).sim;
+  };
+}
+
+function isTopologyId(id: string): id is TopologyId {
+  return (topologyIds as readonly string[]).includes(id);
 }
 
 export interface ExpectationFailure {

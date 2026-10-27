@@ -2,7 +2,18 @@
  * Scenario contract (SPEC §7.1, §13.1). One file serves both the Vitest acceptance test and the
  * UI's guided scenario. Stream H authors scenarios; the shape is owned by the integrator.
  */
-import type { ActionRequest, CitationId, SimTime, Snapshot } from '../engine/types';
+import type { ActionRequest, CitationId, SimEvent, SimTime, Snapshot } from '../engine/types';
+
+/** Accumulated run state handed to expectations (`Snapshot.events` only covers the last tick). */
+export interface ScenarioContext {
+  readonly now: SimTime;
+  /** Every event since t=0, oldest first, including the current tick's. */
+  readonly events: readonly SimEvent[];
+  /** Every snapshot since t=0, oldest first; the last element is the current one. */
+  readonly history: readonly Snapshot[];
+}
+
+export type Predicate = (s: Snapshot, ctx: ScenarioContext) => boolean;
 
 export interface ScenarioStep {
   /** Simulated second at which the action is queued. */
@@ -13,8 +24,8 @@ export interface ScenarioStep {
 }
 
 export type Expectation =
-  | { readonly label: string; readonly at: SimTime; readonly that: (s: Snapshot) => boolean }
-  | { readonly label: string; readonly always: true; readonly that: (s: Snapshot) => boolean };
+  | { readonly label: string; readonly at: SimTime; readonly that: Predicate }
+  | { readonly label: string; readonly always: true; readonly that: Predicate };
 
 export interface ScenarioDef {
   readonly id: string;

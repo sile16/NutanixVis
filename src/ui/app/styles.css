@@ -1,21 +1,61 @@
 @import "tailwindcss";
 
-/* Brand + status tokens (SPEC §8). Status colors are always paired with icons/labels. */
+/*
+ * Brand + status tokens (SPEC §8). Clean, neutral, no vendor logos. Status colors are always
+ * paired with icons/labels. Light is the base; `[data-theme="dark"]` on <html> overrides.
+ */
 @theme {
-  --color-surface: #0f172a;
+  --color-surface: #f4f5f7;
+  --color-panel: #ffffff;
+  --color-panel-2: #f8fafc;
+  --color-hover: #eef1f5;
+  --color-border: #d9dee5;
+  --color-ink: #111827;
+  --color-ink-muted: #5b6472;
+  --color-accent: #2563eb;
+  --color-accent-ink: #1d4ed8;
+  --color-on-accent: #ffffff;
+  --color-focus: #2563eb;
+  --color-cable: #8b95a5;
+  --color-group: #ffffff;
+  --color-group-header: #f1f4f8;
+
+  --color-status-healthy: #16a34a;
+  --color-status-degraded: #d97706;
+  --color-status-stalled: #ca8a04;
+  --color-status-failed: #dc2626;
+  --color-status-fenced: #9333ea;
+  --color-status-offline: #6b7280;
+  --color-status-unknown: #64748b;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+[data-theme="dark"] {
+  --color-surface: #0b1120;
   --color-panel: #111827;
-  --color-border: #1f2937;
+  --color-panel-2: #172033;
+  --color-hover: #1f2a3d;
+  --color-border: #263247;
   --color-ink: #e5e7eb;
-  --color-ink-muted: #9ca3af;
-  --color-accent: #22c55e;
+  --color-ink-muted: #9aa4b2;
+  --color-accent: #60a5fa;
+  --color-accent-ink: #93c5fd;
+  --color-on-accent: #0b1120;
+  --color-focus: #93c5fd;
+  --color-cable: #64748b;
+  --color-group: #111a2b;
+  --color-group-header: #172235;
 
   --color-status-healthy: #22c55e;
   --color-status-degraded: #f59e0b;
   --color-status-stalled: #eab308;
-  --color-status-failed: #ef4444;
-  --color-status-fenced: #a855f7;
-  --color-status-offline: #6b7280;
-  --color-status-unknown: #64748b;
+  --color-status-failed: #f87171;
+  --color-status-fenced: #c084fc;
+  --color-status-offline: #8b95a5;
+  --color-status-unknown: #94a3b8;
+  color-scheme: dark;
 }
 
 html,
@@ -28,5 +68,64 @@ body {
   margin: 0;
   background: var(--color-surface);
   color: var(--color-ink);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-sans);
+}
+
+/* ── Diagram ─────────────────────────────────────────────────────────────── */
+
+.react-flow {
+  --xy-background-color: var(--color-surface);
+  --xy-background-pattern-color: var(--color-border);
+  --xy-controls-button-background-color: var(--color-panel);
+  --xy-controls-button-background-color-hover: var(--color-hover);
+  --xy-controls-button-color: var(--color-ink);
+  --xy-controls-button-border-color: var(--color-border);
+}
+
+.nv-port.react-flow__handle {
+  width: 7px;
+  height: 7px;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 1px;
+  border: 1px solid var(--color-panel);
+  background: var(--color-cable);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.nv-node {
+  border: 1.5px solid var(--status, var(--color-border));
+}
+.nv-node[data-status="failed"],
+.nv-node[data-status="offline"] {
+  border-style: dashed;
+}
+.nv-node[data-status="failed"] {
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-status-failed) 10%, transparent) 0 6px,
+    transparent 6px 12px
+  );
+}
+.nv-node[data-selected="true"] {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.nv-node[data-dim="true"] {
+  opacity: 0.28;
+}
+.nv-node[data-inpath="true"] {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.react-flow__node:focus-visible {
+  outline: none;
+}
+.react-flow__node:focus-visible > .nv-node {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.react-flow__edge:focus-visible .nv-edge {
+  stroke: var(--color-focus);
 }

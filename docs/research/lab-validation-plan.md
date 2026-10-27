@@ -4,7 +4,11 @@
 
 **Status:** waiting on lab access details and the owner's confirmation of which disruptive actions are allowed (see "Questions").
 
-## Lab constraints (known)
+## Lab status (2026-10-27)
+
+The virtual test drive **does not have enough paths** to test path failover properly, so the owner is finding a better lab. Until then, every timer and policy stays a profile field (with a confidence label) and every behavior choice a topology option. Results from a real lab then update data, not code.
+
+## Lab constraints (test drive)
 
 - **Single NIC per node, so no uplink bond.** Bond experiments (L4, the bond part of L12, and L13) **can't be run in this lab**. They stay simulator-only (`inferred` / `assumption`) until a bonded lab is available.
 - **Array-side failure injection.** Add **extra FA data IPs** (more interfaces, or VLAN interfaces per controller) so each CVM has more paths. Then fail individual paths by disabling single FA IPs, without touching the node's only NIC.

@@ -96,7 +96,7 @@
   - No LAG across FA controllers. NVMe/TCP on port 4420.
 - **FA management.** Each controller has a management interface plus a controller virtual IP that moves to whichever controller is primary (DEPLOY-GUIDE Tables 3 and 10).
 - **ANA.** A physical FA reports **every path as ANA Optimized**, including paths on the secondary controller (ANA-FAQ).
-- **Initiator timers.** The keep-alive, reconnect and controller-loss values used by the integration are **not publicly documented** (gap), so they are labeled `assumption` in the model. The assumed values come from public SPDK docs: keep-alive 10 s (the `bdev_nvme` default), reconnect delay 20 s and controller loss -1, meaning forever (SPDK's multipath example). TCP-BP needs a support login and could not be read on 2026-10-27.
+- **Initiator timers.** "Multipathing and NVMe timers (KATO 5 s, controller loss 3600 s, CQT 30 s) are set automatically and must not be changed" (Everpure, *Nutanix + Everpure 301 Technical Deck*). Publication was approved by the owner on 2026-10-27. The reconnect delay is still not documented; the model uses 20 s from SPDK's multipath example as an `assumption`.
 - **Path selection policy.** Not publicly documented (gap). The model assumes SPDK `active_active` with round-robin across live Optimized paths, which SPDK says uses ANA-optimized paths only while any exist ([SPDK NVMe Multipath](https://spdk.io/doc/nvme_multipath.html)).
 
 ## 2a. Bond vs individual NICs: why this differs from generic Linux NVMe/TCP guidance
@@ -199,7 +199,7 @@ These are `assumption` values in the model and are tested by lab experiments L12
 
 ## Gaps (need a public source or an owner decision)
 
-- The integration's NVMe keep-alive, reconnect and controller-loss values, and its path policy.
+- The integration's NVMe reconnect delay, IO timeout and path policy. KATO, CQT and controller loss are now known (see §2).
 - Whether the redirector moves IO to a remote CVM when only the local CVM's array paths are lost.
 - The guest-visible effect of a long array outage.
 - The default length of the per-VM force-shutdown timeout, if one exists.

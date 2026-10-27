@@ -22,8 +22,14 @@ import { P, REDIRECT_DETECT, REDIRECT_PAUSE } from '../timers';
 
 const CVM = cvmId(1);
 const POWER_ON_AT = T0 + 120;
-/** CVM boot time is not a profile field; leave ample room for failback. */
-const END = POWER_ON_AT + P.redirector.failbackStableS + 180;
+/**
+ * Failback needs the CVM to boot (`cluster.cvmBootS`), then its Stargate to answer NOPs for
+ * `failbackStableS`, then the re-login stall (`redirectStallS`) before local IO flows again.
+ */
+const END = by(
+  P.cluster.cvmBootS + P.redirector.failbackStableS + P.redirector.redirectStallS,
+  POWER_ON_AT,
+);
 
 export default defineScenario({
   id: 't2-01-cvm-power-off-autopath',
@@ -75,5 +81,5 @@ export default defineScenario({
   narrative:
     "CVM 1 is powered off while node 1 keeps running its VMs. The host's iSCSI redirector misses two NOPs, marks the local Stargate unhealthy, and QEMU's iSCSI login is redirected to a healthy remote Stargate after a short pause. Curator starts rebuilding the lost replicas right away. When CVM 1 is back and its Stargate has been stable for 30 s, the VMs fail back to local IO.",
   cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-5b', 'ntnx-bible-4i', 'ntnx-blog-cvm-failure'],
-  status: 'todo',
+  status: 'active',
 });

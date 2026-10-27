@@ -1,5 +1,16 @@
 import { defineScenario } from '../define';
-import { allRunningAt, at, baseInvariants, by, isRunning, T0, vmsOfNode } from '../helpers';
+import {
+  allRunningAt,
+  at,
+  atCtx,
+  baseInvariants,
+  by,
+  eventSeen,
+  isFenced,
+  isRunning,
+  T0,
+  vmsOfNode,
+} from '../helpers';
 import { nodeId, T3_CO_HCI } from '../ids';
 import { P } from '../timers';
 
@@ -34,6 +45,21 @@ export default defineScenario({
     at(by(0), 'CO VM reads and writes both stop', (s) =>
       vmsOfNode(s, CO).every((v) => v.readPendingS > 0 && v.writePendingS > 0),
     ),
+    // Bible 5b: VMs on an isolated host fail 45 s after their first failed IO; the host is
+    // fenced at T+60 and its VMs restart on the majority side by T+120.
+    atCtx(by(HA.isolatedVmSelfTerminateS), 'isolated VMs on both nodes self-terminate', (s, ctx) =>
+      [CO, HCI].every((n) =>
+        vmsOfNode(s, n).every((v) =>
+          eventSeen(ctx, 'ha.vm.self-terminated', {
+            device: v.id,
+            from: T0 + HA.isolatedVmSelfTerminateS,
+          }),
+        ),
+      ),
+    ),
+    at(by(HA.fenceAtS), 'both hosts are fenced', (s) =>
+      [CO, HCI].every((n) => isFenced(s, nodeId(n))),
+    ),
     at(
       by(HA.restartByS),
       'both nodes are then handled as isolated hosts: VMs restart elsewhere',
@@ -45,5 +71,5 @@ export default defineScenario({
   narrative:
     "The same NIC fails on HCI node 3 and on compute-only node 1, each running without an uplink bond. On the HCI node, VM reads keep flowing to the local CVM over the host's internal bridge; only writes, which need a remote replica, stall. On the CO node every IO crosses the failed NIC, so reads and writes stop at once. Both nodes then follow the isolation path, and HA restarts their VMs elsewhere.",
   cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-5b', 'ntnx-bible-4g', 'ntnx-community-co-nodes'],
-  status: 'todo',
+  status: 'active',
 });

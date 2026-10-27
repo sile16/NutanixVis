@@ -389,7 +389,9 @@ export class Vm implements Device<Profile> {
     if (this.lifecycle !== 'running') return this.lifecycle;
     if (this.hostId !== null && this.env.hostFenced(this.hostId)) return 'io-stalled';
     if (this.okThisTick > 0) return 'running';
-    return this.pending.size > 0 ? 'io-stalled' : 'running';
+    // Stalled = outstanding IO that has had a tick to complete and has not. IO issued this tick
+    // and still in flight (pipeline fill right after a start or re-login) is not a stall.
+    return this.pendingS.all > 0 ? 'io-stalled' : 'running';
   }
 
   private issue(vdisk: string, ctx: Ctx): void {

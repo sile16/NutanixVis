@@ -265,6 +265,22 @@ export function builtinActions(env: BuiltinEnv): ActionDefinition[] {
     },
     {
       spec: {
+        kind: 'vswitch.rebalance',
+        label: 'Force MAC-pinning rebalance',
+        description:
+          'Move one vNIC (source MAC) onto a member, as a balance-slb load rebalance would. Plain OVS: the move ignores which VLANs the member’s switch carries.',
+        appliesTo: (t) => isBond(t) && net.bond(t.id)?.mode === 'balance-slb',
+        params: {
+          vnic: { label: 'vNIC endpoint', choices: [] },
+          member: { label: 'Member NIC', choices: [] },
+        },
+      },
+      apply: (req, ctx) => {
+        ctx.net.forceSlbPin(req.target, stringParam(req, 'vnic'), stringParam(req, 'member'));
+      },
+    },
+    {
+      spec: {
         kind: 'vswitch.set-slb-vlan-aware',
         label: 'Set VLAN-aware member selection',
         description:

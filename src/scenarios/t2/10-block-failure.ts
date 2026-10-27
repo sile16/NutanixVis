@@ -4,6 +4,7 @@ import {
   alwaysFrom,
   at,
   baseInvariants,
+  before,
   by,
   derived,
   isRunning,
@@ -21,7 +22,10 @@ const BLOCK_1 = [1, 4];
 function variant(met: boolean): ScenarioDef {
   const nodes = met ? 6 : 4;
   const RETURN_AT = T0 + 300;
-  const END = met ? by(HA.restartByS) + 30 : by(HA.restartByS, RETURN_AT) + 30;
+  // The block's replicas are reachable again once its CVMs have booted (`cluster.cvmBootS`,
+  // SPEC §14 #9); VM restarts by AHV HA are not what brings data back.
+  const BACK_BY = by(P.cluster.cvmBootS, RETURN_AT);
+  const END = met ? by(HA.restartByS) + 30 : BACK_BY + 30;
   return defineScenario({
     id: `t2-10-block-failure-${met ? 'aware' : 'not-met'}`,
     title: `T2: a whole block fails (block awareness ${met ? 'met' : 'not met'})`,
@@ -66,7 +70,13 @@ function variant(met: boolean): ScenarioDef {
               'losing the block exceeds FT1: some data or metadata is unavailable',
               (s) => !storageAvailable(s),
             ),
-            at(END, 'availability returns with the block', storageAvailable),
+            at(
+              before(P.cluster.cvmBootS, RETURN_AT),
+              "still unavailable while the block's CVMs boot",
+              (s) => !storageAvailable(s),
+            ),
+            at(BACK_BY, 'availability returns with the block', storageAvailable),
+            at(END, 'and stays available', storageAvailable),
           ]),
       ...baseInvariants(),
     ],
@@ -74,7 +84,7 @@ function variant(met: boolean): ScenarioDef {
       ? 'Six nodes sit in three blocks of two, which meets block awareness: no two replicas of any data, metadata or Zookeeper member share a block. A whole block loses power, and the cluster carries on as for a single failure, restarting that block’s VMs in the other two.'
       : 'Four nodes in three blocks put two nodes in block 1, so block awareness is not met and replicas can share a block. When block 1 loses power the cluster loses two nodes at once, beyond FT1, and data or metadata whose copies were both in that block is unavailable until it returns.',
     cite: ['ntnx-bible-4i', 'ntnx-bible-5b'],
-    status: 'todo',
+    status: 'active',
   });
 }
 

@@ -52,6 +52,7 @@ The app is a browser-based, interactive failure simulator. The user picks a topo
    - `inferred`: derived from documented mechanisms
    - `unverified`: a community post or third-party blog
    - `assumption`: no public source
+   - `lab-observed`: measured on our test drive instance, recorded with the AOS, AHV and Purity//FA versions and the date (see `docs/research/lab-validation-plan.md`)
 
    The UI shows the label next to explanations, so users can see where the model is a best guess.
 4. **Current release only.** The app models the behavior of the newest release in the version matrix (§2.1). It contains **no historical behavior and no "in older versions…" explanations**. When a newer release changes behavior, add a new profile; older profiles may be deleted rather than maintained.
@@ -665,6 +666,7 @@ Phase 3 (serial-ish)  I integration: engine↔UI bridge, explain panel, share li
 | **E** FlashArray + NVMe/TCP | 2 | `src/domain/flasharray/**`, `src/domain/nvme-tcp/**` | controllers (primary/secondary claim, promotion, IO delay timeout, NDU, port disappearance), FE ports, ANA all-Optimized, mgmt API endpoint, host-side initiator (keep-alive, reconnect, controller-loss) | A, C |
 | **F** Nutanix services + workload | 2 | `src/domain/nutanix/**` (except `hci/`), `src/domain/workload/**` | CVM, Stargate (interface + T1 NVMe backend), ZK ensemble, Cassandra ring, Acropolis/AHV HA (T+20/60/120, fence, 45 s self-terminate), iSCSI redirector, T1 node-failure tolerance (N−2 / N−3), per-VM path-loss handling, VM and vDisk lifecycle | A, C |
 | **G** HCI data path | 2 | `src/domain/nutanix/hci/**` | extent groups and RF placement (block awareness), Oplog sync replication, Curator rebuild, disks (SMART, 3 offline events per hour), 95% read-only | F's Stargate interface (an early F merge) |
+| **L** Lab validation | 1→3 | `docs/research/lab-validation-plan.md`, lab results, and the `confidence` fields in profiles (coordinated with C) | experiments L1–L11 on the test drive instance; assumptions upgraded to `lab-observed`; golden expectations for H | lab access and owner approval of which disruptive actions are allowed |
 | **I** Integration + polish | 3 | `src/ui/store/**` bridge, `src/app` wiring, explain panel | engine↔UI `useSyncExternalStore` bridge, live diagram, explain panel with citations and confidence badges, guided scenarios, share-link URL state, visual baselines | all |
 
 **Peak parallelism.** Phase 1 runs 5 streams (A, B, C, D, H) and Phase 2 runs 3 (E, F, G, with G starting once F's interface lands). With an AI orchestrator, each stream is one agent in an isolated worktree, and the integrator merges between phases.

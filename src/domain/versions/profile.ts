@@ -51,6 +51,18 @@ export interface Profile {
     readonly readOnlyCapacityPct: Cited<number>;
     readonly capacityWarnPct: Cited<number>;
     readonly vdiskOwnerMigrationRemoteIoS: Cited<number>;
+    /** Model granularity: extent groups per vDisk. */
+    readonly extentGroupsPerVdisk: Cited<number>;
+    /** Curator re-replication throughput per surviving CVM node (total = this × N). */
+    readonly rebuildGiBpsPerNode: Cited<number>;
+    /** Physical used capacity at t=0 (% of raw, replicas included). */
+    readonly initialUsedCapacityPct: Cited<number>;
+    /** Hades SMART check duration once a disk's fault clears. */
+    readonly diskSmartCheckS: Cited<number>;
+    /** Window for `diskOfflineEventsPerHourToStayOffline`. */
+    readonly diskOfflineWindowS: Cited<number>;
+    /** Stargate replication / remote-read RPC: no ack within this → replica treated unreachable. */
+    readonly replicaAckTimeoutS: Cited<number>;
   };
 
   /** AHV virtual switch bonds (AHV Admin Guide Table 9). */

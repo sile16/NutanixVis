@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   blockAwareness,
-  HCI_ASSUMPTIONS,
   HciStore,
   placeReplicas,
   readLayout,
@@ -9,7 +8,7 @@ import {
 import { current } from '../../../src/domain/versions/profiles/current';
 import { buildTopology } from '../../../src/topologies';
 
-const E = HCI_ASSUMPTIONS.extentGroupsPerVdisk.value;
+const E = current.hci.extentGroupsPerVdisk.value;
 
 function storeFor(id: Parameters<typeof buildTopology>[0], options = {}) {
   const t = buildTopology(id, options);

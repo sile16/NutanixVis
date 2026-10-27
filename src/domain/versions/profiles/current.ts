@@ -149,6 +149,41 @@ export const current: Profile = {
       ['ntnx-bible-4a'],
       'Stargate relinquishes the vDisk token after 300+ s of remote IO.',
     ),
+    /** Model granularity: each vDisk is E extent groups (SPEC §6.3). Not a vendor value. */
+    extentGroupsPerVdisk: c(
+      8,
+      'assumption',
+      [],
+      'Model granularity (SPEC §6.3 default). Real extent groups are ~1–4 MiB, so a vDisk has thousands.',
+    ),
+    /**
+     * Curator re-replication throughput contributed by each surviving CVM node. The total rate is
+     * this × N, so each node does ~1/N of the work (Bible 4i).
+     */
+    rebuildGiBpsPerNode: c(
+      1,
+      'assumption',
+      ['ntnx-bible-4i', 'ntnx-community-rebuild-rate'],
+      'No published per-node figure. Chosen to land in the range of a public lab test (>5 TB rebuilt in <20 min, ~9 GBps cluster-wide; Josh Odgers, "Nutanix resiliency part 1", 2018).',
+    ),
+    /** Physical used capacity (replicas included) as % of raw, at t=0. Runtime: `hci.set-capacity`. */
+    initialUsedCapacityPct: c(
+      20,
+      'assumption',
+      [],
+      'Illustrative starting fill. Drives replica size, hence rebuild duration.',
+    ),
+    /** Hades SMART test duration once a disk's fault clears. */
+    diskSmartCheckS: c(10, 'assumption', ['ntnx-bible-4i'], 'Bible 4i gives no duration.'),
+    /** Stargate replication / remote-read RPC: no ack within this → replica treated as unreachable. */
+    replicaAckTimeoutS: c(
+      2,
+      'assumption',
+      [],
+      'No published Stargate RPC timeout. Short, so a dropped replica write is re-placed within a few ticks.',
+    ),
+    /** Window for `diskOfflineEventsPerHourToStayOffline` (the rule is "per hour"). */
+    diskOfflineWindowS: c(3600, 'verified', ['ntnx-bible-4i'], '"3 times within an hour".'),
   },
 
   bond: {

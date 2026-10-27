@@ -62,6 +62,7 @@ export interface LoadOptions {
   readonly domain?: (ctx: { readonly topology: Topology; readonly versions: ResolvedVersions }) => {
     readonly devices: readonly Device<Profile>[];
     readonly actions?: readonly ActionDefinition[];
+    readonly traffic?: Readonly<Record<string, string>>;
   };
 }
 
@@ -95,6 +96,7 @@ export function loadSimulation(opts: LoadOptions): LoadedSimulation {
     topologyId: topology.id,
     versions: versions.selection,
     ...(domain.actions ? { actions: domain.actions } : {}),
+    ...(domain.traffic ? { traffic: domain.traffic } : {}),
   });
   return { sim, topology, versions };
 }

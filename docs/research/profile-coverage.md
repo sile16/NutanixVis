@@ -11,12 +11,12 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 <!-- coverage:begin -->
 | Confidence | Count |
 |---|---|
-| verified | 33 |
+| verified | 34 |
 | inferred | 5 |
 | unverified | 4 |
-| assumption | 8 |
+| assumption | 13 |
 | lab-observed | 0 |
-| **Total** | **50** |
+| **Total** | **56** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -45,6 +45,12 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `hci.readOnlyCapacityPct` | 95 | verified | `ntnx-bible-4i` | Stargate goes read-only at 95 %. |
 | `hci.capacityWarnPct` | 75 | verified | `ntnx-bible-4i` | Default Prism warning threshold, as % of resilient capacity. |
 | `hci.vdiskOwnerMigrationRemoteIoS` | 300 | verified | `ntnx-bible-4a` | Stargate relinquishes the vDisk token after 300+ s of remote IO. |
+| `hci.extentGroupsPerVdisk` | 8 | assumption |  | Model granularity (SPEC §6.3 default). Real extent groups are ~1–4 MiB, so a vDisk has thousands. |
+| `hci.rebuildGiBpsPerNode` | 1 | assumption | `ntnx-bible-4i`, `ntnx-community-rebuild-rate` | No published per-node figure. Chosen to land in the range of a public lab test (>5 TB rebuilt in <20 min, ~9 GBps cluster-wide; Josh Odgers, "Nutanix resiliency part 1", 2018). |
+| `hci.initialUsedCapacityPct` | 20 | assumption |  | Illustrative starting fill. Drives replica size, hence rebuild duration. |
+| `hci.diskSmartCheckS` | 10 | assumption | `ntnx-bible-4i` | Bible 4i gives no duration. |
+| `hci.replicaAckTimeoutS` | 2 | assumption |  | No published Stargate RPC timeout. Short, so a dropped replica write is re-placed within a few ticks. |
+| `hci.diskOfflineWindowS` | 3600 | verified | `ntnx-bible-4i` | "3 times within an hour". |
 | `bond.lacpFastDetectS` | 3 | verified | `ntnx-ahv-admin-11.2` |  |
 | `bond.lacpSlowDetectS` | 90 | verified | `ntnx-ahv-admin-11.2` |  |
 | `bond.slbRebalanceIntervalS` | 10 | assumption | `ovs-bonding`, `ovs-vswitchd-conf` | OVS default ("Every 10 seconds, vswitchd rebalances"); whether AHV tunes bond-rebalance-interval is not published. |

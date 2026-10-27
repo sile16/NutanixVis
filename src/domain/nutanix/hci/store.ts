@@ -3,7 +3,7 @@
  * replicas, replica availability, Curator rebuild and cleanup, capacity, and derived status.
  *
  * Model (SPEC §6.3):
- * - Each vDisk is E extent groups (`HCI_ASSUMPTIONS.extentGroupsPerVdisk`), each with RF replicas
+ * - Each vDisk is E extent groups (`profile.hci.extentGroupsPerVdisk`), each with RF replicas
  *   on distinct CVM nodes; the first on the writing Stargate's node (Bible 4g data locality).
  * - A replica is `ok` (complete), `behind` (missed writes while unreachable; those writes are
  *   held by the RF Oplog copies on the nodes that acked them, Bible 4g), `filling` (a substitute
@@ -19,7 +19,7 @@ import { asEngineContext } from '../../../engine/context';
 import type { DeviceId, ViewField } from '../../../engine/types';
 import type { ClusterView, Ctx } from '../../contracts';
 import type { Profile } from '../../versions/profile';
-import { HCI_ASSUMPTIONS, STARGATE_PORT } from './assumptions';
+import { STARGATE_PORT } from './assumptions';
 import { cmp, type DataNode, type HciLayout } from './layout';
 import { MSG, type RebuildPayload } from './messages';
 import { type BlockAwareness, blockAwareness, placeReplicas } from './placement';
@@ -88,7 +88,7 @@ export class HciStore {
 
   constructor(
     layout: HciLayout,
-    private readonly profile: Profile,
+    readonly profile: Profile,
   ) {
     this.rf = layout.rf;
     this.ft = layout.rf - 1;
@@ -98,7 +98,7 @@ export class HciStore {
       layout.nodes.map((n) => n.block),
       this.ft,
     );
-    this.usedPct = HCI_ASSUMPTIONS.initialUsedCapacityPct.value;
+    this.usedPct = this.profile.hci.initialUsedCapacityPct.value;
     for (const n of layout.nodes) {
       for (const d of n.disks) {
         this.disks.set(d.id, {
@@ -214,7 +214,7 @@ export class HciStore {
     if (have) return have;
     const list: ExtentGroup[] = [];
     const cand = this.candidates();
-    for (let i = 0; i < HCI_ASSUMPTIONS.extentGroupsPerVdisk.value; i++) {
+    for (let i = 0; i < this.profile.hci.extentGroupsPerVdisk.value; i++) {
       const ordinal = this.egs.length;
       const nodes = placeReplicas({
         key: ordinal,
@@ -535,7 +535,7 @@ export class HciStore {
           this.liveReplicas(a).length - this.liveReplicas(b).length || a.ordinal - b.ordinal,
       );
     const cand = this.candidates();
-    let budget = canRun ? HCI_ASSUMPTIONS.rebuildGiBpsPerNode.value * cand.length : 0;
+    let budget = canRun ? this.profile.hci.rebuildGiBpsPerNode.value * cand.length : 0;
     const size = this.replicaGiB();
     for (const eg of canRun ? jobs : []) {
       const live = this.liveReplicas(eg);

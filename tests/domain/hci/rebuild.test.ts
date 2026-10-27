@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { HCI_ASSUMPTIONS, MSG } from '../../../src/domain/nutanix/hci';
+import { MSG } from '../../../src/domain/nutanix/hci';
 import { current } from '../../../src/domain/versions/profiles/current';
 import type { Snapshot } from '../../../src/engine/types';
 import { type Harness, harness } from './fakes';
 
 const T0 = 10;
-const RATE = HCI_ASSUMPTIONS.rebuildGiBpsPerNode.value;
+const RATE = current.hci.rebuildGiBpsPerNode.value;
 
 /** Tick until `pred` holds (or `max` ticks); returns the snapshot where it first held. */
 function until(h: Harness, pred: (s: Snapshot) => boolean, max = 10_000): Snapshot {

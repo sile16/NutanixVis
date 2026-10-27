@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { IoCompletion } from '../../../src/domain/contracts';
-import { HCI_ASSUMPTIONS, MSG } from '../../../src/domain/nutanix/hci';
+import { MSG } from '../../../src/domain/nutanix/hci';
+import { current } from '../../../src/domain/versions/profiles/current';
 import type { Message } from '../../../src/engine/types';
 import { harness } from './fakes';
 
-const ACK_TIMEOUT = HCI_ASSUMPTIONS.replicaAckTimeoutS.value;
+const ACK_TIMEOUT = current.hci.replicaAckTimeoutS.value;
 
 describe('write path (Bible 4g)', () => {
   it('steady state: every write is replicated RF−1 times and completes in its tick', () => {

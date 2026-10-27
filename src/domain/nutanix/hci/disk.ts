@@ -23,7 +23,6 @@ import type {
 } from '../../../engine/types';
 import type { DeviceSpec } from '../../../topologies/schema';
 import type { Profile } from '../../versions/profile';
-import { HCI_ASSUMPTIONS } from './assumptions';
 import type { DiskHandle, HciStore } from './store';
 
 type DiskSpec = Extract<DeviceSpec, { kind: 'disk' }>;
@@ -139,7 +138,7 @@ export class DiskDevice implements EngineDevice<Profile>, DiskHandle {
       return;
     }
     this.state = 'smart-check';
-    const smartCheckS = HCI_ASSUMPTIONS.diskSmartCheckS;
+    const smartCheckS = this.store.profile.hci.diskSmartCheckS;
     const started = ctx.emit({
       severity: 'info',
       deviceId: this.id,
@@ -187,7 +186,7 @@ export class DiskDevice implements EngineDevice<Profile>, DiskHandle {
   }
 
   private recentOfflineEvents(): number {
-    const window = HCI_ASSUMPTIONS.diskOfflineWindowS.value;
+    const window = this.store.profile.hci.diskOfflineWindowS.value;
     const now = Math.max(this.now, this.store.now());
     return this.offlineAt.filter((t) => now - t < window).length;
   }

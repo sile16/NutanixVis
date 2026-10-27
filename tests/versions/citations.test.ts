@@ -16,6 +16,8 @@ const PUBLIC_HOSTS = new Set([
   'spdk.io',
   'nvmexpress.org',
   'web.archive.org',
+  // Nutanix-employee technical blog (community-grade source, labeled unverified/assumption).
+  'www.joshodgers.com',
 ]);
 
 const INTERNAL = [
@@ -51,9 +53,10 @@ describe('citation registry', () => {
     expect(c.retrieved).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it('community posts are only on next.nutanix.com', () => {
+  it('community posts are only on known community hosts', () => {
+    const community = new Set(['next.nutanix.com', 'www.joshodgers.com']);
     for (const [, c] of all) {
-      if (c.publisher === 'Community') expect(new URL(c.url).hostname).toBe('next.nutanix.com');
+      if (c.publisher === 'Community') expect(community.has(new URL(c.url).hostname)).toBe(true);
     }
   });
 

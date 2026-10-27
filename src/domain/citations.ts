@@ -281,6 +281,11 @@ const entries = {
     url: `${NEXT}community-blog-154/supercharging-your-nutanix-ahv-clusters-with-compute-only-nodes-33303`,
     publisher: 'Community',
   },
+  'ntnx-community-rebuild-rate': {
+    title: 'Josh Odgers: "Nutanix Resiliency – Part 1 – Node failure rebuild performance" (2018)',
+    url: 'https://www.joshodgers.com/2018/05/30/nutanix-resiliency-part-1-node-failure-rebuild-performance/',
+    publisher: 'Community',
+  },
   'ntnx-community-co-nodes': {
     title: 'Nutanix Community — What are the Nutanix compute nodes',
     url: `${NEXT}how-it-works-22/what-are-the-nutanix-compute-nodes-37488`,

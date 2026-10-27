@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { HCI_ASSUMPTIONS } from '../../../src/domain/nutanix/hci';
 import { current } from '../../../src/domain/versions/profiles/current';
 import { harness } from './fakes';
 
 const T0 = 10;
 const DISK = 'node-1.disk-3';
 const LIMIT = current.hci.diskOfflineEventsPerHourToStayOffline.value;
-const SMART = HCI_ASSUMPTIONS.diskSmartCheckS.value;
+const SMART = current.hci.diskSmartCheckS.value;
 
 describe('disk failure (Bible 4i)', () => {
   it('single disk failure: offline, immediate rebuild, no IO impact, back to OK', () => {
@@ -112,7 +111,7 @@ describe('disk failure (Bible 4i)', () => {
       h.sim.applyAction({ kind: 'recover', target: DISK });
       h.sim.tick(SMART + 2);
     }
-    h.sim.tick(HCI_ASSUMPTIONS.diskOfflineWindowS.value);
+    h.sim.tick(current.hci.diskOfflineWindowS.value);
     expect(h.disk(DISK).offlineEventsLastHour).toBe(0);
     h.sim.applyAction({ kind: 'disk.fail', target: DISK });
     h.sim.tick(5);

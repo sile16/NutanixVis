@@ -16,7 +16,7 @@
 import { asEngineContext } from '../../../engine/context';
 import type { DeviceId, EndpointId, Message, ViewField } from '../../../engine/types';
 import type { ClusterView, Ctx, IoCompletion, IoRequest, StorageBackend } from '../../contracts';
-import { HCI_ASSUMPTIONS, STARGATE_PORT } from './assumptions';
+import { STARGATE_PORT } from './assumptions';
 import {
   type AckPayload,
   isPayload,
@@ -178,7 +178,7 @@ export class HciBackend implements StorageBackend {
 
   tick(ctx: Ctx): void {
     const e = asEngineContext(ctx);
-    const timeout = HCI_ASSUMPTIONS.replicaAckTimeoutS.value;
+    const timeout = ctx.profile.hci.replicaAckTimeoutS.value;
     for (const p of [...this.pending.values()]) {
       if (p.hung) {
         p.hung = false;

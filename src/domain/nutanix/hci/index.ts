@@ -12,7 +12,7 @@ import { readLayout } from './layout';
 import { HCI_TRAFFIC } from './messages';
 import { HciStore } from './store';
 
-export { BLOCK_RULE, HCI_ASSUMPTIONS } from './assumptions';
+export { BLOCK_RULE } from './assumptions';
 export { HciBackend } from './backend';
 export { DiskDevice, type DiskState } from './disk';
 export { readLayout, vdiskId } from './layout';

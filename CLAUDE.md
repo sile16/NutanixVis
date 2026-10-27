@@ -30,6 +30,8 @@ pnpm is pinned via `packageManager` (pnpm 12). If `pnpm` isn't on PATH, use `npx
 - `src/fixtures/snapshots/*`: typed fixture snapshots for UI work without the engine
 - `tests/architecture.test.ts` enforces the layer boundaries (SPEC §4)
 
+`src/loader/` wires topology + versions (+ domain devices) into an engine `Simulation` (`loadSimulation`). Until domain models land, non-network devices are `StaticDevice` placeholders.
+
 **The project spec is `docs/SPEC.md`.** Read it before implementing. It covers the stack, layout, engine time model, domain models, scenario format and milestones. Cited vendor behavior and timer tables are in `docs/research/`. The repo and site are **public**. Every citation must be a publicly reachable source. `docs/internal/` holds notes from internal Everpure sources and is git-ignored: never let its values, links or wording into tracked files, code or UI. Where only internal data exists, use a labeled `assumption` (SPEC §2). `NutanixDocs/` and `EverpureDocs/` are local copies of vendor PDFs, git-ignored because they are copyrighted. Cite them by their public portal title and URL. Model **current-release behavior only**, with no historical explanations.
 
 ## Goal

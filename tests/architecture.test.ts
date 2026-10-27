@@ -3,6 +3,7 @@
  * - engine/ imports nothing from domain/, ui/, topologies/, scenarios/, fixtures/ or React.
  * - domain/ imports only engine/ (no ui/, topologies/, scenarios/, React).
  * - topologies/ and scenarios/ never import ui/.
+ * - loader/ (topology + domain → engine wiring) never imports ui/.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
@@ -37,6 +38,7 @@ const rules: Record<string, string[]> = {
   domain: ['ui', 'topologies', 'scenarios', 'fixtures', 'pkg:react', 'pkg:react-dom'],
   topologies: ['ui', 'scenarios', 'fixtures', 'pkg:react'],
   scenarios: ['ui', 'fixtures', 'pkg:react'],
+  loader: ['ui', 'fixtures', 'pkg:react', 'pkg:react-dom'],
 };
 
 describe('architecture boundaries', () => {

@@ -135,6 +135,7 @@ export function buildHost(p: HostPlan): Part & { layout: HostBoxSpec } {
       name: vs.name,
       bondMode: vs.bondMode,
       uplinks: bondUplinks(vs.bondMode, vs.nics.map(nicId)),
+      members: vs.nics.map(nicId),
       // lacpRate only applies to LACP (balance-tcp) bonds.
       ...(vs.bondMode === 'balance-tcp' ? { lacpRate: vs.lacpRate } : {}),
       mtu: vs.mtu,
@@ -254,6 +255,9 @@ export function flashArray(p: { model: string; ports: readonly FaPortPlan[] }): 
       vlan: VLAN.mgmt,
       ip: ip(VLAN.mgmt, 100),
       service: 'mgmt',
+      // Controller VIP "allocated to either primary or secondary controller during failover"
+      // (NCP with Everpure FlashArray Deployment Guide 7.6, Table 3).
+      floating: true,
     });
   }
   const controllers: FaBoxSpec['controllers'][number][] = [];

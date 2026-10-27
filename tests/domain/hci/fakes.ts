@@ -66,6 +66,17 @@ export class FakeCluster implements ClusterView {
   isHostFenced(): boolean {
     return false;
   }
+  /** Majority slack over the CVMs that are up (no ZK seats modeled here). */
+  serviceFailureTolerance(): number {
+    if (!this.metadataAvailable()) return 0;
+    const n = this.cvms.size;
+    const up = [...this.cvms.values()].filter((c) => c.up).length;
+    return Math.max(0, up - (Math.floor(n / 2) + 1));
+  }
+  /** Ownership is not tracked by the fake. */
+  vdiskOwner(): DeviceId | null {
+    return null;
+  }
 }
 
 export interface VmStats {

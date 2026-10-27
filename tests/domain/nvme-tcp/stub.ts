@@ -192,6 +192,8 @@ export function loadWithStubs(
         zkQuorum: () => true,
         metadataAvailable: () => true,
         isHostFenced: () => false,
+        serviceFailureTolerance: () => 0,
+        vdiskOwner: () => null,
       };
       for (const c of cvms) {
         const vms = topology.devices

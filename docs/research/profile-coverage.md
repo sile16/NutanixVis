@@ -14,9 +14,9 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | verified | 34 |
 | inferred | 5 |
 | unverified | 4 |
-| assumption | 14 |
+| assumption | 17 |
 | lab-observed | 0 |
-| **Total** | **57** |
+| **Total** | **60** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -28,6 +28,7 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `ahvHa.isolatedVmSelfTerminateS` | 45 | verified | `ntnx-bible-5b` | VMs on a partitioned host fail 45 s after their first IO failure. |
 | `ahvHa.leaderReelectionS` | 20 | verified | `ntnx-bible-5b` | Surviving hosts elect a new Acropolis leader at T+20. |
 | `ahvHa.vswitchQuickUpdateHaTriggerS` | 30 | verified | `ntnx-ahv-admin-11.2` | Virtual switch quick update > 30 s triggers HA (> 20 s may restart AOS services). |
+| `ahvHa.forceShutdownRestartCycles` | 1 | assumption | `ntnx-ncp-everpure-deploy-7.6` | SPEC §14 #7: restarted through AHV HA at the next HA cycle (one heartbeat interval). |
 | `redirector.nopIntervalS` | 1 | inferred | `ntnx-bible-5b` | Bible: the redirector "regularly" NOPs Stargates; ~1 s cadence inferred, interval not published. |
 | `redirector.missesToUnhealthy` | 2 | inferred | `ntnx-blog-cvm-failure`, `ntnx-bible-5b` | Autopath rule "fails to respond two or more times in a 30-second period", applied to the AHV redirector. |
 | `redirector.missWindowS` | 30 | inferred | `ntnx-blog-cvm-failure`, `ntnx-bible-5b` | Window for the two-miss rule. |
@@ -38,6 +39,8 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `cluster.cassandraRingDetachS` | 1800 | verified | `ntnx-bible-4i`, `ntnx-kb-1256` | A node down for 30 min is removed from the metadata ring; re-added after it is stable. |
 | `cluster.minNodes` | 3 | verified | `ntnx-bible-4i` | FT1 without erasure coding; FT2 needs 5. |
 | `cluster.cvmBootS` | 180 | assumption |  | No published figure. Model value for CVM power-on to Stargate serving; replace from lab testing. |
+| `cluster.cassandraRejoinStableS` | 600 | assumption | `ntnx-bible-4i`, `ntnx-kb-1256` | Auto ring-repair re-adds a detached node after it has been stable for an unspecified time. |
+| `cluster.hostRebootS` | 300 | assumption |  | No published figure; server POST + AHV boot takes minutes. Long enough that HA fences and restarts the VMs (as for a power loss). |
 | `hci.rebuildStartDelayS` | 0 | verified | `ntnx-bible-4i` | Rebuild begins immediately on an unplanned failure. |
 | `hci.curatorPartialScanS` | 3600 | unverified | `ntnx-community-cvm-components` | Partial scan "every hour". |
 | `hci.curatorFullScanS` | 21600 | unverified | `ntnx-community-cvm-components` | Full scan "around every 6 hours". |

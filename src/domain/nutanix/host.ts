@@ -130,7 +130,7 @@ export class AhvHost implements Device<Profile> {
    * `hostRebootS` (assumption) the host is back and its CVM starts booting.
    */
   private startReboot(ctx: Ctx): void {
-    const A = this.reg.assumptions.hostRebootS;
+    const A = ctx.profile.cluster.hostRebootS;
     this.rebooting = true;
     this.redirector.reset();
     const ends = this.ownEndpoints();

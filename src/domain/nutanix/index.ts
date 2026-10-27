@@ -12,7 +12,6 @@
 import type { NutanixDomain } from '../contracts';
 import { Vm } from '../workload/vm';
 import { nutanixActions } from './actions';
-import { NUTANIX_ASSUMPTIONS } from './assumptions';
 import { ClusterDevice } from './cluster';
 import { Cvm } from './cvm';
 import { buildFacts } from './facts';
@@ -20,7 +19,6 @@ import { AhvHost } from './host';
 import { TRAFFIC } from './messages';
 import { Registry } from './registry';
 
-export { NUTANIX_ASSUMPTIONS, type NutanixAssumptions } from './assumptions';
 export { CLUSTER_DEVICE_ID } from './cluster';
 export { buildFacts, type Facts, vdiskId } from './facts';
 export { MSG, TRAFFIC } from './messages';
@@ -28,7 +26,7 @@ export type { NutanixClusterView } from './registry';
 
 export const createNutanixDomain: NutanixDomain = ({ topology, profile, backendFor }) => {
   const facts = buildFacts(topology);
-  const reg = new Registry(facts, profile, NUTANIX_ASSUMPTIONS, backendFor);
+  const reg = new Registry(facts, profile, backendFor);
   const hosts = facts.hosts.map((h) => new AhvHost(h, reg));
   for (const h of hosts) reg.hosts.set(h.id, h);
   const cvms = facts.cvms.map((c) => {

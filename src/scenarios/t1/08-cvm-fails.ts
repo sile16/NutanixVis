@@ -19,8 +19,14 @@ import { P, REDIRECT_DETECT, REDIRECT_PAUSE } from '../timers';
 
 const CVM = cvmId(1);
 const RECOVER_AT = T0 + 90;
-/** CVM boot time is not modeled by a profile field; leave ample room for failback. */
-const END = RECOVER_AT + P.redirector.failbackStableS + 180;
+/**
+ * Failback needs the CVM to boot (`cluster.cvmBootS`), then its Stargate to answer NOPs for
+ * `failbackStableS`, then the re-login stall (`redirectStallS`) before local IO flows again.
+ */
+const END = by(
+  P.cluster.cvmBootS + P.redirector.failbackStableS + P.redirector.redirectStallS,
+  RECOVER_AT,
+);
 
 export default defineScenario({
   id: 't1-08-cvm-fails',
@@ -60,5 +66,5 @@ export default defineScenario({
   narrative:
     "CVM 1 fails but node 1 keeps running its VMs. The host's iSCSI redirector misses its NOPs, marks the local Stargate unhealthy, and the VMs' IO logs in to a remote Stargate, which takes the vDisk lock and NVMe reservation. There is no HA event and no rebuild, because the array owns the data. When CVM 1 has been stable for 30 s the sessions fail back.",
   cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-5b', 'ntnx-bible-8c', 'ntnx-blog-cvm-failure'],
-  status: 'todo',
+  status: 'active',
 });

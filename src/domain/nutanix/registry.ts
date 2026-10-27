@@ -11,7 +11,6 @@ import type { DeviceId, EndpointId } from '../../engine/types';
 import type { ClusterView, Ctx, IoRequest, StorageBackend } from '../contracts';
 import type { Profile } from '../versions/profile';
 import type { IoTarget, StorageUse, Vm, VmEnv } from '../workload/vm';
-import type { NutanixAssumptions } from './assumptions';
 import type { Cvm } from './cvm';
 import type { Facts } from './facts';
 import type { AhvHost } from './host';
@@ -29,13 +28,8 @@ export interface HostHa {
   causeId: string | null;
 }
 
-/** `ClusterView` plus what G may need to fold cluster-service FT into its own. */
-export interface NutanixClusterView extends ClusterView {
-  /** Additional node failures the cluster services (ZK + metadata) tolerate right now. */
-  serviceFailureTolerance(): number;
-  /** CVM currently owning a vDisk (the Stargate the redirector points at). */
-  vdiskOwner(vdisk: string): DeviceId | null;
-}
+/** Stream F's `ClusterView` (kept as an alias; the contract now carries every method). */
+export type NutanixClusterView = ClusterView;
 
 export class Registry implements NutanixClusterView, VmEnv {
   readonly hosts = new Map<string, AhvHost>();
@@ -70,7 +64,6 @@ export class Registry implements NutanixClusterView, VmEnv {
   constructor(
     readonly facts: Facts,
     readonly profile: Profile,
-    readonly assumptions: NutanixAssumptions,
     backendFor: (cvm: DeviceId) => StorageBackend,
   ) {
     for (const c of facts.cvms) this.backends.set(c.id, backendFor(c.id));

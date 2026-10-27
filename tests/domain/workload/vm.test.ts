@@ -86,6 +86,18 @@ describe('VM IO generator', () => {
     expect(f('readPendingS')).toBe(19);
   });
 
+  it('IO issued this tick and still in flight is not a stall; a tick later it is', () => {
+    const { st, sim, f } = setup();
+    st.mode = 'stall';
+    sim.tick(1);
+    expect(f('outstandingIo')).toBeGreaterThan(0);
+    expect(f('ioPendingS')).toBe(0);
+    expect(f('state')).toBe('running');
+    sim.tick(1);
+    expect(f('ioPendingS')).toBe(1);
+    expect(f('state')).toBe('io-stalled');
+  });
+
   it('re-issues outstanding IO on a new session (redirect)', () => {
     const { st, sim } = setup();
     st.mode = 'stall';

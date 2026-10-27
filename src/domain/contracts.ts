@@ -103,6 +103,14 @@ export interface ClusterView {
   metadataAvailable(): boolean;
   /** Host fenced by AHV HA: IO from it must not be served. */
   isHostFenced(host: DeviceId): boolean;
+  /**
+   * Additional simultaneous node failures the cluster services tolerate right now: the ZK seats
+   * above majority on the quorum side (HCI), or the N−2 / N−3 rule minus nodes already lost (T1).
+   * 0 when there is no quorum.
+   */
+  serviceFailureTolerance(): number;
+  /** CVM whose Stargate currently owns a vDisk (where the redirector points), or null. */
+  vdiskOwner(vdisk: string): DeviceId | null;
 }
 
 /** What each domain stream exports for the loader to compose. */

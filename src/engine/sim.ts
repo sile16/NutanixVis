@@ -209,6 +209,17 @@ class Sim<TProfile> implements EngineSimulation {
     return this.log.causalChain(eventId);
   }
 
+  /** The failed device that takes `id` down (itself or its nearest failed ancestor), if any. */
+  downCause(id: string): string | undefined {
+    const seen = new Set<string>();
+    for (let cur: string | undefined = id; cur !== undefined; cur = this.parents.get(cur)) {
+      if (this.failed.has(cur)) return cur;
+      if (seen.has(cur)) break;
+      seen.add(cur);
+    }
+    return undefined;
+  }
+
   /** True if `id` or any ancestor has been failed. */
   isDown(id: string): boolean {
     const seen = new Set<string>();
@@ -483,9 +494,12 @@ class Sim<TProfile> implements EngineSimulation {
       } else {
         v = nv as DeviceView;
       }
-      if (this.failed.has(id)) return { ...v, status: 'failed' };
-      if (this.isDown(id)) return { ...v, status: worst(v.status, 'offline') };
-      return v;
+      // A failure propagates to everything under the failed device (NICs, vswitches, CVM, VMs…):
+      // status `failed`, plus why, so views never look healthy under a dead parent.
+      const cause = this.downCause(id);
+      if (cause === undefined) return v;
+      const downReason = cause === id ? 'failed' : `${cause} failed`;
+      return { ...v, status: 'failed', fields: { ...v.fields, down: true, downReason } };
     });
   }
 
@@ -506,7 +520,14 @@ class Sim<TProfile> implements EngineSimulation {
       topologyId: this.opts.topologyId,
       versions: this.opts.versions,
       devices: this.deviceViews(),
-      links: this.net.linkViews(),
+      // A cable is down when the device at either end is down (its carrier is gone).
+      links: this.net
+        .linkViews()
+        .map((l) =>
+          l.status === 'up' && (this.isDown(l.a.device) || this.isDown(l.b.device))
+            ? { ...l, status: 'down' as const }
+            : l,
+        ),
       traces: this.traces,
       events: this.log.since(this.eventMark),
       derived,

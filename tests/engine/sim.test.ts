@@ -189,7 +189,9 @@ describe('device failure', () => {
     s.applyAction({ kind: 'fail', target: 'h' });
     const snap = s.tick();
     expect(snap.devices.h?.status).toBe('failed');
-    expect(snap.devices['h.child']?.status).toBe('offline');
+    // Failure propagates: children show failed, with the cause.
+    expect(snap.devices['h.child']?.status).toBe('failed');
+    expect(snap.devices['h.child']?.fields.downReason).toBe('h failed');
     s.tick(5);
     s.applyAction({ kind: 'recover', target: 'h' });
     s.tick();
@@ -214,7 +216,8 @@ describe('device failure', () => {
     const snap = s.tick();
     t = snap.traces[0];
     expect(t?.result).toBe('dropped');
-    expect(snap.devices['h1.eth0']?.status).toBe('offline');
+    expect(snap.devices['h1.eth0']?.status).toBe('failed');
+    expect(snap.devices['h1.eth0']?.fields.down).toBe(true);
     expect(snap.links['l-h1-eth0']?.status).toBe('down');
   });
 });

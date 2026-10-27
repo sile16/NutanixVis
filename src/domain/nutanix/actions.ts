@@ -119,7 +119,8 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
       spec: {
         kind: 'cvm.start-stargate',
         label: 'Start Stargate',
-        appliesTo: (t) => isKind(t, 'cvm') && field(t, 'power') === 'running',
+        appliesTo: (t) =>
+          isKind(t, 'cvm') && field(t, 'power') === 'running' && field(t, 'stargate') !== 'up',
       },
       apply: (req) => cvm(req.target).requestStargate('start'),
     },

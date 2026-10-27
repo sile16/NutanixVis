@@ -18,6 +18,8 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 
 ## Device fields
 
+**Every device** may also carry, when it or an ancestor is failed: `status: 'failed'`, `down: true` and `downReason` (`"failed"` for the device itself, `"<ancestor id> failed"` for anything under it). A link is reported `down` when the device at either end is down.
+
 ### `vm`
 
 | Key | Type | Meaning |
@@ -63,7 +65,9 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `haState` | `connected` \| `disconnected` \| `fenced` | The Acropolis leader's view of the host. `disconnected`: heartbeats are missing. `fenced`: Stargates block its IO, from T+60. It returns to `connected` once the host rejoins. |
 | badges | — | The `acropolis-leader` badge appears on the leader host. |
 
-### `vswitch`
+### `vswitch` (engine view kind: `bond`)
+
+The engine reports AHV virtual switches with view `kind: 'bond'`; the UI and scenario helpers treat `bond` and `vswitch` as the same kind.
 
 | Key | Type | Meaning |
 |---|---|---|

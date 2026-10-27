@@ -318,7 +318,11 @@ export function builtinActions(env: BuiltinEnv): ActionDefinition[] {
         label: 'Set VLAN-aware member selection',
         description:
           'On: MAC pinning and active-backup only use uplinks that carry the VLAN. Off: plain OVS, which can pin a VLAN onto an uplink that blackholes it.',
-        appliesTo: isBond,
+        // Only meaningful where member choice is per MAC (MAC pinning) or per VLAN (active-backup).
+        appliesTo: (t) =>
+          isBond(t) &&
+          'fields' in t &&
+          (t.fields.mode === 'balance-slb' || t.fields.mode === 'active-backup'),
         params: { enabled: { label: 'VLAN-aware', choices: ['on', 'off'] } },
       },
       apply: (req, ctx) => {

@@ -461,8 +461,19 @@ export class NetworkRuntime implements NetworkQuery {
   setMlag(id: string, enabled: boolean, domain?: string): void {
     const sw = this.requireSwitch(id);
     if (domain !== undefined) sw.domain = domain;
+    if (!enabled && sw.domain === undefined) return; // nothing to disable: no-op, no event
     if (enabled && sw.domain === undefined) {
-      throw new NetworkError(`switch ${id} has no MLAG domain to enable`);
+      // "Configure MLAG" on an unpaired switch: pair it with its ISL-connected peer switches.
+      const peers = [...this.links.values()]
+        .filter((l) => l.spec.a === id || l.spec.b === id)
+        .map((l) => (l.spec.a === id ? l.spec.b : l.spec.a))
+        .filter((p) => this.switches.has(p));
+      const ids = [id, ...peers].sort();
+      const shared = `mlag:${ids.join('+')}`;
+      for (const p of ids) {
+        const s = this.switches.get(p);
+        if (s && s.domain === undefined) s.domain = shared;
+      }
     }
     for (const s of this.switches.values()) {
       if (s === sw || (s.domain !== undefined && s.domain === sw.domain)) s.mlagEnabled = enabled;

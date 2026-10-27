@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+/* Brand + status tokens (SPEC §8). Status colors are always paired with icons/labels. */
+@theme {
+  --color-surface: #0f172a;
+  --color-panel: #111827;
+  --color-border: #1f2937;
+  --color-ink: #e5e7eb;
+  --color-ink-muted: #9ca3af;
+  --color-accent: #22c55e;
+
+  --color-status-healthy: #22c55e;
+  --color-status-degraded: #f59e0b;
+  --color-status-stalled: #eab308;
+  --color-status-failed: #ef4444;
+  --color-status-fenced: #a855f7;
+  --color-status-offline: #6b7280;
+  --color-status-unknown: #64748b;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}

@@ -297,8 +297,9 @@ export class Vm implements Device<Profile> {
       }
     }
     const P = ctx.profile;
-    // Bible 5b: VMs on a partitioned host fail 45 s after their first IO failure. Only while a
-    // quorum side exists that will restart them (SPEC §14 #1: no majority anywhere → VMs stall).
+    // Bible 5b: VMs on a partitioned host fail 45 s after their first IO failure, when the env
+    // says the host is cut off: isolated from an existing quorum side, or (HCI) no quorum side
+    // anywhere (SPEC §14 #1; T1 VMs stall instead).
     if (
       this.firstFailedIoAt !== null &&
       ctx.now - this.firstFailedIoAt >= P.ahvHa.isolatedVmSelfTerminateS.value &&

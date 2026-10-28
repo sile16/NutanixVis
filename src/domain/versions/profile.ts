@@ -32,6 +32,13 @@ export interface Profile {
      * (SPEC §14 #7); modeled as this many heartbeat intervals.
      */
     readonly forceShutdownRestartCycles: Cited<number>;
+    /**
+     * HCI (T2/T3): with no partition holding quorum anywhere, a VM whose IO fails still
+     * self-terminates `isolatedVmSelfTerminateS` after its first failed IO, and the next
+     * Acropolis leader restarts it once quorum re-forms. External storage (T1) never does this:
+     * its IO retries until the array responds.
+     */
+    readonly selfTerminateWithoutQuorum: Cited<boolean>;
   };
 
   /** AHV iSCSI redirector / Autopath. */
@@ -54,6 +61,30 @@ export interface Profile {
     readonly cassandraRejoinStableS: Cited<number>;
     /** Host power-cycle time for `reboot` (POST + AHV boot), before its CVM starts booting. */
     readonly hostRebootS: Cited<number>;
+    /**
+     * Zookeeper session timeout: how long cluster services (and Prism Element) keep running after
+     * ZK reachability is lost before they are declared down. IO effects are not delayed.
+     */
+    readonly zkSessionTimeoutS: Cited<number>;
+    /**
+     * External storage (T1): ZK/Cassandra service volumes move off a failed active node onto an
+     * inactive one only after this delay, and never during an upgrade.
+     */
+    readonly serviceVolumeMigrationDelayS: Cited<number>;
+  };
+
+  /**
+   * Hades on external storage (T1): the CVM's kernel NVMe/TCP + dm-multipath path to its
+   * per-node service volumes (Zookeeper, Cassandra, Curator).
+   */
+  readonly hades: {
+    /** Losing the service volumes puts the node in maintenance mode (CVM services stop). */
+    readonly maintenanceOnStorageError: Cited<boolean>;
+    readonly volumeMonitorIntervalS: Cited<number>;
+    /** An external-storage error lasting this long is critical: the node enters maintenance. */
+    readonly externalStorageErrorThresholdS: Cited<number>;
+    /** Hades re-maps (connects) every NVMf service volume at this interval. */
+    readonly mapNvmfVolumesIntervalS: Cited<number>;
   };
 
   /** HCI data path (T2/T3). */

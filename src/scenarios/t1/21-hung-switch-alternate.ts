@@ -21,7 +21,19 @@ import { nodeId, SW_A, T1 } from '../ids';
 import { P } from '../timers';
 
 const HA = P.ahvHa;
-const END = by(HA.restartByS) + 20;
+/**
+ * Nodes 1 and 3 hold two of the three Zookeeper seats (the lowest node ids), so nodes 2 and 4
+ * have no ZK majority until those seats' service volumes are mounted elsewhere, which happens
+ * only after `serviceVolumeMigrationDelayS` (PowerStore deployment guide 7.6, `inferred` for
+ * FlashArray). Only then is a leader elected on node 2, and it starts the HA host timeline from
+ * its own election: disconnected at once, fenced `disconnectTimeoutS` later, VMs restarted
+ * `restartByS − fenceAtS` after the fence. The isolated VMs, whose IO has failed since the hang,
+ * self-terminate as soon as that leader sees their hosts cut off.
+ */
+const MIGRATE = P.cluster.serviceVolumeMigrationDelayS;
+const FENCE = MIGRATE + HA.disconnectTimeoutS;
+const RESTART = FENCE + HA.restartByS - HA.fenceAtS;
+const END = by(RESTART) + 20;
 /** `alternate`: odd hosts start vs0 on Switch A (eth0), even hosts on Switch B (eth2). */
 const ON_A = [1, 3];
 const ON_B = [2, 4];
@@ -46,9 +58,13 @@ export default defineScenario({
         (n) => vswitch(s, `node-${n}.vs0`).activeMember === `node-${n}.eth${n % 2 === 1 ? 0 : 2}`,
       ),
     ),
+    at(by(0), 'nodes 1 and 3 hold two ZK seats: no side has a ZK majority', (s) =>
+      T1.nodes.every((n) => !cvm(s, n).zkQuorum),
+    ),
+    at(before(MIGRATE), 'no ZK majority until the seats move', (s) => !derived(s).zkQuorum),
     at(
-      by(0),
-      'nodes 2 and 4 keep quorum (N−2 of 4); nodes 1 and 3 are each cut off',
+      by(MIGRATE),
+      'the seats move to node 4: nodes 2 and 4 hold quorum (N−2 of 4); nodes 1 and 3 stay cut off',
       (s) =>
         derived(s).zkQuorum &&
         ON_B.every((n) => cvm(s, n).zkQuorum) &&
@@ -58,23 +74,21 @@ export default defineScenario({
       ON_A.every((n) => vswitch(s, `node-${n}.vs0`).activeMember === `node-${n}.eth0`),
     ),
     at(
-      by(HA.leaderReelectionS),
+      by(MIGRATE),
       'a new Acropolis leader is elected on the quorum side',
       (s) => derived(s).acropolisLeader === nodeId(2),
     ),
-    at(
-      by(Math.max(HA.timeoutStartS, HA.leaderReelectionS)),
-      'nodes 1 and 3 are marked disconnected',
-      (s) => ON_A.every((n) => host(s, n).haState === 'disconnected'),
+    at(by(MIGRATE), 'nodes 1 and 3 are marked disconnected', (s) =>
+      ON_A.every((n) => host(s, n).haState === 'disconnected'),
     ),
     atCtx(
-      before(HA.isolatedVmSelfTerminateS),
-      'no isolated VM self-terminates before 45 s',
+      before(MIGRATE),
+      'no isolated VM self-terminates while no quorum side exists (T1: IO retries)',
       (_s, ctx) => eventsMatching(ctx, 'ha.vm.self-terminated').length === 0,
     ),
     atCtx(
-      by(HA.isolatedVmSelfTerminateS),
-      'VMs on nodes 1 and 3 self-terminate 45 s after their first failed IO',
+      by(MIGRATE),
+      'VMs on nodes 1 and 3 self-terminate once a quorum side sees them cut off',
       (s, ctx) =>
         ON_A.every((n) =>
           vmsOfNode(s, n).every(
@@ -82,20 +96,20 @@ export default defineScenario({
           ),
         ),
     ),
-    at(before(HA.fenceAtS), 'not fenced before T+60', (s) =>
+    at(before(FENCE), "not fenced before the new leader's disconnect timeout", (s) =>
       ON_A.every((n) => host(s, n).haState !== 'fenced'),
     ),
-    at(by(HA.fenceAtS), 'nodes 1 and 3 are fenced by T+60', (s) =>
+    at(by(FENCE), 'nodes 1 and 3 are fenced', (s) =>
       ON_A.every((n) => host(s, n).haState === 'fenced'),
     ),
-    at(by(HA.restartByS), 'their VMs run on nodes 2 and 4 by T+120', (s) =>
+    at(by(RESTART), 'their VMs run on nodes 2 and 4', (s) =>
       ON_A.every((n) =>
         vmsOfNode(s, n).every(
           (v) => isRunning(v) && v.host !== null && ON_B.map(nodeId).includes(v.host),
         ),
       ),
     ),
-    atCtx(by(HA.restartByS), 'every restart comes after that VM self-terminated', (s, ctx) =>
+    atCtx(by(RESTART), 'every restart comes after that VM self-terminated', (s, ctx) =>
       ON_A.every((n) =>
         vmsOfNode(s, n).every((v) => {
           const died = firstEventAt(ctx, 'ha.vm.self-terminated', { device: v.id });
@@ -111,7 +125,13 @@ export default defineScenario({
     ...baseInvariants(),
   ],
   narrative:
-    'Each host’s vs0 active member is pinned so that odd hosts use Switch A and even hosts Switch B, and then Switch A hangs with carrier up. Active-backup never notices, so nodes 1 and 3 are each cut off, while nodes 2 and 4 still reach each other through Switch B and keep quorum. The new Acropolis leader on node 2 marks the isolated hosts disconnected and fences them at T+60, their VMs terminate themselves 45 s after their first failed IO, and AHV HA restarts them on nodes 2 and 4 by T+120. Pinning half the hosts to each switch turns a cluster-wide outage into the loss of two hosts.',
-  cite: ['ovs-bonding', 'everpure-nutanix-cfg', 'ntnx-bible-5b', 'ntnx-ahv-admin-11.2'],
+    'Each host’s vs0 active member is pinned so that odd hosts use Switch A and even hosts Switch B, and then Switch A hangs with carrier up. Active-backup never notices, so nodes 1 and 3 are each cut off, and because they hold two of the three Zookeeper seats, nodes 2 and 4 have no majority until those service volumes move to node 4 five minutes later. The new Acropolis leader on node 2 then marks the isolated hosts disconnected, their VMs terminate themselves, and AHV HA fences the hosts and restarts the VMs on nodes 2 and 4. Pinning half the hosts to each switch turns a cluster-wide outage into the loss of two hosts once the seats have moved.',
+  cite: [
+    'ovs-bonding',
+    'everpure-nutanix-cfg',
+    'ntnx-bible-5b',
+    'ntnx-ahv-admin-11.2',
+    'ntnx-ncp-powerstore-deploy-7.6',
+  ],
   status: 'active',
 });

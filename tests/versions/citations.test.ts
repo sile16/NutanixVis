@@ -23,6 +23,8 @@ const PUBLIC_HOSTS = new Set([
   'git.kernel.org',
   // Nutanix-employee technical blog (community-grade source, labeled unverified/assumption).
   'www.joshodgers.com',
+  // Public community forum (anecdotal field reports; labeled unverified/inferred with a primary source).
+  'www.reddit.com',
 ]);
 
 const INTERNAL = [
@@ -59,7 +61,7 @@ describe('citation registry', () => {
   });
 
   it('community posts are only on known community hosts', () => {
-    const community = new Set(['next.nutanix.com', 'www.joshodgers.com']);
+    const community = new Set(['next.nutanix.com', 'www.joshodgers.com', 'www.reddit.com']);
     for (const [, c] of all) {
       if (c.publisher === 'Community') expect(community.has(new URL(c.url).hostname)).toBe(true);
     }

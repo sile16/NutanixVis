@@ -48,6 +48,7 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `zkQuorum` | boolean | It is in a partition that has a ZK majority. |
 | `zkPartition` | string \| null | Stable id of its network partition (for example, the lowest CVM id reachable). The "unique quorum side" invariant groups by this. |
 | `ringState` | `normal` \| `down` \| `detached` | Cassandra ring membership. `detached`: auto-removed after `cassandraRingDetachS`. |
+| `hades` | `ok` \| `maintenance` \| `restarting` | T1 Hades state (SPEC §6.2). `maintenance`: the CVM lost its service volumes past `hades.externalStorageErrorThresholdS`, so its services are stopped (`stargate` is `down`). `restarting`: a re-map found the volumes and the services are settling (`cluster.cvmBootS`). Always `ok` outside T1, or with `hades-maintenance-on-storage-error: off`. |
 
 ### `cvm-interface` (schema fields, echoed into the view)
 
@@ -144,7 +145,10 @@ All of these are scalars.
 | `metadataAvailable` | boolean | Every Cassandra key range has a Paxos majority. |
 | `dataAvailable` | boolean | Every extent group has at least one reachable replica. It is always `true` in T1, where the array owns the data. |
 | `underReplicated` | number | Extent groups below their RF (0 in T1). |
-| `clusterServices` | `up` \| `down` | Cluster services. In T1 they go down when their array volumes are unreachable. |
+| `clusterServices` | `up` \| `down` | Cluster services. `down` once ZK quorum or metadata has been missing for `cluster.zkSessionTimeoutS` (20 s); in T1 also when every node is in Hades maintenance. Only this field and Prism are delayed: `zkQuorum`, `metadataAvailable` and the `ClusterView` methods (`zkQuorum`, `inQuorum`, `isStargateUp`) change at once, so a backend's own detection delay (for example `hci.stargateDownDetectS`) is applied once, on top of an immediate signal. |
+| `prismElement` | `up` \| `unreachable` | Prism Element follows `clusterServices` (SPEC §6.2). |
+| `prismCentralAlert` | string \| null | `A200000` ("Cluster Connectivity Status", PC Alert Reference pc.7.6) while Prism Element is unreachable; `null` otherwise. |
+| `faultToleranceByComponent` | JSON Record<`ZOOKEEPER` \| `METADATA` \| `EXTENT_GROUPS`, number \| null> | Data Resiliency widget rows: additional node failures each component tolerates now. `null` where the array owns it (T1 `METADATA`, `EXTENT_GROUPS`). |
 | `blockAwareness` | `met` \| `not-met` \| `off` | Block fault-tolerance rule (Bible 4i). |
 
 ## Event codes
@@ -176,7 +180,7 @@ All of these are scalars.
 | `redirector.unhealthy` | host | The local (or current) Stargate missed its NOPs. |
 | `redirector.redirect` | host | iSCSI sessions moved to another Stargate. |
 | `redirector.failback` | host | Sessions returned to the local Stargate. |
-| `ha.host.disconnected` | host | |
+| `ha.host.disconnected` | host | The text names alert A1006. |
 | `ha.host.fenced` | host | |
 | `ha.leader.elected` | the new leader host | Acropolis leader election. |
 | `ha.vm.self-terminated` | vm | An isolated VM self-terminated, 45 s after its first failed IO. |
@@ -186,7 +190,14 @@ All of these are scalars.
 | `cassandra.node.detached` | cvm | Auto ring-repair detached the node. |
 | `curator.rebuild.start` | — or the CVM that lost data | |
 | `disk.offline` | disk | |
-| `cluster.services.down` | — | |
+| `cluster.services.down` / `cluster.services.up` | — | Quorum or metadata missing for the ZK session timeout (text names A3032 / A200000); back up. |
+| `hades.maintenance.enter` | cvm | T1: the CVM lost its service volumes; Hades put the node in maintenance mode (alerts A3032, A1030). |
+| `hades.volumes.remapped` | cvm | T1: a periodic re-map found the service volumes; the services restart (then `stargate.up`). |
+| `zk.seat.migrated` | the CVM receiving the seat | T1: a lost active node's ZK/Cassandra service volumes were mounted here after `serviceVolumeMigrationDelayS`. |
+| `zk.not-active` | the first seat that is not live | A ZK seat is down or off the quorum side (alert A111009). Raised only while a quorum side exists. |
+| `cluster.cvm.unreachable` | cvm | A running CVM is outside the quorum side (alert A1001). |
+| `ha.vm.restart-failed` | vm | HA wanted to restart it but no host can take it (alert A1145). |
+| `ha.resources.insufficient` | — | Fewer than two hosts can run VMs (alert A130068). |
 | `cluster.ft.insufficient-nodes` | — | The configured FT cannot be met with the CVM nodes that remain. |
 | `cluster.advisory.co-ratio` | — | CO:HCI sizing advisory (community guidance, `unverified`). |
 

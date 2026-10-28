@@ -9,6 +9,10 @@ import { current as P } from '../../../src/domain/versions/profiles/current';
 import { harness, instances, vmHost, vmIds, vmState } from './harness';
 
 const HA = P.ahvHa;
+const HADES = P.hades;
+const ZK = P.cluster.zkSessionTimeoutS.value;
+const BOOT = P.cluster.cvmBootS.value;
+const MIGRATE = P.cluster.serviceVolumeMigrationDelayS.value;
 /** Actions queued at t=10 apply at T=11. */
 const T = 11;
 
@@ -112,8 +116,8 @@ describe('host isolation (T2)', () => {
     h.run(3);
     expect(h.f('node-2.cvm', 'zkQuorum')).toBe(false);
     expect(Number(h.f('node-2.vm-1', 'writePendingS'))).toBeGreaterThan(0);
-    // Reads are still served by the local Stargate over virbr0.
-    expect(Number(h.f('node-2.vm-1', 'readPendingS'))).toBe(0);
+    // The local Stargate is reachable over virbr0 but outside the quorum side: reads fail too.
+    expect(Number(h.f('node-2.vm-1', 'readPendingS'))).toBeGreaterThan(0);
     // Minority writes are refused from T+1 (quorum loss seen at the end of T).
     const firstFail = T + 1;
     const due = firstFail + HA.isolatedVmSelfTerminateS.value;
@@ -154,16 +158,38 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
     expect(h.d('nodeFailureTolerance')).toBe(tol);
   });
 
-  it('tolerance drops per node lost; services resume on survivors up to N−2', () => {
+  it('tolerance drops per node lost; services stay up while a ZK majority of seats remains', () => {
     const h = harness('t1-ahv-flasharray');
     h.run(10);
-    h.act('power-off', 'node-1');
-    h.act('power-off', 'node-2');
+    // node-3 holds a seat, node-4 does not: 2 of 3 seats remain.
+    h.act('power-off', 'node-3');
+    h.act('power-off', 'node-4');
     h.run(2);
     expect(h.d('nodeFailureTolerance')).toBe(0);
     expect(h.d('zkQuorum')).toBe(true);
     expect(h.d('clusterServices')).toBe('up');
     h.run(HA.restartByS.value + 2);
+    for (const v of ['node-3.vm-1', 'node-4.vm-2']) {
+      expect(['node-1', 'node-2']).toContain(vmHost(h, v));
+    }
+  });
+
+  it('two active nodes lost (N−2): services resume once their volumes move, then HA restarts', () => {
+    const h = harness('t1-ahv-flasharray');
+    h.run(10);
+    h.act('power-off', 'node-1');
+    h.act('power-off', 'node-2');
+    h.run(2);
+    expect(h.d('zkQuorum')).toBe(false);
+    h.run(T + ZK - h.s().simTime);
+    expect(h.d('clusterServices')).toBe('down');
+    expect(h.firstAt('ha.vm.restarted')).toBeNull();
+    // DEPLOY-GUIDE: "the cluster automatically resumes cluster services on the surviving nodes";
+    // PowerStore guide 7.6: the volumes are mounted on an inactive node "after a 5-minute delay".
+    h.run(T + MIGRATE + 1 - h.s().simTime);
+    expect(h.d('clusterServices')).toBe('up');
+    // The new leader starts the host timeline from its own election (disconnect, fence, restart).
+    h.run(HA.leaderReelectionS.value + HA.restartByS.value + 2);
     for (const v of ['node-1.vm-1', 'node-2.vm-2']) {
       expect(['node-3', 'node-4']).toContain(vmHost(h, v));
     }
@@ -182,10 +208,17 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
     expect(h.firstAt('ha.vm.restarted')).toBeNull();
     expect(h.firstAt('ha.vm.self-terminated')).toBeNull();
     for (const v of vmIds(h)) expect(vmState(h, v)).toBe('io-stalled');
+    // Every CVM lost its service volumes: Hades put every node in maintenance mode.
+    const entered = h.firstAt('hades.maintenance.enter', 'node-1.cvm');
+    expect(entered).not.toBeNull();
     h.act('recover', 'sw-a');
     h.act('recover', 'sw-b');
     for (const b of h.backends.values()) b.state = 'ok';
-    h.run(HA.leaderReelectionS.value + 5);
+    // Services return at the next periodic re-map plus the restart settling.
+    const remap = (entered ?? 0) + HADES.mapNvmfVolumesIntervalS.value;
+    h.run(remap + BOOT + 5 - h.s().simTime);
+    expect(h.firstAt('hades.volumes.remapped', 'node-1.cvm')).toBe(remap);
+    expect(h.firstAt('stargate.up', 'node-1.cvm', remap)).toBe(remap + BOOT);
     expect(h.d('clusterServices')).toBe('up');
     for (const v of vmIds(h)) {
       expect(vmState(h, v)).toBe('running');
@@ -193,8 +226,40 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
     }
   });
 
-  it('a CVM that lost every array path keeps its Stargate up and its VMs stall in place', () => {
+  it('Hades: a CVM without its service volumes enters maintenance; its VMs move to a remote Stargate', () => {
     const h = harness('t1-ahv-flasharray');
+    h.run(10);
+    const b = h.backends.get('node-1.cvm');
+    if (b) b.state = 'unavailable';
+    const limit = HADES.volumeMonitorIntervalS.value + HADES.externalStorageErrorThresholdS.value;
+    const entered = h.until(
+      () => h.firstAt('hades.maintenance.enter', 'node-1.cvm') !== null,
+      limit,
+    );
+    expect(entered).not.toBeNull();
+    expect(entered ?? 0).toBeGreaterThanOrEqual(T + HADES.externalStorageErrorThresholdS.value);
+    expect(h.f('node-1.cvm', 'hades')).toBe('maintenance');
+    expect(h.f('node-1.cvm', 'stargate')).toBe('down');
+    h.run(10);
+    expect(vmState(h, 'node-1.vm-1')).toBe('running');
+    expect(vmHost(h, 'node-1.vm-1')).toBe('node-1');
+    expect(h.f('node-1.vm-1', 'ownerCvm')).not.toBe('node-1.cvm');
+    expect(h.f('node-1', 'haState')).toBe('connected');
+    expect(h.firstAt('ha.vm.restarted')).toBeNull();
+    // Array back: the next re-map restarts the services, then sessions fail back.
+    if (b) b.state = 'ok';
+    const remap = (entered ?? 0) + HADES.mapNvmfVolumesIntervalS.value;
+    h.run(remap + BOOT + P.redirector.failbackStableS.value + 10 - h.s().simTime);
+    expect(h.firstAt('hades.volumes.remapped', 'node-1.cvm')).toBe(remap);
+    expect(h.f('node-1.cvm', 'hades')).toBe('ok');
+    expect(h.f('node-1.vm-1', 'ownerCvm')).toBe('node-1.cvm');
+    // Its ZK seat moved to the inactive node after the migration delay.
+    expect(h.firstAt('zk.seat.migrated', 'node-4.cvm')).toBe(T + MIGRATE);
+  });
+
+  it('Hades off: a CVM that lost every array path keeps its Stargate up and its VMs stall in place', () => {
+    const h = harness('t1-ahv-flasharray', { 'hades-maintenance-on-storage-error': 'off' });
+
     h.run(10);
     const b = h.backends.get('node-1.cvm');
     if (b) b.state = 'unavailable';
@@ -214,7 +279,11 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
 
   it('per-VM force-shutdown fires at the timeout (from the first stuck IO), then HA restarts it', () => {
     const limit = 60;
-    const h = harness('t1-lab', { 'path-loss-force-shutdown-s': limit });
+    // Hades off: otherwise the node goes into maintenance and its VMs move before the timeout.
+    const h = harness('t1-lab', {
+      'path-loss-force-shutdown-s': limit,
+      'hades-maintenance-on-storage-error': 'off',
+    });
     h.run(10);
     const b = h.backends.get('node-1.cvm');
     if (b) b.state = 'unavailable';

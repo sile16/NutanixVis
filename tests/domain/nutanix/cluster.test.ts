@@ -8,6 +8,8 @@ import { harness } from './harness';
 
 const T = 11;
 const DETACH = P.cluster.cassandraRingDetachS.value;
+const ZK = P.cluster.zkSessionTimeoutS.value;
+const MIGRATE = P.cluster.serviceVolumeMigrationDelayS.value;
 
 const members = (h: ReturnType<typeof harness>) => JSON.parse(String(h.d('zkMembers'))) as string[];
 
@@ -57,17 +59,62 @@ describe('Zookeeper ensemble', () => {
     expect(h.d('zkQuorum')).toBe(true);
   });
 
-  it('losing 2 of 3 members loses quorum: services stop, leader lost, HA Critical', () => {
+  it('losing 2 of 3 members loses quorum: services stop after the ZK session timeout', () => {
     const h = harness('t2-hci-ahv');
     h.run(10);
     h.act('power-off', 'node-1.cvm');
     h.act('power-off', 'node-2.cvm');
     h.run(2);
     expect(h.d('zkQuorum')).toBe(false);
-    expect(h.d('clusterServices')).toBe('down');
-    expect(h.firstAt('cluster.services.down')).toBe(T);
     expect(h.d('haStatus')).toBe('Critical');
     expect(h.d('zkLeader')).toBeNull();
+    // Services (and Prism Element) last until the ZK session times out.
+    expect(h.d('clusterServices')).toBe('up');
+    expect(h.d('prismElement')).toBe('up');
+    h.run(T + ZK - h.s().simTime);
+    expect(h.firstAt('cluster.services.down')).toBe(T + ZK);
+    expect(h.d('clusterServices')).toBe('down');
+    expect(h.d('prismElement')).toBe('unreachable');
+    expect(h.d('prismCentralAlert')).toBe('A200000');
+  });
+
+  it('HCI seats are fixed: a lost seat stays lost (A111009 raised)', () => {
+    const h = harness('t2-hci-ahv');
+    h.run(10);
+    h.act('power-off', 'node-1.cvm');
+    h.run(MIGRATE + 10);
+    expect(members(h)).toEqual(['node-1.cvm', 'node-2.cvm', 'node-3.cvm']);
+    expect(h.firstAt('zk.not-active', 'node-1.cvm')).toBe(T);
+    expect(h.firstAt('zk.seat.migrated')).toBeNull();
+  });
+
+  it('T1: seats move off a lost active node only after serviceVolumeMigrationDelayS', () => {
+    const h = harness('t1-ahv-flasharray');
+    h.run(10);
+    h.act('power-off', 'node-1');
+    h.act('power-off', 'node-2');
+    h.run(2);
+    // Two of three seats lost: no ZK majority until their volumes are mounted elsewhere.
+    expect(h.d('zkQuorum')).toBe(false);
+    h.run(T + MIGRATE - 1 - h.s().simTime);
+    expect(h.firstAt('zk.seat.migrated')).toBeNull();
+    expect(h.d('clusterServices')).toBe('down');
+    h.run(1);
+    expect(h.firstAt('zk.seat.migrated', 'node-4.cvm')).toBe(T + MIGRATE);
+    // Only node-4 was inactive: node-2's seat has nowhere to go, 2 of 3 seats are enough.
+    expect(members(h)).toEqual(['node-2.cvm', 'node-3.cvm', 'node-4.cvm']);
+    h.run(2);
+    expect(h.d('zkQuorum')).toBe(true);
+    expect(h.d('clusterServices')).toBe('up');
+  });
+
+  it('T1: an inactive node failing moves nothing', () => {
+    const h = harness('t1-ahv-flasharray');
+    h.run(10);
+    h.act('power-off', 'node-4');
+    h.run(MIGRATE + 10);
+    expect(members(h)).toEqual(['node-1.cvm', 'node-2.cvm', 'node-3.cvm']);
+    expect(h.d('clusterServices')).toBe('up');
   });
 });
 
@@ -125,11 +172,13 @@ describe('Cassandra ring', () => {
     h.run(2);
     expect(h.d('zkQuorum')).toBe(true);
     expect(h.d('metadataAvailable')).toBe(false);
+    h.run(ZK);
     expect(h.d('clusterServices')).toBe('down');
   });
 
   it('T1: metadata lives on the array, so it follows quorum (N−2 failures are fine)', () => {
-    const h = harness('t1-ahv-flasharray');
+    // Hades maintenance off, so services come back as soon as the array does.
+    const h = harness('t1-ahv-flasharray', { 'hades-maintenance-on-storage-error': 'off' });
     h.run(10);
     h.act('power-off', 'node-3');
     h.act('power-off', 'node-4');
@@ -138,6 +187,7 @@ describe('Cassandra ring', () => {
     for (const b of h.backends.values()) b.state = 'unavailable';
     h.run(1);
     expect(h.d('metadataAvailable')).toBe(false);
+    h.run(ZK);
     expect(h.d('clusterServices')).toBe('down');
     for (const b of h.backends.values()) b.state = 'ok';
     h.run(1);

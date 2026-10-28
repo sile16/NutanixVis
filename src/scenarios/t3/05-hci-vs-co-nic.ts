@@ -36,11 +36,13 @@ export default defineScenario({
   ],
   expect: [
     allRunningAt(T0, 'steady state: all VMs running'),
-    at(by(0), 'HCI VM reads keep flowing to the local CVM', (s) =>
-      vmsOfNode(s, HCI).every((v) => v.readPendingS === 0 && v.host === nodeId(HCI)),
-    ),
-    at(by(0), 'HCI VM writes cannot reach a remote replica', (s) =>
-      vmsOfNode(s, HCI).every((v) => v.writePendingS > 0),
+    // The HCI VMs still reach their local Stargate over virbr0, but that CVM is now outside the
+    // ZK and metadata majority, so it refuses reads (no Cassandra Paxos majority to resolve the
+    // extent, `inferred` Bible 4g/4i) as well as writes (no remote replica).
+    at(by(0), 'HCI VM reads and writes are refused by the cut-off local CVM', (s) =>
+      vmsOfNode(s, HCI).every(
+        (v) => v.readPendingS > 0 && v.writePendingS > 0 && v.host === nodeId(HCI),
+      ),
     ),
     at(by(0), 'CO VM reads and writes both stop', (s) =>
       vmsOfNode(s, CO).every((v) => v.readPendingS > 0 && v.writePendingS > 0),
@@ -69,7 +71,7 @@ export default defineScenario({
     ...baseInvariants(),
   ],
   narrative:
-    "The same NIC fails on HCI node 3 and on compute-only node 1, each running without an uplink bond. On the HCI node, VM reads keep flowing to the local CVM over the host's internal bridge; only writes, which need a remote replica, stall. On the CO node every IO crosses the failed NIC, so reads and writes stop at once. Both nodes then follow the isolation path, and HA restarts their VMs elsewhere.",
+    "The same NIC fails on HCI node 3 and on compute-only node 1, each running without an uplink bond. On the HCI node the VMs still reach the local CVM over the host's internal bridge, but that CVM has lost the Zookeeper and metadata majority, so it refuses their reads and writes. On the CO node every IO crosses the failed NIC, so it cannot reach any Stargate at all. Both nodes then follow the isolation path, and HA restarts their VMs elsewhere.",
   cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-5b', 'ntnx-bible-4g', 'ntnx-community-co-nodes'],
   status: 'active',
 });

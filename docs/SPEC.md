@@ -278,9 +278,18 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 
 **Zookeeper ensemble**
 
-- 3 members, or 5 under FT2 (Bible 4i / CVM components). There is one leader.
+- 3 members, or 5 under FT2 (KB-1587: "RF2 has 3 zookeeper servers … RF3 has 5", `verified`). There is one leader.
 - Quorum is a majority of members that can reach each other.
-- Losing ZK quorum stops the cluster on that side.
+- Losing ZK quorum stops the cluster on that side. IO effects are immediate. "Cluster services down" and Prism Element loss follow one ZK session timeout later (`cluster.zkSessionTimeoutS` = 20 s). The value is `inferred` from public CVM logs ("negotiated timeout=20 secs") and the Genesis flag `--zk_initial_connection_wait_secs` ("Shorter than session timeout", Command Reference 7.6).
+- **Seats.**
+  - HCI (T2/T3): fixed on the lowest-id CVM nodes in block-aware order.
+  - T1: a seat holder is an "active node" that mounts the ZK/Cassandra service volumes. A seat is live only while its CVM reaches those volumes on the array.
+  - T1: a lost seat moves to an inactive array-connected CVM only after `cluster.serviceVolumeMigrationDelayS` = 300 s, and never during an upgrade. Source: NCP with Dell PowerStore Deployment Guide 7.6, "after a 5-minute delay"; the FlashArray guide omits the sentence, so `inferred`.
+  - T1: the seat moves to the partition that keeps at least N − tolerance array-connected CVMs (the N−2 / N−3 rule). Until then, losing two of three seats loses quorum.
+- **No quorum anywhere (total partition).**
+  - HCI: a VM whose IO fails self-terminates `isolatedVmSelfTerminateS` (45 s) after its first failed IO, as on an isolated host. Bible 5b ties the rule to IO failure, not to a majority existing.
+  - HCI: when quorum re-forms, the new Acropolis leader restarts the VMs that were running (`ahvHa.selfTerminateWithoutQuorum`, `inferred`; the restart is anecdotal, from a public r/nutanix thread).
+  - T1: VMs stall and retry until storage responds (§14 #1).
 
 **Cassandra ring**
 
@@ -294,6 +303,20 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 - Stargate runs per CVM.
 - In T2 it serves IO from the extent store. In T1 it serves IO through its NVMe/TCP initiator to FA volumes (§6.4).
 - It goes unhealthy if its CVM is down, if ZK or metadata is unavailable, or (in T1) if all its NVMe paths are lost (**[OPEN-6]**).
+- Outside the quorum side it still answers NOPs and refuses writes. In HCI it refuses reads too, because resolving an extent needs a Cassandra lookup and no key range has a Paxos majority there (`inferred`, Bible 4g/4i). In T1 it still serves reads.
+
+**Hades service volumes (T1)**
+
+- On external storage the ZK, Cassandra and Curator data live on per-CVM service volumes on the array (Bible 8c). The CVM reaches them through its kernel NVMe/TCP initiator with Linux native multipathing (Everpure "Nutanix Cloud Infrastructure Configuration"), managed by Hades.
+- AOS 7.6 Hades flags (Command Reference 7.6, `verified` text):
+  - The mounts are checked every `hades.volumeMonitorIntervalS` = 5 s.
+  - An external-storage error that lasts `hades.externalStorageErrorThresholdS` = 5 s is "critical" and puts "the node in maintenance mode".
+  - All NVMf volumes are re-mapped every `hades.mapNvmfVolumesIntervalS` = 300 s.
+- **Model (`inferred`).**
+  - The kernel path uses the same storage vNICs and FA ports as Stargate's initiator, so "no live NVMe path" stands in for "service volumes unreachable".
+  - In maintenance the CVM's services stop (Stargate, ZK member, Cassandra, Acropolis), exactly as for a CVM that is down. The redirector moves the host's VM IO to a Stargate that reaches the array, and seats and leaders move.
+  - The initiator keeps reconnecting meanwhile. The first re-map that finds the array restarts the services (`cluster.cvmBootS` settling), and the sessions then fail back.
+- **Lab switch.** The topology option `hades-maintenance-on-storage-error` (default `on`, the profile's `hades.maintenanceOnStorageError`) turns this off for lab L1. With it off, a CVM without paths keeps its Stargate up and IO retries in place (DEPLOY-GUIDE default).
 
 **Acropolis / AHV HA**
 
@@ -308,6 +331,14 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 **Cluster status (derived)**
 
 - Covers ZK quorum, metadata availability, FT level achievable vs configured, resiliency status (OK, Rebuilding or Critical), and leaders (ZK, Acropolis, Curator, Prism).
+- **Prism.** Prism Element is a cluster service with an elected leader, so it is `unreachable` once services are down. Prism Central, a separate VM, then shows A200000 "Cluster Connectivity Status" (PC Alert Reference pc.7.6). Prism Element's own alerts are cluster services too, so none are raised without quorum.
+- **Alert IDs in events** (PE Alerts Reference 7.0, PC Alert Reference pc.7.6):
+  - A3032 "Cluster services are down" and A1030 "Stargate Temporarily Down": Hades maintenance, Stargate stop.
+  - A1001 "CVM Connectivity Failure": a running CVM outside the quorum side.
+  - A1006 "Host IP Not Reachable": host disconnected.
+  - A111009 "Zookeeper Not Active on All CVMs": a seat is not live.
+  - A1145 "Failure To Restart VMs For HA Event" and A130068 "Insufficient Resources for VM High Availability".
+- **Data Resiliency rows** (`ncli cluster get-domain-fault-tolerance-status`, AHV Admin Guide 11.2): node-failure tolerance for ZOOKEEPER, METADATA and EXTENT_GROUPS (`faultToleranceByComponent`).
 
 ### 6.3 HCI data path (T2 only)
 
@@ -331,10 +362,11 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 
 **Autopath on AHV**
 
-- The iSCSI redirector sends a NOP to the local Stargate about every 1 s.
-- Two or more misses in 30 s mark it unhealthy, and the session moves to a healthy remote Stargate.
-- Failback happens after the local Stargate has been stable for 30 s (Bible 5b; Nutanix blog).
-- The duration of the IO pause is `unverified`; the default is 2–3 ticks.
+- The iSCSI redirector sends a NOP to the local Stargate about every 1 s. The interval is not published; the cadence is inferred from the Bible's redirector log sample.
+- Two or more misses in 30 s mark it unhealthy, and the session moves to a healthy remote Stargate. This is the hypervisor-agnostic Autopath rule from 2014; the AHV count is not published (`assumption`).
+- Failback happens after the local Stargate has been stable for 30 s (`inferred`: Genesis `--def_stargate_stable_interval` = 30 s, Command Reference 7.6; Nutanix blog). One 2015 AHV blog says 300 s (lab L3).
+- A session with no target (every Stargate was failing) logs in afresh to the first Stargate that answers again, preferring the local one; the failback hold only applies to moving a working session.
+- The duration of the IO pause while the initiator (Frodo/QEMU) re-logs in is an `assumption` (`redirectStallS`, 3 s).
 
 **Curator rebuild**
 
@@ -433,9 +465,10 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 
 **T1 full array loss**
 
-- All cluster-service volumes are on the FA, so cluster services fail and Prism Element goes down.
+- All cluster-service volumes are on the FA. Every node enters Hades maintenance mode (§6.2), so cluster services fail, Prism Element goes down and there is no HA.
 - Per the default path-loss handling, VM IO retries until the array returns.
-- The exact guest-visible effect (how long until guest OS IO errors) is an `assumption` (**[OPEN-7]**).
+- **Recovery** (`inferred`): paths reconnect while the nodes are in maintenance. The next periodic re-map, `hades.mapNvmfVolumesIntervalS` after maintenance began, restarts the services (`cluster.cvmBootS`). Then quorum re-forms and the stalled IO completes in place.
+- The exact guest-visible effect (how long until guest OS IO errors) is an `assumption` (**[OPEN-7]**). How long Stargate tolerates hung operations before it restarts is not public (**[OPEN] Stargate hung-op threshold**).
 
 ### 6.4b Path usage: how one vDisk's IO spreads (T1)
 
@@ -516,11 +549,12 @@ This is the reference that E, F, G and H implement. Each row is about **one** fa
 | **Stargate process down** (CVM up) | iSCSI redirector NOP to the local Stargate, about 1 s; ≥2 misses in 30 s mark it unhealthy (`inferred`) | The QEMU iSCSI re-login is redirected to a healthy remote Stargate (AHV Admin Guide "Storage Overview"). There is a brief stall whose length is an `assumption`. Latency rises. | None | Rebuild starts 60 s after the Stargate is declared down (clean stop: about 1 s), §6.3 |
 | **CVM down** (host up) | Same as above, plus loss of the CVM's ZK and Cassandra membership | Redirected to a remote CVM (AHV Admin Guide). Failback after 30 s stable. | None, and the VM keeps running (AHV Admin Guide) | Writes needing its replicas stall until it is declared down (about 20 s); rebuild starts 60 s later (§6.3). The node is detached from the Cassandra ring after 30 min. Leaders it held are re-elected. |
 | **Host / node down** | Acropolis leader heartbeat at 1 Hz; HA fault detection also covers host management-service heartbeats and a corrupt or read-only root FS (AHV Admin Guide) | — | T+20 the 40 s timeout starts; T+60 fence; T+120 restart, subject to resources. HA status goes OK → Healing → Critical/OK. | As for CVM down |
-| **Host network isolation** | As for host down, from the majority side | The local Stargate cannot complete RF writes and is in the ZK minority, so writes fail | Isolated VMs self-terminate 45 s after their first failed IO, then restart on the majority side by T+120 | The majority declares its Stargate down at ZK session expiry (about 20 s); rebuild starts 60 s later (§6.3) |
+| **Host network isolation** | As for host down, from the majority side | The local Stargate cannot complete RF writes and is in the ZK minority, so writes fail. Reads fail too, because there is no metadata majority (`inferred`). | Isolated VMs self-terminate 45 s after their first failed IO, then restart on the majority side by T+120 | The majority declares its Stargate down at ZK session expiry (about 20 s); rebuild starts 60 s later (§6.3) |
 | **One uplink or ToR down** | Bond: active-backup on link state; LACP fast ≤3 s / slow ≤90 s | Hashes on the dead member blackhole until detection (LACP only) | None if a member survives | None |
 | **Disk down** | Stargate IO error, then a Hades SMART check; 3 offline events in 1 h keeps the disk offline | None (re-read from a replica) | None | Rebuild starts 60 s after the disk goes offline |
 | **Failures beyond FT** | — | IO to unreachable extents or metadata hangs (`unverified` cluster-wide effect) | Guests time out (Linux SCSI timeout 60 s, AHV Admin Guide) | Data unavailable, not lost, until a replica returns |
 | **vSwitch quick update over 30 s** | — | — | HA is triggered (AHV Admin Guide) | — |
+| **Total partition** (no partition has ZK quorum, e.g. both ToRs down) | — | Every Stargate is outside quorum, so reads and writes fail. Services and Prism Element are down after the ZK session timeout (20 s). | No fence and no HA while no quorum exists. VMs self-terminate 45 s after their first failed IO (`inferred`, Bible 5b). When quorum re-forms, the new leader restarts them (anecdotal). | No rebuild without quorum |
 
 **T1: AHV + FlashArray**
 
@@ -535,9 +569,10 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 | **FA secondary controller down** | Keep-alive (KATO): a crash is silent | Only IO on its paths stalls, then retries on the primary's paths at 3 × KATO + CQT (§6.4c). A graceful reboot (NDU) closes the connections instead: its paths are lost at once and in-flight IO waits CQT. | None | None |
 | **FA IO stall on primary** | IO delay timeout of 15 s, then giveback | Pause of 15 s plus promotion | None | None |
 | **Stargate or CVM down** (host up) | Redirector NOP (as in T2) | Redirected to a remote Stargate, which takes the vDisk lock and NVMe Persistent Reservation (Bible ext-storage) | None | None (no rebuild) |
-| **One CVM loses all array paths** (Stargate alive) | Stargate still answers NOPs, so **the redirector has no reason to move** (`inferred`) | **IO retries until the array responds** (DEPLOY-GUIDE) | Optional **per-VM force-shutdown timeout** restarts the VM on a node with connectivity (DEPLOY-GUIDE). Otherwise the VM stalls. | None |
-| **Host / node down** | As in T2 | — | AHV HA as in T2. The cluster tolerates N−2 (<5 nodes) or N−3 (≥5) simultaneous node failures, and services resume automatically (DEPLOY-GUIDE). | None |
-| **Whole array or both fabrics down** | — | All IO retries until the array returns (DEPLOY-GUIDE). Cluster services stop, because their volumes are on the array. | VMs stall; per-VM force-shutdown only helps if some node still has connectivity | None |
+| **One CVM loses all array paths** | Its service volumes are gone too. Hades checks every 5 s, marks the error critical after 5 s and puts the node in maintenance mode (Command Ref 7.6). Its Stargate stops, then the redirector NOP rule applies. | IO pauses for KATO, up to 10 s more, and the redirect, then runs on a remote Stargate that reaches the array (`inferred`). After the paths return, the next 300 s re-map restarts the services (`cvmBootS`) and sessions fail back. | None. The VMs keep running on their host. The Acropolis leader and the ZK seat move off the node (the seat after 300 s). | None |
+| **One CVM loses all array paths, Hades maintenance off** (lab option) | Stargate still answers NOPs, so **the redirector has no reason to move** (`inferred`) | **IO retries until the array responds** (DEPLOY-GUIDE) | Optional **per-VM force-shutdown timeout** restarts the VM on a node with connectivity (DEPLOY-GUIDE). Otherwise the VM stalls. | None |
+| **Host / node down** | As in T2 | — | AHV HA as in T2. The cluster tolerates N−2 (<5 nodes) or N−3 (≥5) simultaneous node failures, and services resume automatically (DEPLOY-GUIDE). If the lost nodes held a ZK majority of seats, services resume only once the seats move (300 s). The new leader then runs the HA timeline from its own election. | None |
+| **Whole array or both fabrics down** | Every node enters Hades maintenance mode | All IO retries until the array returns (DEPLOY-GUIDE). Cluster services and Prism Element stop, because their volumes are on the array. After the array returns, the next 300 s re-map restarts the services (`cvmBootS`), then the stalled IO completes. | VMs stall; per-VM force-shutdown only helps if some node still has connectivity. No HA. | None |
 | **FA mgmt API down or slow** | — | Running IO is unaffected | Provisioning, snapshot and DR tasks fail | None |
 
 **Known gaps.** These are `assumption` values in the profile until a public source exists:
@@ -646,8 +681,8 @@ T1 (AHV + FlashArray):
 6. FA primary IO stall triggers a giveback.
 7. An AHV host loses power, and HA restarts its VMs by T+120.
 8. A CVM fails while the host stays alive.
-9. A node loses both storage uplinks but keeps `vs0`. **[OPEN-6]**
-10. Both storage switches fail, or the whole array is lost.
+9. A node loses both storage uplinks but keeps `vs0`. Hades puts the node in maintenance mode and its VMs move to a remote Stargate; a lab variant with Hades maintenance off shows the retry-in-place default. **[OPEN-6]**
+10. Both storage switches fail, or the whole array is lost. Every node enters Hades maintenance mode; services return at the next 300 s re-map after the array does.
 11. Misconfiguration: single storage VLAN, then a switch failure.
 12. Misconfiguration: MTU mismatch.
 13. The FA mgmt API is unreachable, so snapshots fail while IO continues.
@@ -658,7 +693,7 @@ T1 (AHV + FlashArray):
 18. **LACP slow rate with a hung switch** (no carrier loss): hashes blackhole for up to 90 s, compared with about 3 s on the fast rate. The slow variant is a host rate set outside Prism.
 19. Misconfiguration: switch flow control (PFC or global pause) enabled.
 20. **Hung Switch A with every host's `vs0` active on it** (OVS default). No bond notices, CVM-to-CVM traffic is lost cluster-wide, Zookeeper quorum is lost and writes stop, although the NVMe paths through Switch B are healthy. No HA restarts. Powering Switch A off fails every `vs0` over and the cluster recovers.
-21. **Hung Switch A with `vs0-active-member: alternate`.** Nodes 1 and 3 are each isolated; nodes 2 and 4 keep quorum (N−2). The isolated hosts are fenced at T+60, their VMs self-terminate 45 s after the first failed IO, and AHV HA restarts them by T+120.
+21. **Hung Switch A with `vs0-active-member: alternate`.** Nodes 1 and 3 are each isolated. They hold two of the three ZK seats, so nodes 2 and 4 regain quorum (N−2) only when the seats move, after 300 s. The new leader then marks the isolated hosts disconnected and their VMs self-terminate. AHV HA fences the hosts 40 s later and restarts the VMs 60 s after that.
 
 T2 (HCI AHV):
 
@@ -673,6 +708,7 @@ T2 (HCI AHV):
 9. Two concurrent node failures on FT2.
 10. Block failure with block awareness met vs not met.
 11. A 3/2 partition on a 5-node cluster.
+12. Total partition (both ToRs down): no quorum anywhere, VMs self-terminate 45 s after their first failed IO, and the new leader restarts them when the network returns.
 
 T3 (CO + SO / CO + HCI):
 
@@ -865,7 +901,7 @@ Stream H raised these while writing the acceptance scenarios. Each is labeled wi
 
 | # | Question | Decision | Confidence |
 |---|---|---|---|
-| 1 | T1-10: both switches fail. vs0 shares sw-a/sw-b, so every host is also isolated. | No side has a quorum majority, so there is no fencing and no HA restart. VM IO **retries until the array responds** (DEPLOY-GUIDE), so VMs are `io-stalled` and do not self-terminate. They resume when the fabric returns. | `inferred` **(owner)** |
+| 1 | Total partition: no side has a quorum majority (T1-10 both switches; T2-12 both ToRs). | No fencing and no HA restart while no quorum exists. **T1:** VM IO **retries until the array responds** (DEPLOY-GUIDE), so VMs are `io-stalled` and do not self-terminate. Every node is in Hades maintenance mode, and the VMs resume in place after the next service-volume re-map once the fabric returns. **T2/T3:** a VM whose IO fails self-terminates 45 s after its first failed IO (Bible 5b ties the rule to IO failure, `inferred`). When quorum re-forms, the new Acropolis leader restarts the VMs that were running (anecdotal: public r/nutanix thread, "the system will return to its previous state"). | `inferred` / anecdotal **(owner)** |
 | 2 | T1-05 NDU: controller reboot time, and the final primary. | Add `flasharray.controllerRebootS` to the profile (`assumption`). The upgrade does **not** fail back: the controller upgraded first ends as primary. | `assumption` / `inferred` |
 | 3 | T1-17: LACP without MLAG. | Follow the engine's OVS-like behavior: only members to one partner aggregate (`lacpState: partial`). Redundancy is lost but traffic is not blackholed. | `inferred` |
 | 4 | T1-18 / T2-06: slow LACP with a hung member. | **T1:** if the path's admin-queue connection hashes to the hung member, keep-alive fails, the path is lost after KATO, and IO continues elsewhere. Stuck IO-queue connections wait for an NVMe IO timeout, a new profile field `externalStorage.ioTimeoutS` (`assumption`). **T2:** if host-management flows blackhole past the 40 s disconnect timeout, AHV HA triggers (AHV Admin Guide). | `inferred` + `assumption` |

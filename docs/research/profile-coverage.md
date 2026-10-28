@@ -11,12 +11,12 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 <!-- coverage:begin -->
 | Confidence | Count |
 |---|---|
-| verified | 34 |
-| inferred | 14 |
-| unverified | 2 |
-| assumption | 15 |
+| verified | 39 |
+| inferred | 16 |
+| unverified | 0 |
+| assumption | 17 |
 | lab-observed | 0 |
-| **Total** | **65** |
+| **Total** | **72** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -29,18 +29,25 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `ahvHa.leaderReelectionS` | 20 | verified | `ntnx-bible-5b` | Surviving hosts elect a new Acropolis leader at T+20. |
 | `ahvHa.vswitchQuickUpdateHaTriggerS` | 30 | verified | `ntnx-ahv-admin-11.2` | Virtual switch quick update > 30 s triggers HA (> 20 s may restart AOS services). |
 | `ahvHa.forceShutdownRestartCycles` | 1 | assumption | `ntnx-ncp-everpure-deploy-7.6` | SPEC §14 #7: restarted through AHV HA at the next HA cycle (one heartbeat interval). |
-| `redirector.nopIntervalS` | 1 | inferred | `ntnx-bible-5b` | Bible: the redirector "regularly" NOPs Stargates; ~1 s cadence inferred, interval not published. |
-| `redirector.missesToUnhealthy` | 2 | inferred | `ntnx-blog-cvm-failure`, `ntnx-bible-5b` | Autopath rule "fails to respond two or more times in a 30-second period", applied to the AHV redirector. |
-| `redirector.missWindowS` | 30 | inferred | `ntnx-blog-cvm-failure`, `ntnx-bible-5b` | Window for the two-miss rule. |
-| `redirector.failbackStableS` | 30 | inferred | `ntnx-blog-cvm-failure`, `ntnx-bible-5b` | Path not restored until the local CVM has been stable ≥ 30 s. |
-| `redirector.redirectStallS` | 3 | assumption | `ntnx-bible-5b` | No published AHV figure. Extra IO pause while QEMU re-logs in to the remote Stargate after the redirect decision; lab L3. |
-| `cluster.zkMembersFt1` | 3 | unverified | `ntnx-community-cvm-components`, `ntnx-bible-4i` | Community copy of the Bible: ZK "runs on three or five nodes, depending on the redundancy factor". |
-| `cluster.zkMembersFt2` | 5 | unverified | `ntnx-community-cvm-components`, `ntnx-bible-4i` | As above; FT2 (metadata RF5) needs ≥ 5 nodes (Bible 4i). |
+| `ahvHa.selfTerminateWithoutQuorum` | true | inferred | `ntnx-bible-5b`, `reddit-nutanix-all-nodes-network-loss` | HCI only. Bible 5b ties the 45 s self-termination to IO failure, not to a quorum side existing; a field report on a total partition says VMs "fence" and the cluster returns to its previous state once the network is back (anecdotal). T1 keeps retrying IO (DEPLOY-GUIDE). |
+| `redirector.nopIntervalS` | 1 | inferred | `ntnx-bible-5b` | Not published. The Bible says the redirector "regularly" NOPs Stargates; the ~1 s cadence is inferred from the Bible's redirector log sample. |
+| `redirector.missesToUnhealthy` | 2 | assumption | `ntnx-blog-cvm-failure`, `ntnx-bible-5b` | Hypervisor-agnostic Autopath rule (2014): "fails to respond two or more times in a 30-second period". The AHV redirector's miss count is not published; lab L3. |
+| `redirector.missWindowS` | 30 | assumption | `ntnx-blog-cvm-failure`, `ntnx-bible-5b` | Window for the two-miss rule (hypervisor-agnostic Autopath rule, 2014); AHV value not published. |
+| `redirector.failbackStableS` | 30 | inferred | `ntnx-cmdref-aos-7.6`, `ntnx-blog-cvm-failure`, `ntnx-bible-5b` | Genesis --def_stargate_stable_interval = 30: "seconds a stargate has to be alive to be considered as stable and healthy" (Command Ref 7.6); Autopath: path restored once the CVM "has been stable for at least 30 seconds". One 2015 AHV blog says 300 s; lab L3. |
+| `redirector.redirectStallS` | 3 | assumption | `ntnx-bible-5b` | No published AHV figure. Extra IO pause while the initiator (Frodo/QEMU) re-logs in to the remote Stargate after the redirect decision; lab L3. |
+| `cluster.zkMembersFt1` | 3 | verified | `ntnx-kb-1587`, `ntnx-bible-4i` | KB-1587: "Replication Factor of 2 (RF2) has 3 zookeeper servers running". |
+| `cluster.zkMembersFt2` | 5 | verified | `ntnx-kb-1587`, `ntnx-bible-4i` | KB-1587: "Replication Factor of 3 (RF3) has 5 zookeeper servers running"; FT2 needs ≥ 5 nodes (Bible 4i). |
 | `cluster.cassandraRingDetachS` | 1800 | verified | `ntnx-bible-4i`, `ntnx-kb-1256` | A node down for 30 min is removed from the metadata ring; re-added after it is stable. |
 | `cluster.minNodes` | 3 | verified | `ntnx-bible-4i` | FT1 without erasure coding; FT2 needs 5. |
-| `cluster.cvmBootS` | 180 | assumption |  | No published figure. Model value for CVM power-on to Stargate serving; replace from lab testing. |
+| `cluster.cvmBootS` | 180 | assumption | `ntnx-cmdref-aos-7.6` | No published figure for CVM power-on to Stargate serving. Upper bound: Genesis --svm_reboot_timeout = 420 s, "Maximum time expected for SVM to reboot/shutdown" (Command Ref 7.6). Also used for the service restart after a Hades re-map. Replace from lab testing. |
 | `cluster.cassandraRejoinStableS` | 1800 | inferred | `ntnx-kb-1256`, `ntnx-bible-4i` | KB-1256: a detached node is "added back to the ring if the node has been stable for 30 minutes". KB text not yet confirmed on the portal. |
 | `cluster.hostRebootS` | 300 | assumption |  | No published figure; server POST + AHV boot takes minutes. Long enough that HA fences and restarts the VMs (as for a power loss). |
+| `cluster.zkSessionTimeoutS` | 20 | inferred | `ntnx-community-zk-session`, `ntnx-cmdref-aos-7.6` | Not documented. CVM logs show the ZK client negotiating "timeout=20 secs"; Genesis --zk_initial_connection_wait_secs = 20 is "Shorter than session timeout". Delays "cluster services down" and Prism Element loss; IO effects are immediate. |
+| `cluster.serviceVolumeMigrationDelayS` | 300 | inferred | `ntnx-ncp-powerstore-deploy-7.6`, `ntnx-ncp-everpure-deploy-7.6` | External storage: "If an active node fails, the cluster mounts the cluster service volumes on an inactive node after a 5-minute delay"; not during an upgrade (PowerStore guide 7.6). The FlashArray guide omits the sentence; same Hades mechanism. |
+| `hades.maintenanceOnStorageError` | true | inferred | `ntnx-cmdref-aos-7.6`, `ntnx-bible-8c`, `everpure-nutanix-nci-cfg` | Service volumes are reached through the CVM kernel NVMe/TCP + dm-multipath ("Linux native multipathing"). A CVM that loses them goes into maintenance mode, so its Stargate stops and the redirector moves its VMs. Topology option hades-maintenance-on-storage-error overrides; lab L1. |
+| `hades.volumeMonitorIntervalS` | 5 | verified | `ntnx-cmdref-aos-7.6` | --external_storage_volume_monitor_interval_secs: "Interval in seconds to monitor the health of the external storage volume mounts." |
+| `hades.externalStorageErrorThresholdS` | 5 | verified | `ntnx-cmdref-aos-7.6` | --external_storage_monitor_error_threshold_secs: "Threshold in seconds to consider an external storage error as critical and put the node in maintenance mode." |
+| `hades.mapNvmfVolumesIntervalS` | 300 | verified | `ntnx-cmdref-aos-7.6` | --external_storage_map_nvmf_volumes_interval_secs: "Interval in seconds to connect all NVMf storage volumes to the CVM." |
 | `hci.rebuildStartDelayS` | 60 | inferred | `ntnx-bible-4i`, `ntnx-kb-delayed-rebuild`, `ntnx-kb-slow-rebuild-ec` | Counted from when the Stargate is declared down. Bible 4i "immediately" means no long repair-delay timer; the KBs give a selective Curator scan / rebuild 60 s after Stargate is down. KB text not yet confirmed on the portal. |
 | `hci.curatorPartialScanS` | 3600 | inferred | `ntnx-kb-2101`, `ntnx-community-curator-scans`, `ntnx-community-cvm-components`, `ntnx-community-free-space` | Partial scan about 1 h after the last one (three Nutanix-staff community posts agree; KB-2101 by title, KB text not yet confirmed on the portal). |
 | `hci.curatorFullScanS` | 21600 | inferred | `ntnx-kb-2101`, `ntnx-community-curator-scans`, `ntnx-community-cvm-components` | Full scan about 6 h after the last one (Nutanix-staff community posts; KB-2101 by title, KB text not yet confirmed on the portal). |
@@ -93,13 +100,14 @@ These are the values the lab plan (`lab-validation-plan.md`) should upgrade firs
 
 | Field | Value | Why this value | Lab |
 |---|---|---|---|
-| `redirector.redirectStallS` | 3 s | No AHV figure is published. A few ticks covers QEMU's re-login to the remote Stargate after the redirect decision (SPEC §6.3 "2–3 ticks"). | L3 |
+| `redirector.redirectStallS` | 3 s | No AHV figure is published. A few ticks covers the initiator's (Frodo/QEMU) re-login to the remote Stargate after the redirect decision. | L3 |
+| `redirector.missesToUnhealthy` / `missWindowS` | 2 / 30 s | The hypervisor-agnostic Autopath rule (2014 Nutanix blog). The AHV redirector's count is not published. | L3 |
 | `bond.slbRebalanceIntervalS` | 10 s | The documented Open vSwitch default ("Every 10 seconds, vswitchd rebalances"). Whether AHV tunes `bond-rebalance-interval` is not public. | L13 |
 | `externalStorage.multipathPolicy` | active-active | The policy Nutanix configures for Stargate is not public. SPDK supports active-passive and active-active. The selector (`pathSelector`, queue-depth, `inferred`) is a separate field. | L12 |
 | `externalStorage.lostPathHoldKatoMultiplier` | 3 | NVMe 2.1 §9.6.2: wait 2 × KATT (command-based keep-alive) or 3 × KATT (traffic-based) before CQT. The conservative traffic-based case; which mode the array uses is not published. All in-flight IO is held, although the spec lets reads retry at detection. | L5, L12 |
 | `externalStorage.reconnectDelayS` | 10 s | Linux `NVMF_DEF_RECONNECT_DELAY`, the default of the CVM's kernel initiator. SPDK has no default (its multipath example uses `-o 20`). | L5 |
-| `cluster.zkMembersFt1` / `zkMembersFt2` | 3 / 5 | Only a community copy of the Bible text says "three or five nodes, depending on the redundancy factor". It is consistent with Bible 4i (FT2 means metadata RF5 and at least 5 nodes). | — |
 | `hci.curatorPartialScanS` / `curatorFullScanS` | 3600 / 21600 s | A community post says "every hour" and "around every 6 hours". The Bible gives no schedule. | — |
+| `cluster.cvmBootS` | 180 s | No published figure. Upper bound: Genesis `--svm_reboot_timeout` = 420 s (Command Ref 7.6). Also the service restart after a Hades re-map. | L7 |
 
 **NVMe sources.** KATO, CQT and the controller-loss timeout are published in the public Everpure KB `everpure-nutanix-nci-cfg` and the AOS 7.6 Command Reference (`ntnx-cmdref-aos-7.6`). The lost-path hold and the IO timeout follow the NVMe Base Specification 2.1 (`nvme-base-spec-2.1`). Everpure's generic Linux guidance (`everpure-linux-dm-multipath`, `everpure-nvme-tcp-bp`) informs only the path selector, as `inferred`. `flasharray.hostMultipathRetryS` is generic SCSI / dm-multipath behavior and drives no NVMe timing.
 
@@ -107,6 +115,7 @@ These are the values the lab plan (`lab-validation-plan.md`) should upgrade firs
 
 | Source | Status | Result |
 |---|---|---|
+| `ntnx-kb-1587`, `ntnx-cmdref-aos-7.6`, `ntnx-ncp-powerstore-deploy-7.6`, PE/PC alert references (2026-10-28) | Read | KB-1587: 3 ZK servers under RF2, 5 under RF3, so `zkMembersFt1/Ft2` are `verified`. Command Ref 7.6: the Hades monitor (5 s), critical-error threshold (5 s) and NVMf re-map (300 s); `--def_stargate_stable_interval` 30; `--svm_reboot_timeout` 420; `--zk_initial_connection_wait_secs` 20; two-node return gate 7 min. PowerStore guide 7.6: service volumes move off a failed active node "after a 5-minute delay". Alert texts: A1001, A1006, A1030, A3032, A111009, A1145, A130068, A200000. |
 | `ntnx-ncp-everpure-deploy-7.6` (local portal copy) | Read | Confirmed N−2 / N−3, retry-until-array-responds, the per-VM force-shutdown timeout, 10,000 vDisks, 3–32 nodes, and "Every AOS vDisk is a volume on Everpure FlashArray". Table 9 requires **Purity//FA 6.11.8** for NVMe/TCP. |
 | `ntnx-ncp-everpure-compat-7.6` (local portal copy) | Read | **The PDF has no table.** Page 4 only links to the portal's External Storage Compatibility Matrix (`ntnx-storage-compat-matrix`), which renders with JavaScript and could not be read. |
 | `ntnx-ahv-admin-11.2` (local portal copy) | Read | Confirmed the 40 s disconnect, the vswitch quick update thresholds (> 20 s services, > 30 s HA), LACP fast 3 s / slow 90 s, and the 60 s Linux SCSI timeout. |

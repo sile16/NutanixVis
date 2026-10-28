@@ -54,6 +54,12 @@ export const current: Profile = {
       ['ntnx-ncp-everpure-deploy-7.6'],
       'SPEC §14 #7: restarted through AHV HA at the next HA cycle (one heartbeat interval).',
     ),
+    selfTerminateWithoutQuorum: c(
+      true,
+      'inferred',
+      ['ntnx-bible-5b', 'reddit-nutanix-all-nodes-network-loss'],
+      'HCI only. Bible 5b ties the 45 s self-termination to IO failure, not to a quorum side existing; a field report on a total partition says VMs "fence" and the cluster returns to its previous state once the network is back (anecdotal). T1 keeps retrying IO (DEPLOY-GUIDE).',
+    ),
   },
 
   redirector: {
@@ -61,46 +67,46 @@ export const current: Profile = {
       1,
       'inferred',
       ['ntnx-bible-5b'],
-      'Bible: the redirector "regularly" NOPs Stargates; ~1 s cadence inferred, interval not published.',
+      'Not published. The Bible says the redirector "regularly" NOPs Stargates; the ~1 s cadence is inferred from the Bible\'s redirector log sample.',
     ),
     missesToUnhealthy: c(
       2,
-      'inferred',
+      'assumption',
       ['ntnx-blog-cvm-failure', 'ntnx-bible-5b'],
-      'Autopath rule "fails to respond two or more times in a 30-second period", applied to the AHV redirector.',
+      'Hypervisor-agnostic Autopath rule (2014): "fails to respond two or more times in a 30-second period". The AHV redirector\'s miss count is not published; lab L3.',
     ),
     missWindowS: c(
       30,
-      'inferred',
+      'assumption',
       ['ntnx-blog-cvm-failure', 'ntnx-bible-5b'],
-      'Window for the two-miss rule.',
+      'Window for the two-miss rule (hypervisor-agnostic Autopath rule, 2014); AHV value not published.',
     ),
     failbackStableS: c(
       30,
       'inferred',
-      ['ntnx-blog-cvm-failure', 'ntnx-bible-5b'],
-      'Path not restored until the local CVM has been stable ≥ 30 s.',
+      ['ntnx-cmdref-aos-7.6', 'ntnx-blog-cvm-failure', 'ntnx-bible-5b'],
+      'Genesis --def_stargate_stable_interval = 30: "seconds a stargate has to be alive to be considered as stable and healthy" (Command Ref 7.6); Autopath: path restored once the CVM "has been stable for at least 30 seconds". One 2015 AHV blog says 300 s; lab L3.',
     ),
     redirectStallS: c(
       3,
       'assumption',
       ['ntnx-bible-5b'],
-      'No published AHV figure. Extra IO pause while QEMU re-logs in to the remote Stargate after the redirect decision; lab L3.',
+      'No published AHV figure. Extra IO pause while the initiator (Frodo/QEMU) re-logs in to the remote Stargate after the redirect decision; lab L3.',
     ),
   },
 
   cluster: {
     zkMembersFt1: c(
       3,
-      'unverified',
-      ['ntnx-community-cvm-components', 'ntnx-bible-4i'],
-      'Community copy of the Bible: ZK "runs on three or five nodes, depending on the redundancy factor".',
+      'verified',
+      ['ntnx-kb-1587', 'ntnx-bible-4i'],
+      'KB-1587: "Replication Factor of 2 (RF2) has 3 zookeeper servers running".',
     ),
     zkMembersFt2: c(
       5,
-      'unverified',
-      ['ntnx-community-cvm-components', 'ntnx-bible-4i'],
-      'As above; FT2 (metadata RF5) needs ≥ 5 nodes (Bible 4i).',
+      'verified',
+      ['ntnx-kb-1587', 'ntnx-bible-4i'],
+      'KB-1587: "Replication Factor of 3 (RF3) has 5 zookeeper servers running"; FT2 needs ≥ 5 nodes (Bible 4i).',
     ),
     cassandraRingDetachS: c(
       1800,
@@ -112,8 +118,8 @@ export const current: Profile = {
     cvmBootS: c(
       180,
       'assumption',
-      [],
-      'No published figure. Model value for CVM power-on to Stargate serving; replace from lab testing.',
+      ['ntnx-cmdref-aos-7.6'],
+      'No published figure for CVM power-on to Stargate serving. Upper bound: Genesis --svm_reboot_timeout = 420 s, "Maximum time expected for SVM to reboot/shutdown" (Command Ref 7.6). Also used for the service restart after a Hades re-map. Replace from lab testing.',
     ),
     cassandraRejoinStableS: c(
       1800,
@@ -126,6 +132,45 @@ export const current: Profile = {
       'assumption',
       [],
       'No published figure; server POST + AHV boot takes minutes. Long enough that HA fences and restarts the VMs (as for a power loss).',
+    ),
+    zkSessionTimeoutS: c(
+      20,
+      'inferred',
+      ['ntnx-community-zk-session', 'ntnx-cmdref-aos-7.6'],
+      'Not documented. CVM logs show the ZK client negotiating "timeout=20 secs"; Genesis --zk_initial_connection_wait_secs = 20 is "Shorter than session timeout". Delays "cluster services down" and Prism Element loss; IO effects are immediate.',
+    ),
+    serviceVolumeMigrationDelayS: c(
+      300,
+      'inferred',
+      ['ntnx-ncp-powerstore-deploy-7.6', 'ntnx-ncp-everpure-deploy-7.6'],
+      'External storage: "If an active node fails, the cluster mounts the cluster service volumes on an inactive node after a 5-minute delay"; not during an upgrade (PowerStore guide 7.6). The FlashArray guide omits the sentence; same Hades mechanism.',
+    ),
+  },
+
+  hades: {
+    maintenanceOnStorageError: c(
+      true,
+      'inferred',
+      ['ntnx-cmdref-aos-7.6', 'ntnx-bible-8c', 'everpure-nutanix-nci-cfg'],
+      'Service volumes are reached through the CVM kernel NVMe/TCP + dm-multipath ("Linux native multipathing"). A CVM that loses them goes into maintenance mode, so its Stargate stops and the redirector moves its VMs. Topology option hades-maintenance-on-storage-error overrides; lab L1.',
+    ),
+    volumeMonitorIntervalS: c(
+      5,
+      'verified',
+      ['ntnx-cmdref-aos-7.6'],
+      '--external_storage_volume_monitor_interval_secs: "Interval in seconds to monitor the health of the external storage volume mounts."',
+    ),
+    externalStorageErrorThresholdS: c(
+      5,
+      'verified',
+      ['ntnx-cmdref-aos-7.6'],
+      '--external_storage_monitor_error_threshold_secs: "Threshold in seconds to consider an external storage error as critical and put the node in maintenance mode."',
+    ),
+    mapNvmfVolumesIntervalS: c(
+      300,
+      'verified',
+      ['ntnx-cmdref-aos-7.6'],
+      '--external_storage_map_nvmf_volumes_interval_secs: "Interval in seconds to connect all NVMf storage volumes to the CVM."',
     ),
   },
 

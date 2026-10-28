@@ -11,11 +11,11 @@ Scope: AHV only (ESXi is out of scope), current release behavior only. Historica
 
 | Component | Role | Leader? | Failover |
 |---|---|---|---|
-| Zookeeper / Zeus | Cluster config (Zeus is the client library) | Yes | Runs on 3 or 5 nodes depending on redundancy factor (community copy of the Bible, so UNVERIFIED). A new leader is elected if the leader stops responding [1]. If a block fails, the ZK role migrates to another node and returns later [2]. Migration timing is UNVERIFIED. |
+| Zookeeper / Zeus | Cluster config (Zeus is the client library) | Yes | Runs on 3 servers under RF2 and 5 under RF3 (KB-1587 [27], verified). A new leader is elected if the leader stops responding [1]. If a block fails, the ZK role migrates to another node and returns later [2]; no HCI migration timing is published, so the model keeps HCI seats fixed. On external storage the service volumes move off a failed "active" node "after a 5-minute delay", never during an upgrade [30]. |
 | Cassandra / Medusa | Metadata ring (consistent hashing) | Per-key owner | Writes need a Paxos majority [3]. Metadata RF3 under FT1, RF5 under FT2 [2]. |
 | Stargate | Data IO, runs on every CVM | No | The hypervisor path redirects to another CVM (§3) |
 | Curator | Background MapReduce: rebuild, ILM | Yes | Full scan about every 6 h, partial scan about every 1 h [1] (community only; the Bible gives no schedule) |
-| Prism | UI/API | Yes | Other nodes forward to the leader. VIP move timing is UNVERIFIED. |
+| Prism | UI/API | Yes | Other nodes forward to the leader. Prism Element is a cluster service, so it is unreachable once cluster services are down ("Prism won't be accessible" after the cluster stops [31]). Prism Central then raises A200000 "Cluster Connectivity Status" [29]. VIP move timing is UNVERIFIED. |
 | Acropolis (AHV) | Scheduler, HA, network controller | Yes, plus a worker per CVM [4] | New leader about T+20 s after the leader's host fails [5] |
 | Cerebro | Replication/DR | Yes (from memory) | UNVERIFIED |
 
@@ -51,15 +51,15 @@ Data locality [4]:
 The failure matrix says: no HA event, no failed IO, and latency may rise [2].
 
 **AHV**
-- QEMU talks to an iSCSI redirector at `127.0.0.1:3261`, which health-checks the local Stargate with iSCSI NOPs. The Bible says only "regularly"; the 1 s cadence is inferred from log timestamps.
+- The initiator (Frodo, or QEMU) talks to an iSCSI redirector at `127.0.0.1:3261`, which health-checks the local Stargate with iSCSI NOPs. The Bible says only "regularly"; the 1 s cadence is inferred from the Bible's log sample.
 - When NOPs fail, the redirector marks the local Stargate unhealthy, and QEMU's retried login is redirected to a healthy remote Stargate.
 - **Failback:** once the local Stargate recovers, the remote one quiesces and kills its sessions, and QEMU logs in locally again [5].
 - How long IO pauses during redirect is **UNVERIFIED**. No published AHV number exists, so the profile assumes 3 s (`redirector.redirectStallS`, lab L3).
 
 
-**Shared rules** [9]. The blog is archived; the text was re-checked on 2026-10-27. It describes Autopath generically, and applying it to the AHV redirector is `inferred`.
-- **Trigger:** "If any process fails to respond two or more times in a 30-second period", the storage path is redirected.
-- **Failback:** "the data path will not be restored until the original CVM has been stable for at least 30 seconds."
+**Shared rules** [9]. The blog is archived; the text was re-checked on 2026-10-27. It describes the hypervisor-agnostic Autopath of 2014, before AHV.
+- **Trigger:** "If any process fails to respond two or more times in a 30-second period", the storage path is redirected. The AHV redirector's count is not published, so the model labels 2-in-30 s an `assumption`.
+- **Failback:** "the data path will not be restored until the original CVM has been stable for at least 30 seconds." The AOS 7.6 Genesis flag `--def_stargate_stable_interval` = 30 ("seconds a stargate has to be alive to be considered as stable and healthy") supports the value [28], so it stays `inferred`. One 2015 AHV blog says 300 s (lab L3).
 
 **Stargate-down detection** [20]. A remote Stargate is seen as down through its Zookeeper session.
 - A Stargate that stops or crashes cleanly closes its session, so the IO pause is "~1 second or potentially less".
@@ -101,9 +101,8 @@ The failure matrix says: no HA event, no failed IO, and latency may rise [2].
 - The node is re-added after it has been stable for 30 minutes: "A node will be automatically added back to the ring if the node has been stable for 30 minutes" (KB-1256, `inferred` until the KB text is confirmed on the portal).
 
 ### Resiliency status
-- The Prism Resiliency widget shows the status, as does `ncli cluster get-domain-fault-tolerance-status type=node|rackable_unit`.
+- The Prism Resiliency widget shows the status, as does `ncli cluster get-domain-fault-tolerance-status type=node|rackable_unit`. Its component rows include ZOOKEEPER, METADATA, EXTENT_GROUPS, OPLOG, FREE_SPACE, STATIC_CONFIGURATION and ERASURE_CODE_STRIP_SIZE (AHV Admin Guide 11.2 sample output). The model shows ZOOKEEPER, METADATA and EXTENT_GROUPS (`faultToleranceByComponent`).
 - A Curator partial scan updates it. Partial scans run about 1 h after the previous one and full scans about 6 h after the previous one (Nutanix-staff posts [1][24][25]; KB-2101 by number).
-- The per-component rows (Metadata, Zookeeper, Extent Groups, Oplog, Stargate health, Free Space) are UNVERIFIED.
 
 ## 5. Disk failure and degraded node detection (DND)
 
@@ -138,10 +137,15 @@ The failure matrix says: no HA event, no failed IO, and latency may rise [2].
 
 ### Partition [5]
 - The side with quorum stays up, and VMs restart there. Quorum means a ZK majority (2/3 or 3/5) plus a Cassandra Paxos majority for each key.
+- **ZK session timeout.** Not documented. Public CVM logs show the ZK client negotiating "timeout=20 secs" [32], and the AOS 7.6 Genesis flag `--zk_initial_connection_wait_secs` = 20 is "Shorter than session timeout" [28]. The model declares cluster services (and Prism Element) down 20 s after quorum is lost (`inferred`). IO effects are immediate.
 - **Isolated AHV host:**
   - The fence happens at about T60.
-  - Its VMs terminate 45 s after their first failed IO.
+  - Its VMs terminate 45 s after their first failed IO. Reads fail too: the minority CVM cannot reach a metadata majority (`inferred`).
   - The VMs are restarted on the majority side by T120.
+- **Total partition** (every CVM alone, for example both ToRs down). Nothing official describes it. No side has a ZK or Paxos majority, so all IO fails.
+  - The 45 s self-termination is phrased in terms of IO failure, not a majority existing (Bible 5b), so the model applies it (`inferred`).
+  - A public r/nutanix thread on this case: "VMs will fence because they can't connect to their storage … The system will return to its previous state", and power-on after recovery "Should be automagic" [33] (anecdotal). The model restarts the VMs once quorum re-forms.
+  - No fence and no HA restart happen while no quorum exists.
 
 ## 7. Multiple failures
 
@@ -159,7 +163,7 @@ The failure matrix says: no HA event, no failed IO, and latency may rise [2].
   - Data is RF2 and metadata is RF4 across both nodes' SSDs [17].
   - The heartbeat runs every 2 s, and failover happens after 10 s (5 misses). Both values are UNVERIFIED.
   - On a heartbeat loss, both nodes pause IO and request a leadership lock from the Witness. The winner continues as a stand-alone cluster (patent US11194680).
-  - Return to two-node mode requires 15 min of successful pings, then a Cassandra resync [18].
+  - Return to two-node mode requires 7 min of successful pings (AOS 7.6 `--minutes_of_successful_pings_for_transition` = 7 [28]), then a Cassandra resync [18]. Two-node clusters are not modeled.
   - Behavior with no Witness is UNVERIFIED.
 
 ## 8. Recovery ordering
@@ -232,8 +236,8 @@ On return:
 
 | Name | Value | Source | Confidence |
 |---|---|---|---|
-| Autopath trigger | ≥2 misses in 30 s | [9] | inferred (archived blog) |
-| Autopath failback hold | 30 s stable | [9] | inferred |
+| Autopath trigger | ≥2 misses in 30 s | [9] | assumption (2014 hypervisor-agnostic rule) |
+| Autopath failback hold | 30 s stable | [9][28] | inferred |
 | AHV redirector NOP interval | ~1 s | [5] | inferred from logs |
 | AHV HA libvirt heartbeat | 1 s | [5] | verified |
 | AHV host-down timeout | 40 s (starts ~T20) | [5], AHV Admin Guide | verified |
@@ -251,13 +255,16 @@ On return:
 | Disk permanently offline | 3 offline events per hour | [2] | verified |
 | Stargate read-only | 95% capacity | [2] | verified |
 | Resilient-capacity warning | 75% (default) | [2] | verified |
-| ZK members FT1 / FT2 | 3 / 5 | [1] | unverified (community copy of the Bible) |
+| ZK members FT1 / FT2 | 3 / 5 | KB-1587 [27] | verified |
+| ZK session timeout | 20 s | [32][28] | inferred |
+| External storage: service-volume migration | 300 s after an active node fails | [30] | inferred (PowerStore guide) |
+| Hades volume monitor / critical error / NVMf re-map | 5 s / 5 s / 300 s | [28] | verified (flag text) |
 | balance-slb rebalance | 10 s (OVS default) | OVS bonding docs | assumption (AHV tuning not public) |
 | vDisk owner migration | 300 s of remote IO | [4] | verified |
 | Oplog bypass (sequential) | >1.5 MB outstanding | [3] | verified |
 | LACP detection | fast ≤3 s / slow ≤90 s | AHV Admin Guide | verified |
 | 2-node heartbeat / failover | 2 s / 10 s | community | unverified |
-| 2-node return gate | 15 min | [18] | inferred |
+| 2-node return gate | 7 min | [28] | verified (flag default) |
 | Metro failover timeout | 30 s | community | unverified |
 | ZK leader election, Prism VIP move | — | — | unknown |
 
@@ -269,7 +276,8 @@ These need portal or KB access, or Nutanix engineering:
 - What current degraded node detection actually does.
 - The outcome when failures exceed FT.
 - 2-node behavior without a Witness.
-- ZK migration and VIP move timings.
+- HCI ZK migration and VIP move timings.
+- Stargate's hung-operation threshold and what it does on expiry (not public).
 - balance-slb rebalance timing and `lacp_fallback` semantics.
 
 ## Sources
@@ -300,4 +308,11 @@ These need portal or KB access, or Nutanix engineering:
 24. https://next.nutanix.com/how-it-works-22/curator-scans-types-and-frequency-or-where-is-our-free-space-33516
 25. https://next.nutanix.com/how-it-works-22/why-does-my-nutanix-cluster-not-show-free-or-reclaimed-space-after-deleting-many-vms-or-files-38052
 26. Nutanix KB "Disk Manager (Hades)", cited by title (https://portal.nutanix.com/page/documents/kbs/list). KB text not yet confirmed on the portal. smartctl(8): https://linux.die.net/man/8/smartctl
+27. Nutanix KB-1587, "NCC Health Check: zkinfo_check_plugin": https://portal.nutanix.com/kb/1587
+28. Nutanix, Command Reference AOS 7.6 (Genesis, Hades and two-node gflags): https://portal.nutanix.com/page/documents/details?targetId=Command-Ref-AOS-v7_6:Command-Ref-AOS-v7_6
+29. Nutanix, Prism Element Alerts Reference 7.0 (Cluster: https://portal.nutanix.com/page/documents/details?targetId=Prism-Element-Alerts-Reference-v7_0:ale-alert-health-Cluster-CVM-auto-r.html ; Controller VM: https://portal.nutanix.com/page/documents/details?targetId=Prism-Element-Alerts-Reference-v7_0:ale-alert-health-ControllerVM-CVM-auto-r.html) and Prism Central Alert Reference pc.7.6 (Cluster: https://portal.nutanix.com/page/documents/details?targetId=Prism-Central-Alert-Reference-vpc_7_6:ale-alert-health-Cluster-PCVM-auto-r.html ; Guest VM: https://portal.nutanix.com/page/documents/details?targetId=Prism-Central-Alert-Reference-vpc_7_6:ale-alert-health-GuestVM-PCVM-auto-r.html)
+30. Nutanix, NCP with Dell PowerStore Deployment Guide 7.6, "Compute Cluster High Availability": https://portal.nutanix.com/page/documents/details?targetId=Nutanix-Cloud-Platform-with-Dell-PowerStore-Deployment-Guide-v7_6:Nutanix-Cloud-Platform-with-Dell-PowerStore-Deployment-Guide-v7_6
+31. https://next.nutanix.com/how-it-works-22/scheduled-power-outage-relocating-cluster-hardware-if-you-need-to-shut-down-all-the-nodes-in-your-ahv-cluster-here-s-how-37326
+32. https://next.nutanix.com/ahv-virtualization-27/cluster-not-fully-starting-in-ce-43393
+33. https://www.reddit.com/r/nutanix/comments/1kxan8l/
 - https://patents.google.com/patent/US11194680

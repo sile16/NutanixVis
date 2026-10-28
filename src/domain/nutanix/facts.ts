@@ -53,6 +53,11 @@ export interface Facts {
   readonly hosts: readonly HostFacts[];
   readonly cvms: readonly CvmFacts[];
   readonly vms: readonly VmFacts[];
+  /**
+   * T1 `hades-maintenance-on-storage-error` option: true/false when the topology sets it, null to
+   * use the profile default (`hades.maintenanceOnStorageError`).
+   */
+  readonly hadesMaintenance: boolean | null;
   /** Data replication factor (T2/T3 `replication-factor`); null for external storage. */
   readonly replicationFactor: number | null;
   /** NIC id → owning host id. */
@@ -152,6 +157,8 @@ export function buildFacts(t: Topology): Facts {
   const rfOpt = t.options.find((o) => o.id === 'replication-factor');
   const rfVal = rfOpt?.value ?? rfOpt?.default;
   const externalStorage = t.family === 't1' || t.family === 't1-lab';
+  const hadesOpt = t.options.find((o) => o.id === 'hades-maintenance-on-storage-error');
+  const hadesVal = hadesOpt?.value ?? hadesOpt?.default;
 
   const hostById = new Map(hosts.map((h) => [h.id, h]));
   const cvmById = new Map(cvms.map((c) => [c.id, c]));
@@ -162,6 +169,7 @@ export function buildFacts(t: Topology): Facts {
     hosts,
     cvms: [...cvms].sort((a, b) => nodeOrder(a.id, b.id)),
     vms,
+    hadesMaintenance: hadesVal === 'on' ? true : hadesVal === 'off' ? false : null,
     replicationFactor: externalStorage ? null : typeof rfVal === 'number' ? rfVal : 2,
     nicOwner,
     linkHostNic,

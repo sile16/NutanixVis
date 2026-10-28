@@ -87,3 +87,12 @@ export function nodeRebuildS(
   const lostGiB = (P.hci.initialUsedCapacityPct / 100) * rawTiB * 1024;
   return { lostGiB, seconds: lostGiB / (P.hci.rebuildGiBpsPerNode * survivors) };
 }
+/**
+ * T1 Hades: worst case from a silent loss of every array path to maintenance mode. Paths are lost
+ * after KATO; the volume monitor (every `volumeMonitorIntervalS`) then needs the error to last
+ * `externalStorageErrorThresholdS`.
+ */
+export const HADES_DETECT =
+  KATO + P.hades.volumeMonitorIntervalS + P.hades.externalStorageErrorThresholdS;
+/** Hades maintenance → services serving again: the next re-map, then the restart settling. */
+export const HADES_RECOVER = P.hades.mapNvmfVolumesIntervalS + P.cluster.cvmBootS;

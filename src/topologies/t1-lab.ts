@@ -32,6 +32,7 @@ export const t1LabOptions = {
   multipathPolicy: t1Options.multipathPolicy,
   pathSelector: t1Options.pathSelector,
   pathLossForceShutdownS: t1Options.pathLossForceShutdownS,
+  hadesMaintenance: t1Options.hadesMaintenance,
 } as const;
 
 export type T1LabParams = ParamsOf<typeof t1LabOptions>;

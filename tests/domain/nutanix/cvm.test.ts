@@ -70,6 +70,19 @@ describe('delegation to the storage backend', () => {
 });
 
 describe('Stargate', () => {
+  it('reports why it is down: clean stop (reboot, stop-stargate) or silent (power loss)', () => {
+    const h = harness('t2-hci-ahv');
+    h.run(5);
+    expect(h.cluster.stargateDownCause?.('node-1.cvm')).toBeNull();
+    h.act('cvm.stop-stargate', 'node-1.cvm');
+    h.act('reboot', 'node-2.cvm');
+    h.act('power-off', 'node-3');
+    h.run(1);
+    expect(h.cluster.stargateDownCause?.('node-1.cvm')).toBe('clean-stop');
+    expect(h.cluster.stargateDownCause?.('node-2.cvm')).toBe('clean-stop');
+    expect(h.cluster.stargateDownCause?.('node-3.cvm')).toBe('silent');
+  });
+
   it('owns vDisks through backend.acquire and releases them when ownership moves', () => {
     const h = harness('t1-ahv-flasharray');
     h.run(5);
@@ -87,8 +100,21 @@ describe('Stargate', () => {
     expect(backend(h, 'node-1.cvm').acquired.has('node-1.vm-1.vdisk-1')).toBe(true);
   });
 
-  it('refuses writes without ZK quorum (minority side) but still serves reads', () => {
+  it('HCI: refuses reads and writes without ZK quorum (minority side: no metadata majority)', () => {
     const h = harness('t2-hci-ahv');
+    h.run(10);
+    h.act('host.isolate', 'node-2');
+    h.run(2);
+    const b = backend(h, 'node-2.cvm');
+    const from = b.submitted.length;
+    h.run(5);
+    expect(b.submitted.slice(from)).toEqual([]);
+    expect(h.f('node-2.cvm', 'stargate')).toBe('unhealthy');
+    expect(Number(h.f('node-2.vm-1', 'readPendingS'))).toBeGreaterThan(0);
+  });
+
+  it("T1: a minority Stargate refuses writes but still serves reads (metadata is the array's)", () => {
+    const h = harness('t1-ahv-flasharray');
     h.run(10);
     h.act('host.isolate', 'node-2');
     h.run(2);
@@ -98,7 +124,6 @@ describe('Stargate', () => {
     const later = b.submitted.slice(from);
     expect(later.some((r) => r.op === 'read')).toBe(true);
     expect(later.some((r) => r.op === 'write')).toBe(false);
-    expect(h.f('node-2.cvm', 'stargate')).toBe('unhealthy');
   });
 
   it('refuses IO from a fenced host (ClusterView.isHostFenced)', () => {

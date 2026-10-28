@@ -1,12 +1,17 @@
 /**
  * Cluster-level state machines (SPEC §6.2, §6.3a, §6.4 "T1 compute cluster HA"):
  *
- * - **Zookeeper quorum.** CVMs that reach each other (ZK pings) form partitions. HCI (T2/T3): a
- *   partition has quorum if it holds a majority of the ZK ensemble (3 seats, 5 under FT2; profile
- *   `zkMembersFt1/Ft2`) on CVM-bearing nodes. T1: service volumes are on the array and services
- *   "resume automatically on the surviving nodes" (DEPLOY-GUIDE), so the partition with the most
- *   array-connected CVMs has quorum if it keeps at least N − tolerance of them (N−2 / N−3 rule,
- *   `externalStorage.nodeFailureTolerance`); seats re-home onto it (`inferred`).
+ * - **Zookeeper quorum.** CVMs that reach each other (ZK pings) form partitions. A partition has
+ *   quorum if it holds a majority of the ZK ensemble (3 seats, 5 under FT2; profile
+ *   `zkMembersFt1/Ft2`, KB-1587). HCI (T2/T3): seats are fixed on CVM-bearing nodes. T1: a seat
+ *   is live only while its CVM reaches its service volumes on the array. A lost seat (an "active
+ *   node" that failed) moves to an array-connected CVM on the partition with the most of them,
+ *   if that partition keeps at least N − tolerance (N−2 / N−3 rule,
+ *   `externalStorage.nodeFailureTolerance`), only after `cluster.serviceVolumeMigrationDelayS`
+ *   (PowerStore deployment guide 7.6 "after a 5-minute delay"; `inferred` for FlashArray).
+ * - **Cluster services / Prism Element.** Down once ZK quorum or metadata has been unavailable
+ *   for `cluster.zkSessionTimeoutS`; IO effects of the loss are immediate. Prism Central then
+ *   shows A200000 "Cluster Connectivity Status".
  * - **Cassandra ring.** Metadata RF 2·FT+1 over ring neighbours (block-aware order); a range is
  *   available with a Paxos majority. A node down `cluster.cassandraRingDetachS` is detached, and
  *   re-added once stable (Bible 4i, KB-1256). T1 metadata is on the array: available with quorum.
@@ -20,6 +25,7 @@
  */
 
 import type { Device, DeviceView, TimerHandle, TimerOptions, ViewField } from '../../engine/types';
+import type { KnownCitationId } from '../citations';
 import type { Ctx } from '../contracts';
 import type { Profile } from '../versions/profile';
 import { nodeOrder } from './facts';
@@ -35,8 +41,17 @@ export class ClusterDevice implements Device<Profile> {
   readonly label = 'Nutanix cluster';
   private haStatus: HaStatus = 'OK';
   private services: 'up' | 'down' = 'up';
+  /** First tick quorum or metadata was missing (ZK session-timeout clock). */
+  private servicesLostAt: number | null = null;
   private ftShort = false;
   private advised = false;
+  /** A ZK seat is not live (alert A111009 raised for the current episode). */
+  private zkNotActive = false;
+  /** Running CVMs reported unreachable from the quorum side (A1001), per episode. */
+  private readonly unreachable = new Set<string>();
+  /** VMs whose HA restart found no host (A1145), per episode. */
+  private readonly restartFailed = new Set<string>();
+  private haShort = false;
   private readonly wakes = new Map<string, TimerHandle>();
   private derivedCache: Record<string, ViewField> = {};
 
@@ -74,24 +89,32 @@ export class ClusterDevice implements Device<Profile> {
 
   postTick(ctx: Ctx): void {
     this.advisories(ctx);
-    const services = this.reg.quorumSide !== null && this.reg.metaAvailable ? 'up' : 'down';
+    const T = ctx.profile.cluster.zkSessionTimeoutS;
+    const ok = this.reg.quorumSide !== null && this.reg.metaAvailable;
+    if (ok) this.servicesLostAt = null;
+    else this.servicesLostAt ??= ctx.now;
+    const lostAt = this.servicesLostAt;
+    if (lostAt !== null) this.wake(ctx, 'zk session timeout', lostAt + T.value, T);
+    const services = lostAt === null || ctx.now - lostAt < T.value ? 'up' : 'down';
     if (services !== this.services) {
       this.services = services;
+      const base: readonly KnownCitationId[] = this.reg.facts.externalStorage
+        ? ['ntnx-ncp-everpure-deploy-7.6']
+        : ['ntnx-kb-1587', 'ntnx-bible-4i'];
       ctx.emit({
         severity: services === 'down' ? 'critical' : 'info',
         code: `cluster.services.${services}`,
         text:
           services === 'down'
-            ? 'Cluster services are down (no Zookeeper quorum or metadata unavailable)'
-            : 'Cluster services are back up',
+            ? `Cluster services are down: no Zookeeper quorum or metadata for ${T.value} s (ZK session timeout). Prism Element is unreachable; Prism Central raises A200000 "Cluster Connectivity Status"`
+            : 'Cluster services are back up; Prism Element is reachable again',
         causeIds: [],
-        cite: this.reg.facts.externalStorage
-          ? ['ntnx-ncp-everpure-deploy-7.6']
-          : [...ctx.profile.cluster.zkMembersFt1.cite],
+        cite: [...base, ...T.cite, 'ntnx-pc-alerts-7.6-cluster', 'ntnx-community-cluster-shutdown'],
         confidence: 'inferred',
       });
     }
     this.haStatus = this.computeHaStatus();
+    this.haResources(ctx);
     this.derivedCache = this.computeDerived();
   }
 
@@ -144,7 +167,6 @@ export class ClusterDevice implements Device<Profile> {
       for (const c of members) reg.partitionOf.set(c, id);
     }
 
-    let side: string[] | null = null;
     if (reg.facts.externalStorage) {
       const need = reg.facts.cvms.length - reg.externalTolerance();
       let best: string[] | null = null;
@@ -156,22 +178,14 @@ export class ClusterDevice implements Device<Profile> {
           bestN = n;
         }
       }
-      if (best && bestN >= need) side = best;
-      if (side) {
-        const seats = reg.zkEnsembleSize;
-        reg.zkMembers = new Set(
-          [...side]
-            .filter((c) => reg.cvmCapable(c))
-            .sort(nodeOrder)
-            .slice(0, seats),
-        );
-      }
-    } else {
-      const m = reg.zkMembers.size;
-      for (const members of comps.values()) {
-        const live = members.filter((c) => reg.zkMembers.has(c)).length;
-        if (live > m / 2) side = members;
-      }
+      this.migrateSeats(ctx, best !== null && bestN >= need ? best : null);
+    }
+    // A live seat: its CVM runs (T1: and reaches its service volumes on the array).
+    const m = reg.zkMembers.size;
+    let side: string[] | null = null;
+    for (const members of comps.values()) {
+      const live = members.filter((c) => reg.zkMembers.has(c) && reg.cvmCapable(c)).length;
+      if (live > m / 2) side = members;
     }
     const had = reg.quorumSide !== null;
     reg.quorumSide = side ? new Set(side) : null;
@@ -206,6 +220,93 @@ export class ClusterDevice implements Device<Profile> {
     }
     const zkSlack = liveSeats.length - (Math.floor(reg.zkMembers.size / 2) + 1);
     reg.serviceTolerance = side ? Math.max(0, zkSlack) : 0;
+    reg.zkTolerance = reg.serviceTolerance;
+    this.zkAlerts(ctx, side);
+  }
+
+  /**
+   * T1 service-volume migration: a seat whose CVM is lost (down, in Hades maintenance, off the
+   * array, or outside `target`) moves to an inactive array-connected CVM of `target` once it has
+   * been lost for `cluster.serviceVolumeMigrationDelayS`. With no target (no partition keeps
+   * N − tolerance array-connected CVMs) seats stay where they are. The upgrade exception
+   * ("During an upgrade, the cluster does not migrate cluster services") has no trigger here:
+   * the model simulates no AOS/AHV upgrade.
+   */
+  private migrateSeats(ctx: Ctx, target: readonly string[] | null): void {
+    const reg = this.reg;
+    const D = ctx.profile.cluster.serviceVolumeMigrationDelayS;
+    const seats = [...reg.zkMembers].sort(nodeOrder);
+    for (const s of seats) {
+      const lost = !reg.cvmCapable(s) || (target !== null && !target.includes(s));
+      if (!lost) reg.seatLostSince.delete(s);
+      else if (!reg.seatLostSince.has(s)) reg.seatLostSince.set(s, ctx.now);
+    }
+    if (target === null) return;
+    const next = new Set(reg.zkMembers);
+    for (const s of seats) {
+      const since = reg.seatLostSince.get(s);
+      if (since === undefined) continue;
+      this.wake(ctx, `${s} service-volume migration`, since + D.value, D);
+      if (ctx.now - since < D.value) continue;
+      const to = target.filter((c) => reg.cvmCapable(c) && !next.has(c)).sort(nodeOrder)[0];
+      if (to === undefined) continue;
+      next.delete(s);
+      next.add(to);
+      reg.seatLostSince.delete(s);
+      ctx.emit({
+        severity: 'warn',
+        deviceId: to,
+        code: 'zk.seat.migrated',
+        text: `Zookeeper/Cassandra service volumes of ${s} mounted on ${to} after ${D.value} s`,
+        causeIds: [],
+        cite: [...D.cite],
+        confidence: D.confidence,
+      });
+    }
+    reg.zkMembers = next;
+  }
+
+  /** A111009 (a ZK seat is not live) and A1001 (a running CVM the quorum side cannot reach). */
+  private zkAlerts(ctx: Ctx, side: readonly string[] | null): void {
+    const reg = this.reg;
+    if (side === null) {
+      // Prism Element's own alerting is a cluster service: nothing new is raised without quorum.
+      this.unreachable.clear();
+      return;
+    }
+    const down = [...reg.zkMembers]
+      .filter((c) => !(reg.cvmCapable(c) && side.includes(c)))
+      .sort(nodeOrder);
+    if (down.length > 0 && !this.zkNotActive) {
+      ctx.emit({
+        severity: 'warn',
+        ...(down[0] === undefined ? {} : { deviceId: down[0] }),
+        code: 'zk.not-active',
+        text: `Zookeeper is not active on all CVMs (${down.join(', ')}). Prism alert A111009 "Zookeeper Not Active on All CVMs": cluster resiliency is affected`,
+        causeIds: [],
+        cite: ['ntnx-pe-alerts-7.0-cluster', 'ntnx-kb-1587'],
+        confidence: 'inferred',
+      });
+    }
+    this.zkNotActive = down.length > 0;
+    for (const c of reg.facts.cvms.map((x) => x.id)) {
+      // Judged once it has pinged (in a partition): a CVM that just started is not yet.
+      if (!(reg.partitionOf.has(c) && !side.includes(c))) {
+        this.unreachable.delete(c);
+        continue;
+      }
+      if (this.unreachable.has(c)) continue;
+      this.unreachable.add(c);
+      ctx.emit({
+        severity: 'warn',
+        deviceId: c,
+        code: 'cluster.cvm.unreachable',
+        text: `${c} is not reachable from the CVMs holding quorum. Prism alert A1001 "CVM Connectivity Failure"`,
+        causeIds: [],
+        cite: ['ntnx-pe-alerts-7.0-cvm'],
+        confidence: 'inferred',
+      });
+    }
   }
 
   // ── Cassandra ring ──────────────────────────────────────────────────────
@@ -270,6 +371,7 @@ export class ClusterDevice implements Device<Profile> {
     }
 
     if (reg.facts.externalStorage) {
+      reg.metadataTolerance = null;
       reg.metaAvailable = reg.quorumSide !== null;
       reg.serviceTolerance = reg.quorumSide
         ? Math.max(0, reg.externalTolerance() - this.nodesDown())
@@ -288,6 +390,7 @@ export class ClusterDevice implements Device<Profile> {
       slack = Math.min(slack, n - majority);
     }
     reg.metaAvailable = ok;
+    reg.metadataTolerance = ok && Number.isFinite(slack) ? Math.max(0, slack) : 0;
     reg.serviceTolerance = ok
       ? Math.max(0, Math.min(reg.serviceTolerance, reg.ftConfigured, slack))
       : 0;
@@ -387,9 +490,9 @@ export class ClusterDevice implements Device<Profile> {
           severity: 'warn',
           deviceId: h.id,
           code: 'ha.host.disconnected',
-          text: `${h.label}: no heartbeat since T=${lostAt - P.heartbeatIntervalS.value}; ${P.disconnectTimeoutS.value} s disconnect timeout started`,
+          text: `${h.label}: no heartbeat since T=${lostAt - P.heartbeatIntervalS.value}; ${P.disconnectTimeoutS.value} s disconnect timeout started. Prism alert A1006 "Host IP Not Reachable"`,
           causeIds: [],
-          cite: P.timeoutStartS.cite,
+          cite: [...P.timeoutStartS.cite, 'ntnx-pe-alerts-7.0-cluster'],
           confidence: P.timeoutStartS.confidence,
         });
       }
@@ -435,7 +538,22 @@ export class ClusterDevice implements Device<Profile> {
       if (!due) continue;
       vm.beginRestart();
       const target = this.pickHost(load);
-      if (target === null) continue;
+      if (target === null) {
+        if (!this.restartFailed.has(vm.id)) {
+          this.restartFailed.add(vm.id);
+          ctx.emit({
+            severity: 'error',
+            deviceId: vm.id,
+            code: 'ha.vm.restart-failed',
+            text: `${vm.label}: no host can run it now (capacity or array connectivity). Prism alert A1145 "Failure To Restart VMs For HA Event"`,
+            causeIds: home.causeId === null ? [] : [home.causeId],
+            cite: ['ntnx-pc-alerts-7.6-guestvm', ...P.restartByS.cite],
+            confidence: 'inferred',
+          });
+        }
+        continue;
+      }
+      this.restartFailed.delete(vm.id);
       load.set(target, (load.get(target) ?? 0) + 1);
       this.login(vm.vdisks, target);
       vm.startOn(target, ctx, home.causeId === null ? [] : [home.causeId], true);
@@ -487,29 +605,56 @@ export class ClusterDevice implements Device<Profile> {
       (v) => !v.hasLiveInstance() && v.restartNeed !== 'none' && v.currentState === 'restarting',
     );
     if (healing) return 'Healing';
-    const schedulable = reg.facts.hosts.filter(
+    // AHV Admin Guide 11.2: Critical = cannot tolerate another host failure.
+    return this.schedulableHosts() < 2 ? 'Critical' : 'OK';
+  }
+
+  /** Hosts that can take VMs now (not storage-only, alive, connected). */
+  private schedulableHosts(): number {
+    const reg = this.reg;
+    return reg.facts.hosts.filter(
       (h) =>
         h.role !== 'storage-only' &&
         reg.hostAlive(h.id) &&
         reg.haOf(h.id).state === 'connected' &&
         !reg.heartbeatMissing(h.id),
     ).length;
-    // AHV Admin Guide 11.2: Critical = cannot tolerate another host failure.
-    return schedulable < 2 ? 'Critical' : 'OK';
+  }
+
+  /** A130068: the cluster could not restart VMs after another host failure. */
+  private haResources(ctx: Ctx): void {
+    // Judged by an acting leader only (its heartbeat view is what counts hosts).
+    if (!this.reg.leaderActive() || this.reg.now <= this.reg.leaderSince) return;
+    const short = this.schedulableHosts() < 2;
+    if (short && !this.haShort) {
+      ctx.emit({
+        severity: 'warn',
+        code: 'ha.resources.insufficient',
+        text: 'Fewer than two hosts can run VMs: VMs are no longer protected against host failure. Prism alert A130068 "Insufficient Resources for VM High Availability"',
+        causeIds: [],
+        cite: ['ntnx-pc-alerts-7.6-guestvm', 'ntnx-ahv-admin-11.2'],
+        confidence: 'inferred',
+      });
+    }
+    this.haShort = short;
   }
 
   private computeDerived(): Record<string, ViewField> {
     const reg = this.reg;
     const quorum = reg.quorumSide !== null;
-    const services = quorum && reg.metaAvailable ? 'up' : 'down';
+    const services = this.services;
     // HCI backend (stream G) data-path facts: tolerance = min(cluster services, data placement);
     // configured FT follows the backend's RF.
     let tolerance = reg.serviceTolerance;
     let ft = reg.ftConfigured;
+    let extentGroups: number | null = null;
     if (!reg.facts.externalStorage) {
       for (const d of this.backendDerived()) {
         const dt = d['hci.dataNodeFailureTolerance'];
-        if (typeof dt === 'number') tolerance = Math.min(tolerance, dt);
+        if (typeof dt === 'number') {
+          tolerance = Math.min(tolerance, dt);
+          extentGroups = Math.max(0, dt);
+        }
         const rf = d['hci.rf'];
         if (typeof rf === 'number') ft = Math.max(1, rf - 1);
       }
@@ -524,6 +669,18 @@ export class ClusterDevice implements Device<Profile> {
       ftConfigured: ft,
       metadataAvailable: reg.metaAvailable,
       clusterServices: services,
+      // Prism Element is a CVM cluster service with an elected leader (Bible): unreachable once
+      // the services are down. Prism Central, a separate VM, then shows A200000.
+      prismElement: services === 'up' ? 'up' : 'unreachable',
+      prismCentralAlert: services === 'up' ? null : 'A200000',
+      // Data Resiliency rows (`ncli cluster get-domain-fault-tolerance-status`, AHV Admin Guide
+      // 11.2): node failures each component tolerates now. T1: metadata and extent groups are
+      // the array's (null).
+      faultToleranceByComponent: JSON.stringify({
+        ZOOKEEPER: quorum ? reg.zkTolerance : 0,
+        METADATA: reg.facts.externalStorage ? null : reg.metadataTolerance,
+        EXTENT_GROUPS: extentGroups,
+      }),
       // Data-path defaults. The HCI backend (G) overrides these through its `derived()`, which
       // the CVMs merge after this device (device ids sort after `cluster`). T1: the array owns
       // the data, so they are constant (docs/view-fields.md).

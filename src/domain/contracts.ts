@@ -116,6 +116,12 @@ export interface ClusterView {
   serviceFailureTolerance(): number;
   /** CVM whose Stargate currently owns a vDisk (where the redirector points), or null. */
   vdiskOwner(vdisk: string): DeviceId | null;
+  /**
+   * Optional: why a CVM's Stargate is not serving. `clean-stop` (CVM reboot, Stargate stop,
+   * Hades maintenance: peers see the sessions close at once) or `silent` (died with its CVM or
+   * host: peers notice only by timeout); null while it serves.
+   */
+  stargateDownCause?(cvm: DeviceId): 'clean-stop' | 'silent' | null;
 }
 
 /** What each domain stream exports for the loader to compose. */

@@ -50,6 +50,12 @@ export class Registry implements NutanixClusterView, VmEnv {
   zkLeader: string | null;
   metaAvailable = true;
   serviceTolerance = 0;
+  /** T1: when each ZK/Cassandra seat holder was first lost (service-volume migration clock). */
+  readonly seatLostSince = new Map<string, number>();
+  /** Spare ZK seats above majority on the quorum side (Data Resiliency "ZOOKEEPER" row). */
+  zkTolerance = 0;
+  /** Spare replicas above Paxos majority over every key range ("METADATA" row); null in T1. */
+  metadataTolerance: number | null = null;
 
   // Acropolis / AHV HA
   leaderHost: string | null;
@@ -123,6 +129,15 @@ export class Registry implements NutanixClusterView, VmEnv {
   /** Metadata RF: 3 under FT1, 5 under FT2 (Bible 4i), i.e. 2·FT + 1. */
   get metadataRf(): number {
     return 2 * this.ftConfigured + 1;
+  }
+
+  /**
+   * T1: Hades puts a node that lost its service volumes in maintenance mode (topology option
+   * `hades-maintenance-on-storage-error`, else profile `hades.maintenanceOnStorageError`).
+   */
+  hadesMaintenanceEnabled(): boolean {
+    if (!this.facts.externalStorage) return false;
+    return this.facts.hadesMaintenance ?? this.profile.hades.maintenanceOnStorageError.value;
   }
 
   /** T1: simultaneous node failures tolerated, N−2 below 5 nodes, N−3 at 5+ (DEPLOY-GUIDE). */
@@ -223,6 +238,12 @@ export class Registry implements NutanixClusterView, VmEnv {
   serviceFailureTolerance(): number {
     return this.serviceTolerance;
   }
+  /** Optional ClusterView extension for stream G: how a CVM's Stargate stopped (see Cvm). */
+  stargateDownCause(cvm: DeviceId): 'clean-stop' | 'silent' | null {
+    const c = this.cvms.get(cvm);
+    if (!c) return null;
+    return c.stargateDownCause();
+  }
   vdiskOwner(vdisk: string): DeviceId | null {
     return this.owner.get(vdisk) ?? null;
   }
@@ -241,9 +262,15 @@ export class Registry implements NutanixClusterView, VmEnv {
 
   /**
    * Isolation as seen by the cluster: an active Acropolis leader on the quorum side has lost the
-   * host's heartbeat (or fenced it). With no quorum anywhere this is false (SPEC §14 #1).
+   * host's heartbeat (or fenced it). With no quorum anywhere (SPEC §14 #1): true in HCI, where a
+   * VM whose IO fails self-terminates and is restarted once quorum re-forms
+   * (`ahvHa.selfTerminateWithoutQuorum`); false on external storage, whose IO retries until the
+   * array responds.
    */
   hostCutOff(host: string): boolean {
+    if (this.quorumSide === null) {
+      return !this.facts.externalStorage && this.profile.ahvHa.selfTerminateWithoutQuorum.value;
+    }
     if (!this.leaderActive() || this.now <= this.leaderSince) return false;
     if (this.isHostFenced(host)) return true;
     return host !== this.leaderHost && this.heartbeatMissing(host);

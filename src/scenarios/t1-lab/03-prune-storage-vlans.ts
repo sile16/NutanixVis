@@ -10,7 +10,6 @@ import {
   eventsMatching,
   host,
   isRunning,
-  isStalled,
   neverSeen,
   SLACK,
   T0,
@@ -18,7 +17,7 @@ import {
   vmsOfNode,
 } from '../helpers';
 import { cvmId, nodeId, T1_LAB } from '../ids';
-import { KATO, P } from '../timers';
+import { HADES_DETECT, KATO, P, REDIRECT_PAUSE } from '../timers';
 
 const NODE = 1;
 /** A per-VM force-shutdown value for the "with" variant (the default is unset). */
@@ -31,7 +30,17 @@ function variant(withTimeout: boolean): ScenarioDef {
     title: `T1-lab: prune the storage VLANs on one node's switch port (${withTimeout ? 'per-VM force-shutdown set' : 'default path-loss handling'})`,
     topology: T1_LAB.topology,
     // `path-loss-force-shutdown-s` is a proposed option (per-VM schema field, applied to all VMs).
-    ...(withTimeout ? { options: { 'path-loss-force-shutdown-s': FORCE_SHUTDOWN_S } } : {}),
+    // The force-shutdown variant switches Hades maintenance off: with it on, the node enters
+    // maintenance within HADES_DETECT and its VMs move before any per-VM timeout could fire, so
+    // the per-VM path-loss handling (DEPLOY-GUIDE) is only visible without it (lab L1/L2).
+    ...(withTimeout
+      ? {
+          options: {
+            'path-loss-force-shutdown-s': FORCE_SHUTDOWN_S,
+            'hades-maintenance-on-storage-error': 'off',
+          },
+        }
+      : {}),
     durationS: END,
     timeline: [10, 20].map((vlan) => ({
       at: T0,
@@ -69,8 +78,20 @@ function variant(withTimeout: boolean): ScenarioDef {
             ),
           ]
         : [
-            at(END, 'VMs stall in place, retrying until the array responds', (s) =>
-              vmsOfNode(s, NODE).every((v) => isStalled(v) && v.host === nodeId(NODE)),
+            // Default (`inferred`): the CVM also lost its service volumes, so Hades puts the
+            // node in maintenance mode and the redirector moves its VMs' IO.
+            atCtx(by(HADES_DETECT), 'Hades puts the node in maintenance mode', (_s, ctx) =>
+              eventSeen(ctx, 'hades.maintenance.enter', { device: cvmId(NODE) }),
+            ),
+            at(END, 'VMs keep running in place, served by a remote Stargate', (s) =>
+              vmsOfNode(s, NODE).every(
+                (v) => isRunning(v) && v.host === nodeId(NODE) && v.ownerCvm !== cvmId(NODE),
+              ),
+            ),
+            alwaysFrom(T0, 'VM IO pause bounded by Hades detection plus the redirect', (s) =>
+              vmsOfNode(s, NODE).every(
+                (v) => v.ioPendingS <= HADES_DETECT + REDIRECT_PAUSE + SLACK,
+              ),
             ),
             neverSeen(END, 'vm.force-shutdown'),
             neverSeen(END, 'ha.vm.restarted'),
@@ -79,8 +100,8 @@ function variant(withTimeout: boolean): ScenarioDef {
     ],
     narrative: withTimeout
       ? "Both storage VLANs are pruned from node 1's switch port, so its CVM loses every array path while management stays up. The VMs on node 1 have a force-shutdown timeout set, so once it expires they are shut down and restarted on a node that still reaches the array."
-      : "Both storage VLANs are pruned from node 1's switch port, so its CVM loses every array path while management stays up and the cluster still sees a healthy host. By default the node retries IO until the array responds, so its VMs stall in place with no HA event.",
-    cite: ['ntnx-ncp-everpure-deploy-7.6', 'nvme-base-spec'],
+      : "Both storage VLANs are pruned from node 1's switch port, so its CVM loses every array path while management stays up and the cluster still sees a healthy host. The CVM has also lost its Zookeeper and Cassandra service volumes, so Hades puts the node in maintenance mode and its Stargate stops. The redirector moves the VMs' IO to a CVM that still reaches the array, so they keep running in place with no HA event.",
+    cite: ['ntnx-ncp-everpure-deploy-7.6', 'nvme-base-spec', 'ntnx-cmdref-aos-7.6'],
     status: 'active',
   });
 }

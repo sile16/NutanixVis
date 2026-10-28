@@ -4,9 +4,12 @@
  * NOPs, and owns vDisks via `backend.acquire` (T1: the NVMe Persistent Reservation, Bible 8c).
  *
  * - IO from a host AHV HA has fenced is refused (Bible 5b: "Stargates block IO from that host").
- * - Without ZK quorum the Stargate is `unhealthy`: it still answers NOPs and serves reads, but
- *   refuses writes, which need quorum-backed metadata (`inferred`; this is also what makes VM
- *   writes fail on an isolated host, Bible 5b / SPEC §6.4a "Host network isolation").
+ * - Without ZK quorum the Stargate is `unhealthy`: it still answers NOPs (so the redirector does
+ *   not move), but refuses writes, which need quorum-backed metadata (`inferred`; this is also
+ *   what makes VM writes fail on an isolated host, Bible 5b / SPEC §6.4a "Host network
+ *   isolation"). HCI: reads are refused too, because resolving an extent needs a Cassandra
+ *   lookup and no key range has a Paxos majority outside the quorum side (`inferred`, Bible
+ *   4g/4i). T1 keeps serving reads (metadata is the array's).
  * - Replies dropped on the wire are retransmitted (TCP) while the Stargate is serving.
  */
 
@@ -115,7 +118,8 @@ export class Stargate implements CvmComponent {
       this.reply(entry, { status: 'retry', reason: 'host fenced by AHV HA' }, ctx);
       return true;
     }
-    if (io.op === 'write' && !this.reg.inQuorum(this.cvm)) {
+    const needsQuorum = io.op === 'write' || !this.reg.facts.externalStorage;
+    if (needsQuorum && !this.reg.inQuorum(this.cvm)) {
       this.reply(entry, { status: 'retry', reason: 'no Zookeeper quorum' }, ctx);
       return true;
     }

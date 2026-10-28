@@ -13,6 +13,7 @@ import {
   cvmPathsUp,
   derived,
   eventSeen,
+  firstEventAt,
   hosts,
   isRunning,
   isStalled,
@@ -21,7 +22,7 @@ import {
   t1Steady,
 } from '../helpers';
 import { FA, SW_A, SW_B, T1 } from '../ids';
-import { KATO, P } from '../timers';
+import { HADES_DETECT, HADES_RECOVER, KATO, P } from '../timers';
 
 const RESTORE_AT = T0 + 120;
 
@@ -56,10 +57,15 @@ const ARRAY: Variant = {
 function variant(v: Variant): ScenarioDef {
   const arrayOnly = v === ARRAY;
   // In the default topology vs0 shares Switch A/B, so losing both switches also isolates every
-  // host. No side then has a ZK majority, so nobody fences or restarts (SPEC §14 #1) and both
-  // variants recover the same way: paths reconnect within KATO + reconnectDelayS, cluster
-  // services restart, and the stalled VMs resume in place.
-  const END = RESTORE_AT + KATO + P.externalStorage.reconnectDelayS + 40;
+  // host. No side then has a ZK majority, so nobody fences or restarts (SPEC §14 #1). Timing
+  // (`inferred`): every CVM loses its service volumes at KATO, so ZK has no live majority at
+  // once and cluster services are declared down a ZK session timeout later; Hades puts every
+  // node in maintenance mode by HADES_DETECT. Both variants recover the same way: paths
+  // reconnect while in maintenance, the next periodic re-map (mapNvmfVolumesIntervalS after
+  // maintenance began) restarts the services (cvmBootS), and the stalled VMs resume in place.
+  const ZK_DOWN = KATO + P.cluster.zkSessionTimeoutS;
+  const SERVICES_BACK = T0 + 1 + KATO + HADES_RECOVER;
+  const END = by(HADES_DETECT + HADES_RECOVER) + 10;
   return defineScenario({
     id: `t1-10-${v.key}`,
     title: `T1: ${v.title}`,
@@ -74,18 +80,22 @@ function variant(v: Variant): ScenarioDef {
       at(by(KATO), 'every CVM has lost every NVMe path', (s) =>
         allCvms(s, (c) => cvmPathsUp(s, c.id) === 0),
       ),
-      // Model timing (`inferred`): the services' volumes are unreachable once every path is
-      // lost (KATO); with both switches gone ZK also loses its majority at once.
       atCtx(
-        by(KATO),
-        'cluster services stop (their volumes are on the array)',
+        by(ZK_DOWN),
+        'cluster services stop (their volumes are on the array); Prism Element is unreachable',
         (s, ctx) =>
-          derived(s).clusterServices === 'down' && eventSeen(ctx, 'cluster.services.down'),
+          derived(s).clusterServices === 'down' &&
+          s.derived.prismElement === 'unreachable' &&
+          s.derived.prismCentralAlert === 'A200000' &&
+          eventSeen(ctx, 'cluster.services.down'),
+      ),
+      atCtx(by(HADES_DETECT), 'Hades puts every node in maintenance mode', (s, ctx) =>
+        allCvms(s, (c) => eventSeen(ctx, 'hades.maintenance.enter', { device: c.id })),
       ),
       alwaysFrom(
-        by(KATO),
-        'cluster services stay down until the fabric/array returns',
-        (s) => s.simTime > RESTORE_AT || derived(s).clusterServices === 'down',
+        by(ZK_DOWN),
+        'cluster services stay down until the re-map restarts them',
+        (s) => s.simTime > SERVICES_BACK || derived(s).clusterServices === 'down',
       ),
       at(RESTORE_AT, 'no VM is serving IO during the outage', (s) =>
         allVms(s, (vm) => !isRunning(vm)),
@@ -113,15 +123,32 @@ function variant(v: Variant): ScenarioDef {
       neverSeen(END, 'ha.host.fenced'),
       neverSeen(END, 'ha.vm.self-terminated'),
       neverSeen(END, 'ha.vm.restarted'),
+      atCtx(
+        END,
+        'services restart at the first periodic re-map after the array returns',
+        (_s, ctx) =>
+          [1, 2, 3, 4].every((n) => {
+            const id = `node-${n}.cvm`;
+            const entered = firstEventAt(ctx, 'hades.maintenance.enter', { device: id });
+            const remapped = firstEventAt(ctx, 'hades.volumes.remapped', { device: id });
+            return entered !== null && remapped === entered + P.hades.mapNvmfVolumesIntervalS;
+          }),
+      ),
       at(END, 'paths are back', (s) => allCvms(s, allPathsLive)),
       at(END, 'cluster services are back', (s) => derived(s).clusterServices === 'up'),
       allRunningAt(END),
       ...baseInvariants(),
     ],
     narrative: arrayOnly
-      ? 'The whole FlashArray goes away. Every CVM loses every path, and the cluster services stop because their Cassandra, Curator and Zookeeper volumes live on the array. By default VM IO retries until the array responds, so VMs stall rather than fail, and resume once the array returns.'
-      : 'Both switches fail. Storage and, in this cabling, management go with them, so every CVM loses every NVMe path and no node can reach its peers. With no Zookeeper majority anywhere, cluster services stop and the Acropolis leader is gone, so no host is fenced and no VM is restarted. VM IO retries until storage responds, so the VMs stall in place and resume once the switches return.',
-    cite: ['ntnx-ncp-everpure-deploy-7.6', 'ntnx-bible-8c', 'ntnx-bible-5b'],
+      ? 'The whole FlashArray goes away. Every CVM loses every path, including its Cassandra and Zookeeper service volumes, so Hades puts every node in maintenance mode and the cluster services and Prism Element go down. VM IO retries until the array responds, so VMs stall rather than fail. Once the array is back, the next periodic re-map restarts the services and the VMs resume in place.'
+      : 'Both switches fail. Storage and, in this cabling, management go with them, so every CVM loses every NVMe path and no node can reach its peers. With no Zookeeper majority anywhere and every node in Hades maintenance mode, cluster services stop and the Acropolis leader is gone, so no host is fenced and no VM is restarted. VM IO retries until storage responds, so the VMs stall in place and resume after the next re-map once the switches return.',
+    cite: [
+      'ntnx-ncp-everpure-deploy-7.6',
+      'ntnx-bible-8c',
+      'ntnx-bible-5b',
+      'ntnx-cmdref-aos-7.6',
+      'ntnx-pc-alerts-7.6-cluster',
+    ],
     status: 'active',
   });
 }

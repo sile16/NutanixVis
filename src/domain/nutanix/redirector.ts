@@ -169,7 +169,9 @@ export class Redirector {
       const pref = this.reg.preferredCvm(this.host.id, vdisk);
       if (s.target !== null) {
         const h = this.healthOf(s.target);
-        if (this.unhealthy(h)) {
+        // Move away while it is failing; a session logged in fresh after an outage stays on a
+        // Stargate that answers again, even with older misses still in the window.
+        if (this.unhealthy(h) && h.upSince === null) {
           this.reportUnhealthy(s.target, h, ctx);
           const next = this.pick(vdisk, s.target, now);
           this.relogin(s, next, now + R.redirectStallS.value);
@@ -182,10 +184,13 @@ export class Redirector {
         }
         continue;
       }
-      const next = this.pick(vdisk, null, now);
+      // No target (every Stargate was failing): a fresh login, so any Stargate that answers its
+      // NOPs again will do, the preferred one first. The failback hold only guards moving a
+      // working session (`inferred`).
+      const next = this.pickFresh(vdisk);
       if (next !== null) {
         this.relogin(s, next, now + R.redirectStallS.value);
-        redirected.set(next, (redirected.get(next) ?? 0) + 1);
+        if (next !== pref) redirected.set(next, (redirected.get(next) ?? 0) + 1);
       }
     }
     // Local Stargate health is reported even without a session on it (inspector / explain).
@@ -305,6 +310,21 @@ export class Redirector {
       const c = this.cvmOrder[(start + i) % n];
       if (c === undefined || c === avoid || c === pref) continue;
       if (this.usable(c)) return c;
+    }
+    return null;
+  }
+
+  /** Login target for a session without one: a live Stargate that answered its latest NOP. */
+  private pickFresh(vdisk: string): string | null {
+    const answering = (c: string) =>
+      this.healthOf(c).upSince !== null && this.reg.isStargateUp(c) && this.endpoints(c) !== null;
+    const pref = this.reg.preferredCvm(this.host.id, vdisk);
+    if (pref !== null && answering(pref)) return pref;
+    const start = pref === null ? 0 : Math.max(0, this.cvmOrder.indexOf(pref));
+    const n = this.cvmOrder.length;
+    for (let i = 1; i <= n; i++) {
+      const c = this.cvmOrder[(start + i) % n];
+      if (c !== undefined && c !== pref && answering(c)) return c;
     }
     return null;
   }

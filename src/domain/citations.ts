@@ -140,6 +140,45 @@ const entries = {
     publisher: 'Nutanix',
     retrieved: RETRIEVED_2026_10_28,
   },
+  'ntnx-kb-1587': {
+    title:
+      'Nutanix KB-1587: NCC Health Check: zkinfo_check_plugin (Zookeeper servers: 3 under RF2, 5 under RF3)',
+    url: 'https://portal.nutanix.com/kb/1587',
+    publisher: 'Nutanix',
+    retrieved: '2026-10-28',
+  },
+  'ntnx-ncp-powerstore-deploy-7.6': {
+    title:
+      'Nutanix Cloud Platform with Dell PowerStore Deployment Guide 7.6, "Compute Cluster High Availability" (same external-storage service-volume design)',
+    url: `${PORTAL_DOC}Nutanix-Cloud-Platform-with-Dell-PowerStore-Deployment-Guide-v7_6:Nutanix-Cloud-Platform-with-Dell-PowerStore-Deployment-Guide-v7_6`,
+    publisher: 'Nutanix',
+    retrieved: '2026-10-28',
+  },
+  'ntnx-pe-alerts-7.0-cvm': {
+    title: 'Prism Element Alerts Reference 7.0: Controller VM alerts (A1001, A1030)',
+    url: `${PORTAL_DOC}Prism-Element-Alerts-Reference-v7_0:ale-alert-health-ControllerVM-CVM-auto-r.html`,
+    publisher: 'Nutanix',
+    retrieved: '2026-10-28',
+  },
+  'ntnx-pe-alerts-7.0-cluster': {
+    title: 'Prism Element Alerts Reference 7.0: Cluster alerts (A1006, A1030, A3032, A111009)',
+    url: `${PORTAL_DOC}Prism-Element-Alerts-Reference-v7_0:ale-alert-health-Cluster-CVM-auto-r.html`,
+    publisher: 'Nutanix',
+    retrieved: '2026-10-28',
+  },
+  'ntnx-pc-alerts-7.6-cluster': {
+    title:
+      'Prism Central Alert Reference pc.7.6: Cluster alerts (A200000 Cluster Connectivity Status)',
+    url: `${PORTAL_DOC}Prism-Central-Alert-Reference-vpc_7_6:ale-alert-health-Cluster-PCVM-auto-r.html`,
+    publisher: 'Nutanix',
+    retrieved: '2026-10-28',
+  },
+  'ntnx-pc-alerts-7.6-guestvm': {
+    title: 'Prism Central Alert Reference pc.7.6: Guest VM alerts (A1145, A130068)',
+    url: `${PORTAL_DOC}Prism-Central-Alert-Reference-vpc_7_6:ale-alert-health-GuestVM-PCVM-auto-r.html`,
+    publisher: 'Nutanix',
+    retrieved: '2026-10-28',
+  },
   'ntnx-blog-cvm-failure': {
     title: 'Nutanix blog — Nutanix Controller Failure. Will Users Notice? (archived copy)',
     url: 'https://web.archive.org/web/20250212144800/https://www.nutanix.com/blog/nutanix-controller-failure-will-users-notice',
@@ -408,6 +447,27 @@ const entries = {
     title: 'smartctl(8) manual page: "-t short" runs the SMART Short Self Test',
     url: 'https://linux.die.net/man/8/smartctl',
     publisher: 'smartmontools',
+  },
+  'ntnx-community-zk-session': {
+    title:
+      'Nutanix Community — Cluster not fully starting in CE (CVM log: "ZK session establishment complete … negotiated timeout=20 secs")',
+    url: `${NEXT}ahv-virtualization-27/cluster-not-fully-starting-in-ce-43393`,
+    publisher: 'Community',
+    retrieved: '2026-10-28',
+  },
+  'ntnx-community-cluster-shutdown': {
+    title:
+      'Nutanix Community — Scheduled power outage? Shutting down all the nodes in your AHV cluster ("Prism won\'t be accessible" once the cluster is stopped)',
+    url: `${NEXT}how-it-works-22/scheduled-power-outage-relocating-cluster-hardware-if-you-need-to-shut-down-all-the-nodes-in-your-ahv-cluster-here-s-how-37326`,
+    publisher: 'Community',
+    retrieved: '2026-10-28',
+  },
+  'reddit-nutanix-all-nodes-network-loss': {
+    title:
+      'Reddit r/nutanix — What may happen if all nodes of an AHV cluster lose network connection at the same time? (2025; "VMs will fence … The system will return to its previous state")',
+    url: 'https://www.reddit.com/r/nutanix/comments/1kxan8l/',
+    publisher: 'Community',
+    retrieved: '2026-10-28',
   },
 } as const satisfies Record<string, Entry>;
 

@@ -104,6 +104,15 @@ export const t1Options = {
     ['off', 60, 120, 300],
     'off',
   ),
+  // Hades (profile `hades.maintenanceOnStorageError`, `inferred`): a CVM that loses its
+  // service volumes goes into maintenance mode, so the redirector moves its VMs to a CVM that
+  // still reaches the array. `off` keeps IO retrying in place (DEPLOY-GUIDE default) for lab L1.
+  hadesMaintenance: option(
+    'hades-maintenance-on-storage-error',
+    'Hades maintenance mode on service-volume loss (inferred)',
+    ['on', 'off'],
+    'on',
+  ),
   // single-bond: vs1 = eth1 + eth3 bonded (DEPLOY-GUIDE Table 2). per-fabric: two storage
   // vswitches with "No Uplink Bond" (AHV Admin Guide 11.2 Table 9), vs1a = eth1 → Switch A
   // (storage-a), vs1b = eth3 → Switch B (storage-b); NVMe multipathing alone provides redundancy.

@@ -19,7 +19,7 @@ import {
   vswitch,
 } from '../helpers';
 import { SW_A, T1 } from '../ids';
-import { KATO } from '../timers';
+import { KATO, P } from '../timers';
 
 /**
  * The admin powers Switch A off 50 s after it hangs, before the 60 s Linux guest SCSI timeout
@@ -54,8 +54,11 @@ export default defineScenario({
       T1.nodes.every((n) => vswitch(s, vs0(n)).activeMember === `node-${n}.eth0`),
     ),
     at(by(0), 'CVMs cannot reach each other over vs0: Zookeeper quorum is lost', (s) => {
-      const d = derived(s);
-      return !d.zkQuorum && d.clusterServices === 'down';
+      return !derived(s).zkQuorum;
+    }),
+    // Services are declared down once the ZK sessions time out (`cluster.zkSessionTimeoutS`).
+    at(by(P.cluster.zkSessionTimeoutS), 'cluster services are down', (s) => {
+      return derived(s).clusterServices === 'down';
     }),
     at(by(KATO), 'the NVMe paths through Switch B stay live; only VLAN-A paths are lost', (s) =>
       allCvms(s, (c) => onlyPathsLostTo(c, faInterfacesBehind(s, SW_A))),

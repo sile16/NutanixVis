@@ -13,6 +13,8 @@ const PUBLIC_HOSTS = new Set([
   'www.everpuredata.com',
   'www.openvswitch.org',
   'docs.openvswitch.org',
+  // Open vSwitch source (lib/lacp.c) on its public GitHub mirror.
+  'github.com',
   'spdk.io',
   'nvmexpress.org',
   'web.archive.org',

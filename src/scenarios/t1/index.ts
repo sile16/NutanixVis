@@ -18,8 +18,10 @@ import s16 from './16-slb-rebalance-strict-ab';
 import s17 from './17-lacp-no-mlag';
 import s18 from './18-lacp-rate-hung-switch';
 import s19 from './19-flow-control';
+import s20 from './20-hung-switch-vs0';
+import s21 from './21-hung-switch-alternate';
 
-/** T1 (AHV + FlashArray): SPEC §7.2 items 1–18, plus 19 (flow-control misconfiguration). */
+/** T1 (AHV + FlashArray): SPEC §7.2 items 1–21 (19: flow-control misconfiguration). */
 export const t1Scenarios: readonly ScenarioDef[] = [
   s01,
   s02,
@@ -40,4 +42,6 @@ export const t1Scenarios: readonly ScenarioDef[] = [
   s17,
   s18,
   s19,
+  s20,
+  s21,
 ].flat();

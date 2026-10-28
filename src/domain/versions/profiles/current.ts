@@ -205,13 +205,29 @@ export const current: Profile = {
   },
 
   bond: {
-    lacpFastDetectS: c(3, 'verified', ['ntnx-ahv-admin-11.2']),
-    lacpSlowDetectS: c(90, 'verified', ['ntnx-ahv-admin-11.2']),
+    lacpFastDetectS: c(
+      3,
+      'verified',
+      ['ntnx-ahv-admin-11.2', 'ovs-lacp-source'],
+      'Prism Active-Active always sets the fast rate (one LACPDU per second, timeout 3 × that). Liveness is LACPDU receipt only, so a switch that hangs but keeps sending LACPDUs is never detected.',
+    ),
+    lacpSlowDetectS: c(
+      90,
+      'verified',
+      ['ntnx-ahv-admin-11.2', 'ovs-vswitchd-conf'],
+      'Host-side slow rate, which can only be set outside Prism (manage_ovs or the AHV installer). A slow rate on the switch only slows the switch side; the host still detects in 3 s (inferred).',
+    ),
     slbRebalanceIntervalS: c(
       10,
       'assumption',
-      ['ovs-bonding', 'ovs-vswitchd-conf'],
-      'OVS default ("Every 10 seconds, vswitchd rebalances"); whether AHV tunes bond-rebalance-interval is not published.',
+      ['ovs-bonding', 'ovs-vswitchd-conf', 'ntnx-community-slb-rebalance'],
+      'OVS default ("Every 10 seconds, vswitchd rebalances"); whether AHV tunes bond-rebalance-interval is not published. A Nutanix technical marketing post (2020) recommends 30 s.',
+    ),
+    lacpFallbackAb: c(
+      true,
+      'verified',
+      ['ntnx-ahv-admin-11.2', 'ovs-lacp-source'],
+      'Prism Active-Active sets LACP fallback to active-backup on every host, and it cannot be changed afterwards. A timed-out member is detached while another is negotiated; with none negotiated the bond runs active-backup.',
     ),
   },
 

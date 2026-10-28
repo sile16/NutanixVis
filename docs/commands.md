@@ -6,6 +6,7 @@ This is a field reference for setting up and checking an NCP compute cluster wit
 - ✅ shown working in a deployment walkthrough
 - ⚠️ needs care, or the exact syntax hasn't been confirmed
 - 📘 from Everpure or Nutanix documentation
+- 💬 community-documented only (Nutanix Community answers), not in a Nutanix guide
 
 **Hard rule:** Nutanix creates and owns every `nx-*` host and volume on the array. **Look, don't touch.** Never modify, destroy or reconnect them by hand.
 
@@ -39,10 +40,13 @@ This is a field reference for setting up and checking an NCP compute cluster wit
 
 | Purpose | Command | Notes |
 |---|---|---|
-| Show physical NICs, link state and speed on **every** node | `allssh manage_ovs show_interfaces` ✅ | Prints `name / mode / link / speed` per node. Check that the storage ports (e.g. `eth5`, `eth7`) are up at 25 GbE or more before you build the vswitches. |
-| Last network-segmentation task (why "Enable Service Network" failed) | `network_segment_status --last_task` ⚠️ | The walkthrough ran it from a saved terminal button, so the exact command is inferred from its output. It shows the leader, the last operation, `service_name_str: kExternalStorage`, `sm_final_status`, the per-CVM `svm_ip_network_map`, and the VLAN. |
+| Show physical NICs, link state and speed on **every** node | `allssh manage_ovs show_interfaces` ✅ 💬 | Prints `name / mode / link / speed` per node. Check that the storage ports (e.g. `eth5`, `eth7`) are up at 25 GbE or more before you build the vswitches. Not in the AHV 11.2 Admin Guide; Nutanix Community answers use it widely. |
+| Show each bridge's uplinks and bond mode | `manage_ovs show_uplinks` 📘 | The command the AHV 11.2 Admin Guide documents, along with `manage_ovs --help`. |
+| Network segmentation state | `network_segment_status` 📘 | Documented in the AOS Security Guide ("Disabling Network Segmentation"); prints whether segmentation is enabled. |
+| Last network-segmentation task (why "Enable Service Network" failed) | `network_segment_status --last_task` ⚠️ | **The `--last_task` flag is unverified**: no public source documents it, so check with `network_segment_status --help`. The walkthrough ran it from a saved terminal button, so the exact command is inferred from its output. It shows the leader, the last operation, `service_name_str: kExternalStorage`, `sm_final_status`, the per-CVM `svm_ip_network_map`, and the VLAN. |
 | Reachability to each FA data IP | `ping <fa-nvme-ip>` ✅ | Run it from a CVM after the internal interfaces exist. Each CVM gets one storage interface per segment (`ntnx0`, `ntnx1`, …). |
-| **Jumbo frames end to end** (do-not-fragment) | `ping -M do -s 8972 <fa-nvme-ip>` 📘 | 8972 = 9000 − 28 bytes of IP+ICMP headers. **Don't use `ping -s 8192 -d`.** On Linux `-d` is *socket debug*, not "don't fragment", so the packet can still be fragmented and the test passes falsely. A failure means some hop (endpoint or switch) isn't at MTU 9000. |
+| **Jumbo frames end to end** (do-not-fragment) | `ping -M do -s 8972 <fa-nvme-ip>` | Standard Linux (iputils `ping(8)`), not a Nutanix-published command. `-M do` sets "don't fragment", and `-s` is the ICMP payload: 8972 = 9000 − 28 bytes of IP+ICMP headers. **Don't use `ping -s 8192 -d`.** On Linux `-d` is *socket debug*, not "don't fragment", so the packet can still be fragmented and the test passes falsely. A failure means some hop (endpoint or switch) isn't at MTU 9000. |
+| CVM MTU health check | NCC check `cvm_mtu_check` 💬 ⚠️ | The Nutanix-native MTU check, as named in Nutanix Community answers. Look up its exact NCC invocation for your NCC version. |
 | NVMe subsystems and paths seen by the CVM | `nvme list-subsys` 📘 | Shows the controllers/paths per subsystem. |
 | NVMe log on the CVM | `/var/log/nvme.log` 📘 | Start here for path loss and reconnects. |
 | Fault tolerance status | `ncli cluster get-domain-fault-tolerance-status type=node` 📘 | Shows how many node failures the cluster can currently absorb. |
@@ -53,10 +57,13 @@ This is a field reference for setting up and checking an NCP compute cluster wit
 
 ## 3. AHV host (`ssh root@<host>`, or from a CVM: `hostssh "<cmd>"` / `ssh root@192.168.5.1`)
 
+`ovs-appctl` runs **on the AHV host**, not in the CVM. From a CVM, reach the local host over the internal bridge, for example `ssh root@192.168.5.1 "ovs-appctl bond/show br0-up"` (AHV 11.2 Admin Guide). Bond names follow the bridge, such as `br0-up` for `vs0`.
+
 | Purpose | Command | Notes |
 |---|---|---|
-| Bond state and active members | `ovs-appctl bond/show` 📘 | Check that the storage vswitch's uplinks are active. Under MAC pinning (`balance-slb`) it also shows which source MAC is pinned to which member. |
-| LACP negotiation (only if the bond is LACP) | `ovs-appctl lacp/show <bond-name>` 📘 | Expect "negotiated". |
+| Bond state and active members | `ovs-appctl bond/show <bond-name>` 📘 | AHV 11.2 Admin Guide. Check that the storage vswitch's uplinks are enabled. For active-backup it names the active member; under MAC pinning (`balance-slb`) it also shows which source MAC hash is on which member. |
+| LACP negotiation (only if the bond is LACP) | `ovs-appctl lacp/show <bond-name>` 📘 | AHV 11.2 Admin Guide: search the output for "negotiated". |
+| Choose the active-backup member | `ovs-appctl bond/set-active-slave <bond-name> <interface>` 📘 ⚠️ | Everpure "Configure Nutanix Cluster for FlashArray". Moves the host's traffic to that uplink at once, so do it one host at a time. Spreading hosts across both switches limits what a hung switch can take down (simulator option `vs0-active-member`). |
 
 ---
 

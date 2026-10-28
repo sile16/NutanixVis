@@ -24,6 +24,8 @@ import {
   VLAN,
   VLANS,
   type VSwitchPlan,
+  vs0ActiveMemberOption,
+  vs0InitialActive,
 } from './parts';
 import { defineTopology, type Topology } from './schema';
 
@@ -49,6 +51,9 @@ export const t1Options = {
   ),
   lacpRate: lacpRateOption(),
   mlag: mlagOption(),
+  // vs0 is Active-Backup (DEPLOY-GUIDE Table 2); which member is active decides who is cut off
+  // when a switch hangs with carrier up (SPEC §7.2 T1-20, T1-21).
+  vs0ActiveMember: vs0ActiveMemberOption(),
   // Default: isolated storage VLANs (fabric A/B), the typical storage design. NET lists
   // "dedicated switches for each VLAN" as a supported option. tagged-both carries both storage
   // VLANs on both switches.
@@ -163,7 +168,14 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
       ],
       vswitches: [
         // vs0: mgmt, live migration, DR, apps; Active/Backup, MTU 1500 (DEPLOY-GUIDE Table 2).
-        { name: 'vs0', bondMode: 'active-backup', lacpRate: p.lacpRate, mtu: 1500, nics: [0, 2] },
+        {
+          name: 'vs0',
+          bondMode: 'active-backup',
+          lacpRate: p.lacpRate,
+          mtu: 1500,
+          nics: [0, 2],
+          initialActive: vs0InitialActive(p.vs0ActiveMember, n, 0, 2),
+        },
         ...storageVswitches,
       ],
       cvm,

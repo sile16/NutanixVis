@@ -73,10 +73,11 @@ The engine reports AHV virtual switches with view `kind: 'bond'`; the UI and sce
 |---|---|---|
 | `bondMode` | `active-backup` \| `balance-slb` \| `balance-tcp` \| `no-bond` | Current mode, which changes at runtime with `vswitch.set-bond-mode`. |
 | `lacpRate` | `fast` \| `slow` \| null | `null` unless `balance-tcp`. |
-| `lacpState` | `negotiated` \| `partial` \| `fallback` \| `down` \| null | `partial`: some members are not aggregated (for example, a partner mismatch without MLAG). `fallback`: no LACP partner, so the bond runs active-backup. `null` unless `balance-tcp`. |
+| `lacpState` | `negotiated` \| `partial` \| `fallback` \| `down` \| null | `partial`: some members are not aggregated (for example, a partner mismatch without MLAG, or one member's LACP timed out). `fallback`: no member is negotiated, so `lacp-fallback-ab` runs active-backup over every member with carrier. `down`: no member left (fallback off, or no carrier). `null` unless `balance-tcp`. |
 | `members` | JSON string[] | Configured member NICs. |
 | `activeMembers` | number | Members currently carrying traffic. A member on a hung switch stays counted until LACP detaches it. |
-| `activeMember` | string \| null | The active member under active-backup or no-bond; otherwise `null`. |
+| `activeMember` | string \| null | The active member under active-backup or no-bond, or under balance-tcp in LACP fallback; otherwise `null`. |
+| `initialActive` | string \| null | Active-backup only: the member pinned with `bond/set-active-slave` (topology option `vs0-active-member: alternate`), preferred whenever the bond picks a new active member. `null`: OVS default, the first linked member. |
 | `pinning` | JSON Record<vnicId, nicId> | Which member each vNIC egresses on. vNIC ids are cvm-interface ids, host-interface ids or VM ids. It covers balance-slb, active-backup and no-bond, and is empty for balance-tcp, which is per-flow. |
 
 ### `nic` (host NICs and FA ports)
@@ -157,6 +158,7 @@ All of these are scalars.
 | `net.bond.rebalance` | vswitch | A balance-slb rebalance re-pinned a vNIC. |
 | `net.bond.lacp-timeout` | vswitch | LACP timed out a member that had no carrier loss. |
 | `net.bond.lacp-no-mlag` | vswitch | The members see different LACP partners (no MLAG). |
+| `net.bond.lacp-fallback` / `net.bond.lacp-negotiated` | vswitch | A balance-tcp bond fell back to active-backup because no member is negotiated, or left that fallback. |
 | `net.bond.vlan-stranded` | vswitch | A vNIC's VLAN is carried by no surviving member (VLAN-aware MAC pinning under isolated VLANs), so it is left unpinned and its traffic is dropped until a member returns (`assumption`, SPEC §6.5). |
 | `net.bond.mode-changed` | vswitch | The runtime bond mode changed. |
 | `net.mtu.mismatch` | link or switch | A large frame was dropped for MTU. Emit it once per link, not per frame. |

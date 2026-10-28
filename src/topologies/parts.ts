@@ -40,8 +40,38 @@ export const BOND_MODES = BondModeSchema.options;
 
 /** Shared bond knobs (AHV Admin Guide 11.2, Table 9 "Bond Types"). All runtime (SPEC §5.5). */
 export const lacpRateOption = () =>
-  // Default "Speed—Fast (1s)" per AHV Admin Guide 11.2 Table 9.
-  option('lacp-rate', 'LACP rate', ['fast', 'slow'], 'fast', true);
+  // Default "Speed—Fast (1s)" per AHV Admin Guide 11.2 Table 9. Prism Active-Active always sets
+  // fast and it "cannot" be changed afterwards (AHV Admin Guide 11.2 p.93), so a slow host rate
+  // exists only when set outside Prism (manage_ovs or the AHV installer).
+  option(
+    'lacp-rate',
+    'LACP rate (slow: set outside Prism, CLI/installer)',
+    ['fast', 'slow'],
+    'fast',
+    true,
+  );
+
+/**
+ * Which vs0 member each host's active-backup bond starts on. OVS makes "the first member to be
+ * enabled" active (OVS bonding docs), which is eth0 → Switch A on every host (`first`). The
+ * active member can be pinned with `ovs-appctl bond/set-active-slave` (Everpure "Configure
+ * Nutanix Cluster for FlashArray"); `alternate` pins odd hosts to Switch A and even hosts to
+ * Switch B. It decides who is cut off when a switch hangs without dropping carrier.
+ */
+export const vs0ActiveMemberOption = () =>
+  option('vs0-active-member', 'vs0 active-backup member at start', ['first', 'alternate'], 'first');
+export type Vs0ActiveMember = 'first' | 'alternate';
+
+/** vs0 `initialActive` eth for host `n`: none for `first` (OVS default), else A odd / B even. */
+export function vs0InitialActive(
+  choice: Vs0ActiveMember,
+  n: number,
+  ethA: number,
+  ethB: number,
+): number | undefined {
+  if (choice === 'first') return undefined;
+  return n % 2 === 1 ? ethA : ethB;
+}
 export const mlagOption = () =>
   // LACP across two switches needs MLAG/vPC; MAC pinning does not (AHV Admin Guide 11.2 Table 9).
   option('mlag', 'MLAG / vPC between switches', [false, true], false, true);
@@ -71,6 +101,8 @@ export interface VSwitchPlan {
   mtu: number;
   /** Nominal member NICs (eth numbers); layout groups by these regardless of bond mode. */
   nics: readonly number[];
+  /** Active-backup member to start on (eth number; `set-active-slave`). Absent: OVS default. */
+  initialActive?: number | undefined;
 }
 export interface CvmIfacePlan {
   segment: string;
@@ -166,6 +198,7 @@ export function buildHost(p: HostPlan): Part & { layout: HostBoxSpec } {
       members: vs.nics.map(nicId),
       // lacpRate only applies to LACP (balance-tcp) bonds.
       ...(vs.bondMode === 'balance-tcp' ? { lacpRate: vs.lacpRate } : {}),
+      ...(vs.initialActive !== undefined ? { initialActive: nicId(vs.initialActive) } : {}),
       mtu: vs.mtu,
     });
   }

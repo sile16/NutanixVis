@@ -11,12 +11,12 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 <!-- coverage:begin -->
 | Confidence | Count |
 |---|---|
-| verified | 34 |
+| verified | 35 |
 | inferred | 5 |
 | unverified | 4 |
 | assumption | 17 |
 | lab-observed | 0 |
-| **Total** | **60** |
+| **Total** | **61** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -54,9 +54,10 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `hci.diskSmartCheckS` | 10 | assumption | `ntnx-bible-4i` | Bible 4i gives no duration. |
 | `hci.replicaAckTimeoutS` | 2 | assumption |  | No published Stargate RPC timeout. Short, so a dropped replica write is re-placed within a few ticks. |
 | `hci.diskOfflineWindowS` | 3600 | verified | `ntnx-bible-4i` | "3 times within an hour". |
-| `bond.lacpFastDetectS` | 3 | verified | `ntnx-ahv-admin-11.2` |  |
-| `bond.lacpSlowDetectS` | 90 | verified | `ntnx-ahv-admin-11.2` |  |
-| `bond.slbRebalanceIntervalS` | 10 | assumption | `ovs-bonding`, `ovs-vswitchd-conf` | OVS default ("Every 10 seconds, vswitchd rebalances"); whether AHV tunes bond-rebalance-interval is not published. |
+| `bond.lacpFastDetectS` | 3 | verified | `ntnx-ahv-admin-11.2`, `ovs-lacp-source` | Prism Active-Active always sets the fast rate (one LACPDU per second, timeout 3 × that). Liveness is LACPDU receipt only, so a switch that hangs but keeps sending LACPDUs is never detected. |
+| `bond.lacpSlowDetectS` | 90 | verified | `ntnx-ahv-admin-11.2`, `ovs-vswitchd-conf` | Host-side slow rate, which can only be set outside Prism (manage_ovs or the AHV installer). A slow rate on the switch only slows the switch side; the host still detects in 3 s (inferred). |
+| `bond.slbRebalanceIntervalS` | 10 | assumption | `ovs-bonding`, `ovs-vswitchd-conf`, `ntnx-community-slb-rebalance` | OVS default ("Every 10 seconds, vswitchd rebalances"); whether AHV tunes bond-rebalance-interval is not published. A Nutanix technical marketing post (2020) recommends 30 s. |
+| `bond.lacpFallbackAb` | true | verified | `ntnx-ahv-admin-11.2`, `ovs-lacp-source` | Prism Active-Active sets LACP fallback to active-backup on every host, and it cannot be changed afterwards. A timed-out member is detached while another is negotiated; with none negotiated the bond runs active-backup. |
 | `externalStorage.vdiskVolumeMapping` | '1:1' | verified | `ntnx-ncp-everpure-deploy-7.6`, `everpure-nutanix-rn` | Every vDisk is one FA volume, no metadata/CBT volume. Requires AOS 7.6 with Purity//FA 6.11.8+ or 6.12.0+. |
 | `externalStorage.maxVdisksPerCluster` | 10000 | verified | `ntnx-ncp-everpure-deploy-7.6`, `everpure-nutanix-req` |  |
 | `externalStorage.minNodes` | 3 | verified | `ntnx-ncp-everpure-deploy-7.6`, `everpure-nutanix-req` | Supported size is 3–32 nodes. |
@@ -89,7 +90,7 @@ These are the values the lab plan (`lab-validation-plan.md`) should upgrade firs
 | Field | Value | Why this value | Lab |
 |---|---|---|---|
 | `redirector.redirectStallS` | 3 s | No AHV figure is published. A few ticks covers QEMU's re-login to the remote Stargate after the redirect decision (SPEC §6.3 "2–3 ticks"). | L3 |
-| `bond.slbRebalanceIntervalS` | 10 s | The documented Open vSwitch default ("Every 10 seconds, vswitchd rebalances"). Whether AHV tunes `bond-rebalance-interval` is not public. | L13 |
+| `bond.slbRebalanceIntervalS` | 10 s | The documented Open vSwitch default ("Every 10 seconds, vswitchd rebalances"). Whether AHV tunes `bond-rebalance-interval` is not public. A Nutanix technical marketing post (2020) recommends 30 s. | L13 |
 | `externalStorage.multipathPolicy` | active-active | The policy Nutanix configures is not public. SPDK supports active-passive and active-active, and its multipath example uses active-active round-robin. | L12 |
 | `externalStorage.ioQueuesPerPath` | 4 | Each NVMe/TCP queue is one TCP connection (NVMe/TCP spec). SPDK asks for up to 1024 IO queues, capped by the target and CPU count. 4 is a readable model abstraction. | L12 |
 | `externalStorage.keepAliveTimeoutS` | 10 s | The SPDK `bdev_nvme` default `keep_alive_timeout_ms`. | L5 |

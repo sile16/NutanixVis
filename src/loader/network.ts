@@ -20,6 +20,7 @@ export interface BondTiming {
   readonly lacpFastDetectS: number;
   readonly lacpSlowDetectS: number;
   readonly slbRebalanceIntervalS: number;
+  readonly lacpFallbackAb: boolean;
 }
 
 /** AHV's host-internal bridge between hypervisor/VMs and the local CVM (Nutanix Bible 5a). */
@@ -98,6 +99,7 @@ export function topologyToNetwork(t: Topology, timing: BondTiming): NetworkSpec 
     uplinks: v.uplinks,
     members: v.members ?? v.uplinks,
     ...(v.lacpRate ? { lacpRate: v.lacpRate } : {}),
+    ...(v.initialActive ? { initialActive: v.initialActive } : {}),
     group: v.name,
   }));
   const vswitchMtu = new Map(vswitches.map((v) => [v.id, v.mtu]));
@@ -175,6 +177,7 @@ export function topologyToNetwork(t: Topology, timing: BondTiming): NetworkSpec 
       lacpFastDetectS: timing.lacpFastDetectS,
       lacpSlowDetectS: timing.lacpSlowDetectS,
       slbRebalanceIntervalS: timing.slbRebalanceIntervalS,
+      lacpFallbackAb: timing.lacpFallbackAb,
     },
   };
 }

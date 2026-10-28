@@ -12,6 +12,8 @@ import {
   type HostRole,
   type LacpRate,
   VLAN,
+  type Vs0ActiveMember,
+  vs0InitialActive,
 } from './parts';
 import type { BondMode } from './schema';
 
@@ -38,6 +40,8 @@ export interface HciHostParams {
   lacpRate: LacpRate;
   /** Network segmentation: backplane on its own VLAN via the CVM's backplane vNIC. */
   backplane: boolean;
+  /** vs0 active-backup starting member (`vs0-active-member`). Default `first`. */
+  vs0ActiveMember?: Vs0ActiveMember;
 }
 
 export function hciHostPlan(h: HciHostParams): HostPlan {
@@ -59,7 +63,14 @@ export function hciHostPlan(h: HciHostParams): HostPlan {
       { eth: 1, speedGbps: 25, mtu: 1500, to: 'sw-b' },
     ],
     vswitches: [
-      { name: 'vs0', bondMode: h.bondMode, lacpRate: h.lacpRate, mtu: 1500, nics: [0, 1] },
+      {
+        name: 'vs0',
+        bondMode: h.bondMode,
+        lacpRate: h.lacpRate,
+        mtu: 1500,
+        nics: [0, 1],
+        initialActive: vs0InitialActive(h.vs0ActiveMember ?? 'first', h.n, 0, 1),
+      },
     ],
     // CO: no CVM, no local storage (AHV Admin Guide 11.2 "AHV Compute-Only Node Configuration").
     // SO: AOS never schedules VMs (AHV Admin Guide 11.2 "Adding an AHV Storage-Only Node").

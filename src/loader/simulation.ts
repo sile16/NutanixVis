@@ -97,6 +97,7 @@ export function loadSimulation(opts: LoadOptions): LoadedSimulation {
       lacpFastDetectS: profile.bond.lacpFastDetectS.value,
       lacpSlowDetectS: profile.bond.lacpSlowDetectS.value,
       slbRebalanceIntervalS: profile.bond.slbRebalanceIntervalS.value,
+      lacpFallbackAb: profile.bond.lacpFallbackAb.value,
     }),
     profile,
     seed: opts.seed ?? 1,

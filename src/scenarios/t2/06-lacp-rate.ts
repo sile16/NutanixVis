@@ -69,7 +69,7 @@ function variant(rate: 'fast' | 'slow'): ScenarioDef {
     narrative:
       rate === 'fast'
         ? 'Switch A hangs without dropping carrier, so only LACP can tell. At the fast rate each bond misses its LACP PDUs and detaches the Switch A member within about 3 s, and replication and cluster traffic rehash onto Switch B with only a brief stall.'
-        : 'Switch A hangs without dropping carrier. At the slow rate LACP needs up to 90 s to detach the member, and every flow hashed onto it, whether VM replication, Stargate or cluster traffic, is blackholed until then. Match a fast rate on both the switch and the host.',
+        : 'Switch A hangs without dropping carrier, and the host bonds run the slow LACP rate, which can only be set outside Prism (a slow rate on the switch alone would still leave the host detecting in about 3 s). At the slow rate LACP needs up to 90 s to detach the member, and every flow hashed onto it, whether VM replication, Stargate or cluster traffic, is blackholed until then. Match a fast rate on both the switch and the host.',
     cite: ['ntnx-ahv-admin-11.2', 'ovs-bonding'],
     status: 'active',
   });

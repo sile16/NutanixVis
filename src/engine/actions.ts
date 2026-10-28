@@ -179,7 +179,7 @@ export function builtinActions(env: BuiltinEnv): ActionDefinition[] {
         kind: 'hang',
         label: 'Hang (no carrier loss)',
         description:
-          'Carrier stays up but frames are dropped (hung switch, unidirectional link). Only LACP detects this.',
+          'Carrier stays up but frames are dropped (hung switch, unidirectional link). Only LACP detects this, and only if LACPDUs stop arriving.',
         appliesTo: (t) => hangable(t) && !net.isHung(t.id),
       },
       apply: (req, ctx) => ctx.net.setHung(req.target, true),
@@ -215,7 +215,7 @@ export function builtinActions(env: BuiltinEnv): ActionDefinition[] {
         kind: 'switch.hang',
         label: 'Hang switch (no carrier loss)',
         description:
-          'The switch stops forwarding but keeps carrier on every port. Only LACP detects this.',
+          'The switch stops forwarding but keeps carrier on every port. Only LACP detects this, and only if the switch stops sending LACPDUs.',
         appliesTo: (t) => isSwitch(t) && !net.isHung(t.id),
       },
       apply: (req, ctx) => {

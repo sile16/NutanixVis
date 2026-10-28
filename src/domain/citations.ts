@@ -212,6 +212,11 @@ const entries = {
     url: 'https://docs.openvswitch.org/en/latest/topics/bonding/',
     publisher: 'Open vSwitch',
   },
+  'ovs-lacp-source': {
+    title: 'Open vSwitch source — lib/lacp.c (LACP receive timer and fallback-ab attach rules)',
+    url: 'https://github.com/openvswitch/ovs/blob/main/lib/lacp.c',
+    publisher: 'Open vSwitch',
+  },
   'spdk-nvme-multipath': {
     title: 'SPDK documentation — NVMe Multipath',
     url: 'https://spdk.io/doc/nvme_multipath.html',
@@ -284,6 +289,12 @@ const entries = {
   'ntnx-community-rebuild-rate': {
     title: 'Josh Odgers: "Nutanix Resiliency – Part 1 – Node failure rebuild performance" (2018)',
     url: 'https://www.joshodgers.com/2018/05/30/nutanix-resiliency-part-1-node-failure-rebuild-performance/',
+    publisher: 'Community',
+  },
+  'ntnx-community-slb-rebalance': {
+    title:
+      'Nutanix Community — VM network troubleshooting (bond_rebalance_interval, Nutanix technical marketing, 2020)',
+    url: `${NEXT}questions/22699`,
     publisher: 'Community',
   },
   'ntnx-community-co-nodes': {

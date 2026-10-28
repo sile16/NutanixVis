@@ -3,7 +3,10 @@
  * bonds"; §6.4b layer 5).
  *
  * Member selection by flow:
- * - `active-backup`: every flow uses the single active member; no failback on recovery.
+ * - `active-backup`: every flow uses the single active member; no failback on recovery. The
+ *   active member is "simply the first member to be enabled" (OVS bonding docs), or the one set
+ *   with `ovs-appctl bond/set-active-slave` (`initialActive`; Everpure "Configure Nutanix
+ *   Cluster for FlashArray"), whenever the bond has to choose one.
  * - `balance-slb`: hash of (srcMac, VLAN) into 256 buckets, each bucket pinned to one member.
  * - `balance-tcp`: hash of the L4 tuple into 256 buckets. Needs LACP; across two switches the
  *   partners must share an MLAG domain, otherwise only one partner's members aggregate.
@@ -16,9 +19,20 @@
  * a VLAN, only use members whose link and partner switch carry that VLAN. With it off the bond
  * behaves like plain OVS and may pin a VLAN onto a member that blackholes it.
  *
- * Failure detection: carrier loss removes a member immediately in every mode. A hung member
- * (carrier up, frames dropped) is only detected by LACP, after the fast/slow detection time;
- * in the other modes it blackholes its traffic until repaired.
+ * Failure detection: carrier loss removes a member immediately in every mode (OVS
+ * `bond_downdelay` default 0, "disable the interface immediately"; ovs-vswitchd.conf.db(5)).
+ * A hung member (carrier up, frames dropped) is only detected by LACP, after the fast/slow
+ * detection time, and only because its LACPDUs stop: OVS judges LACP liveness by LACPDU receipt
+ * alone (OVS `lib/lacp.c`). The other modes watch carrier only (`bond-detect-mode` carrier or
+ * miimon), so a hung member blackholes its traffic until repaired. The only recovery is carrier
+ * loss (switch power-off or port admin-down), followed by an immediate failover.
+ *
+ * `lacp-fallback-ab` (balance-tcp; Prism Active-Active always sets it, AHV Admin Guide 11.2):
+ * a member whose LACP timed out is detached while another member is still negotiated, so the
+ * bond carries on with the survivors. Only when no member is negotiated does the bond fall back
+ * to active-backup over every member with carrier (OVS `lacp_update_attached`). The 3 s that OVS
+ * spends between EXPIRED and DEFAULTED is folded into the detection time (`inferred`: a hung
+ * member drops frames either way).
  */
 import type { TimerQueue } from '../clock';
 import { fnv1a } from '../hash';
@@ -80,6 +94,9 @@ export class BondRuntime {
   private readonly cabledValue: readonly string[];
   private rate: LacpRate;
   private vlanAwareValue: boolean;
+  private readonly initialActiveValue: string | undefined;
+  /** balance-tcp with no negotiated member: running active-backup (`lacp-fallback-ab`). */
+  private fallbackValue = false;
 
   private active: string | null = null;
   private eligibleList: string[] = [];
@@ -110,6 +127,7 @@ export class BondRuntime {
     this.cabledValue = [...(spec.members ?? spec.uplinks)];
     this.rate = spec.lacpRate ?? 'fast';
     this.vlanAwareValue = spec.slbVlanAware ?? true;
+    this.initialActiveValue = spec.initialActive;
     this.lastRebalance = env.now();
   }
 
@@ -133,6 +151,14 @@ export class BondRuntime {
   get activeMember(): string | null {
     return this.active;
   }
+  /** Member preferred whenever active-backup chooses a new active member (`set-active-slave`). */
+  get initialActive(): string | undefined {
+    return this.initialActiveValue;
+  }
+  /** balance-tcp fell back to active-backup because no member is LACP-negotiated. */
+  get lacpFallback(): boolean {
+    return this.fallbackValue;
+  }
   /** Uplinks that may carry traffic, in uplink order (before VLAN filtering). */
   get eligible(): readonly string[] {
     return this.eligibleList;
@@ -153,6 +179,10 @@ export class BondRuntime {
       this.vlanAwareValue &&
       (this.modeValue === 'balance-slb' || this.modeValue === 'active-backup')
     );
+  }
+  /** Forwarding uses one active member: active-backup, or balance-tcp in LACP fallback. */
+  private get singleActive(): boolean {
+    return this.modeValue === 'active-backup' || this.fallbackValue;
   }
 
   // ── Runtime configuration (SPEC §5.5) ─────────────────────────────────────
@@ -214,6 +244,7 @@ export class BondRuntime {
     for (const nic of [...this.lacpTimers.keys()]) this.cancelLacpTimer(nic);
     this.lacpDown.clear();
     this.active = null;
+    this.fallbackValue = false;
     this.buckets = new Array<string | null>(BOND_BUCKETS).fill(null);
     this.bucketLoad = new Array<number>(BOND_BUCKETS).fill(0);
     this.bucketVlans = new Map();
@@ -248,13 +279,21 @@ export class BondRuntime {
     }
 
     const live = ups.filter((m) => probeOf(m).carrier && !this.lacpDown.has(m));
+    const withCarrier = ups.filter((m) => probeOf(m).carrier);
     let eligible: string[];
     const detached = new Set<string>();
     let misconfig: string | null = null;
+    const prevFallback = this.fallbackValue;
+    this.fallbackValue = false;
 
     if (this.modeValue === 'no-bond') {
       const first = ups[0];
       eligible = first !== undefined && live.includes(first) ? [first] : [];
+    } else if (this.usesLacp && live.length === 0 && withCarrier.length > 0) {
+      // Every member with carrier has timed out: no negotiated lead, so with fallback-ab they
+      // all stay attached and the bond runs active-backup over them; without it, it is down.
+      this.fallbackValue = this.env.config().lacpFallbackAb;
+      eligible = this.fallbackValue ? withCarrier : [];
     } else if (this.usesLacp) {
       const partners = [...new Set(ups.flatMap((m) => probeOf(m).partnerKey ?? []))].sort();
       if (partners.length > 1) {
@@ -281,9 +320,11 @@ export class BondRuntime {
     // A forced pin lasts until its member leaves service; failover then re-pins normally.
     for (const [b, m] of [...this.forced]) if (!eligible.includes(m)) this.forced.delete(b);
 
-    if (this.modeValue === 'active-backup') {
-      if (this.active === null || !eligible.includes(this.active))
-        this.active = eligible[0] ?? null;
+    if (this.singleActive) {
+      if (this.active === null || !eligible.includes(this.active)) {
+        const pref = this.initialActiveValue;
+        this.active = pref !== undefined && eligible.includes(pref) ? pref : (eligible[0] ?? null);
+      }
     } else {
       this.active = null;
     }
@@ -312,6 +353,24 @@ export class BondRuntime {
       return;
     }
 
+    if (this.fallbackValue !== prevFallback) {
+      this.env.emit(
+        this.fallbackValue
+          ? {
+              severity: 'warn',
+              deviceId: this.id,
+              code: 'net.bond.lacp-fallback',
+              text: `${this.label}: no member is LACP-negotiated; lacp-fallback-ab runs active-backup on ${this.active ?? 'none'}`,
+            }
+          : {
+              severity: 'info',
+              deviceId: this.id,
+              code: 'net.bond.lacp-negotiated',
+              text: `${this.label}: LACP negotiated again; leaving active-backup fallback`,
+            },
+      );
+    }
+
     for (const m of ups) {
       const was = prevEligible.has(m);
       const is = eligible.includes(m);
@@ -319,16 +378,20 @@ export class BondRuntime {
       const p = probeOf(m);
       const why = !p.carrier
         ? 'carrier loss'
-        : this.lacpDown.has(m)
-          ? 'LACP timeout'
-          : detached.has(m)
-            ? 'not in LACP aggregator'
-            : 'unused in no-bond mode';
+        : this.fallbackValue
+          ? 'LACP fallback'
+          : this.lacpDown.has(m)
+            ? 'LACP timeout'
+            : detached.has(m)
+              ? 'not in LACP aggregator'
+              : 'unused in no-bond mode';
       this.env.emit({
         severity: is ? 'info' : 'warn',
         deviceId: this.id,
         code: is ? 'net.bond.member-up' : 'net.bond.member-down',
-        text: is ? `${this.label}: ${m} back in service` : `${this.label}: ${m} removed (${why})`,
+        text: is
+          ? `${this.label}: ${m} back in service${this.fallbackValue ? ' (active-backup fallback)' : ''}`
+          : `${this.label}: ${m} removed (${why})`,
         causeIds: [...this.env.causes(), ...p.causeIds],
       });
     }
@@ -469,6 +532,7 @@ export class BondRuntime {
   /** The active-backup member used for `vlan`: the active one, or (VLAN-aware) a backup. */
   private activeFor(vlan: number): string | null {
     if (this.active === null) return null;
+    if (this.fallbackValue) return this.active;
     if (!this.filtersVlans || this.env.carries(this.active, vlan)) return this.active;
     return this.usableFor(vlan)[0] ?? null;
   }
@@ -479,6 +543,7 @@ export class BondRuntime {
    * has not carried traffic yet is unpinned (`null`).
    */
   viewPin(mac: string, vlan: number): string | null {
+    if (this.fallbackValue) return this.activeFor(vlan);
     switch (this.modeValue) {
       case 'active-backup':
         return this.activeFor(vlan);
@@ -498,6 +563,7 @@ export class BondRuntime {
 
   /** Egress member for a flow on frame VLAN `vlan`, or `null` if none is usable. */
   selectEgress(flow: FlowId, vlan: number, weight = 1): string | null {
+    if (this.fallbackValue) return this.activeFor(vlan);
     switch (this.modeValue) {
       case 'active-backup':
         return this.activeFor(vlan);
@@ -532,6 +598,10 @@ export class BondRuntime {
    * MAC. Unknown MACs (SLB bucket not yet used) flood, so any usable member works.
    */
   ingress(mac: string, vlan: number): readonly string[] {
+    if (this.fallbackValue) {
+      const a = this.activeFor(vlan);
+      return a === null ? [] : [a];
+    }
     switch (this.modeValue) {
       case 'active-backup': {
         const a = this.activeFor(vlan);
@@ -566,15 +636,21 @@ export class BondRuntime {
   }
 
   /**
-   * Periodic rebalance (hashed modes): repeatedly move the bucket off the most-loaded member
-   * that best narrows the gap to a less-loaded member allowed to take it, then reset the load
-   * counters. Returns buckets moved.
+   * Periodic rebalance (hashed modes), following OVS `bond_rebalance` (OVS bonding docs):
+   * repeatedly move one bucket from the most-loaded member H to a less-loaded member L allowed
+   * to take it, then reset the load counters. Returns buckets moved. A move needs:
+   * - H to carry at least 2 hashes with traffic ("shifting load away from it would be
+   *   pointless" otherwise);
+   * - H's extra load over L to be at least 3 % of L's (OVS: `overload < to >> 5` stops);
+   * - the move to narrow the gap by at least a tenth of the distance to an even split.
+   * OVS also skips imbalances under about 1 Mbps; loads here are message counts, not bytes, so
+   * that floor is not modeled.
    */
   maybeRebalance(now: SimTime): number {
     if (now - this.lastRebalance < this.env.config().slbRebalanceIntervalS) return 0;
     this.lastRebalance = now;
     let moved = 0;
-    if (this.hashed && this.eligibleList.length > 1) {
+    if (this.hashed && !this.fallbackValue && this.eligibleList.length > 1) {
       for (let guard = 0; guard < BOND_BUCKETS; guard++) {
         const load = new Map<string, number>(this.eligibleList.map((m) => [m, 0]));
         this.buckets.forEach((m, b) => {
@@ -584,6 +660,11 @@ export class BondRuntime {
         let from = this.eligibleList[0] ?? '';
         for (const m of this.eligibleList) if ((load.get(m) ?? 0) > (load.get(from) ?? 0)) from = m;
         const fromLoad = load.get(from) ?? 0;
+        let hashes = 0;
+        for (let b = 0; b < BOND_BUCKETS; b++) {
+          if (this.buckets[b] === from && (this.bucketLoad[b] ?? 0) > 0) hashes++;
+        }
+        if (hashes < 2) break;
         let pick = -1;
         let pickTo = '';
         let pickGap = Number.POSITIVE_INFINITY;
@@ -591,10 +672,13 @@ export class BondRuntime {
           const l = this.bucketLoad[b] ?? 0;
           if (this.buckets[b] !== from || l <= 0 || this.forced.has(b)) continue;
           for (const to of this.eligibleList) {
-            const delta = fromLoad - (load.get(to) ?? 0);
-            if (to === from || l >= delta || !this.canHost(b, to)) continue;
+            const toLoad = load.get(to) ?? 0;
+            const delta = fromLoad - toLoad;
+            if (to === from || !this.canHost(b, to) || delta * 32 < toLoad) continue;
+            const newLow = Math.min(fromLoad - l, toLoad + l);
+            if (newLow <= toLoad || newLow - toLoad < delta / 20) continue;
             const gap = Math.abs(delta - 2 * l);
-            if (gap < delta && gap < pickGap) {
+            if (gap < pickGap) {
               pick = b;
               pickTo = to;
               pickGap = gap;
@@ -655,6 +739,9 @@ export class BondRuntime {
   memberState(nic: string): MemberState {
     if (!this.uplinksValue.includes(nic)) return 'not-uplink';
     if (this.modeValue === 'no-bond' && nic !== this.uplinksValue[0]) return 'unused';
+    if (this.fallbackValue && this.eligibleList.includes(nic)) {
+      return nic === this.active ? 'active' : 'backup';
+    }
     if (this.lacpDown.has(nic)) return 'lacp-down';
     if (this.detachedSet.has(nic)) return 'detached';
     if (!this.eligibleList.includes(nic)) return 'down';
@@ -678,7 +765,9 @@ export class BondRuntime {
   status(): DeviceStatus {
     if (this.eligibleList.length === 0) return 'failed';
     const usable = this.modeValue === 'no-bond' ? 1 : this.uplinksValue.length;
-    return this.eligibleList.length < usable || this.misconfigValue ? 'degraded' : 'healthy';
+    return this.eligibleList.length < usable || this.misconfigValue || this.fallbackValue
+      ? 'degraded'
+      : 'healthy';
   }
 
   fields(): Record<string, ViewField> {
@@ -695,26 +784,28 @@ export class BondRuntime {
     if (this.modeValue === 'balance-slb' || this.modeValue === 'active-backup') {
       f.slbVlanAware = this.vlanAwareValue;
     }
-    if (this.modeValue === 'active-backup') f.active = this.active;
+    if (this.singleActive) f.active = this.active;
     for (const m of this.cabledValue) f[`member.${m}`] = this.memberState(m);
     // View-field contract names (docs/view-fields.md, vswitch).
     const states = this.cabledValue.map((m) => this.memberState(m));
     f.bondMode = this.modeValue;
     f.activeMembers = states.filter((st) => st === 'active' || st === 'up').length;
-    f.activeMember =
-      this.modeValue === 'active-backup'
-        ? (this.active ?? null)
-        : this.modeValue === 'no-bond'
-          ? (this.cabledValue.find((m) => this.memberState(m) === 'up') ?? null)
-          : null;
+    f.activeMember = this.singleActive
+      ? (this.active ?? null)
+      : this.modeValue === 'no-bond'
+        ? (this.cabledValue.find((m) => this.memberState(m) === 'up') ?? null)
+        : null;
+    f.initialActive = this.modeValue === 'active-backup' ? (this.initialActiveValue ?? null) : null;
     f.lacpState = !this.usesLacp
       ? null
-      : states.every((st) => st === 'lacp-down' || st === 'down' || st === 'not-uplink')
-        ? 'down'
-        : states.some((st) => st === 'detached' || st === 'lacp-down')
-          ? 'partial'
-          : 'negotiated';
-    if (this.hashed) {
+      : this.fallbackValue
+        ? 'fallback'
+        : states.every((st) => st === 'lacp-down' || st === 'down' || st === 'not-uplink')
+          ? 'down'
+          : states.some((st) => st === 'detached' || st === 'lacp-down')
+            ? 'partial'
+            : 'negotiated';
+    if (this.hashed && !this.fallbackValue) {
       for (const [m, n] of Object.entries(this.bucketSpread())) f[`buckets.${m}`] = n;
     }
     return f;

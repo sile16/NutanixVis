@@ -79,6 +79,11 @@ export interface Profile {
     readonly lacpFastDetectS: Cited<number>;
     readonly lacpSlowDetectS: Cited<number>;
     readonly slbRebalanceIntervalS: Cited<number>;
+    /**
+     * `lacp-fallback-ab` on LACP (balance-tcp) bonds: with no member negotiated, the bond runs
+     * active-backup; a timed-out member is detached while another is still negotiated.
+     */
+    readonly lacpFallbackAb: Cited<boolean>;
   };
 
   /** Nutanix side of external storage (T1). */

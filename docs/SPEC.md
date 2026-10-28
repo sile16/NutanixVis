@@ -204,10 +204,15 @@ This keeps the reference's key property that all devices see a consistent snapsh
   | Active-Active | `balance-tcp` + LACP | Per **L4 flow**: each TCP connection is hashed to a member | LAG + LACP. Across two switches this needs **MLAG/vPC**. Fast rate (1 s) by default, with fallback to active-backup. | All links |
   | No uplink bond | — | 0 or 1 uplink | None | 1 link |
 
+- **Active-backup member.** OVS makes "the first member to be enabled" active (OVS bonding docs), which is eth0 → Switch A on every host. It can be pinned with `ovs-appctl bond/set-active-slave` (Everpure "Configure Nutanix Cluster for FlashArray"). Topology option `vs0-active-member` (T1, T2, T3): `first` (default, OVS behavior) or `alternate` (odd hosts on Switch A, even hosts on Switch B). The pinned member is preferred whenever the bond picks a new active member; there is no failback to it. The view field `activeMember` shows the current one.
 - **Failure detection in bonds:**
-  - **Carrier loss** (NIC, cable or switch port down) is detected immediately in every mode.
-  - **Failures without carrier loss** (a hung switch, a unidirectional link) are only detected by LACP: within about 3 s on the fast rate, or up to 90 s on slow (AHV Admin Guide).
-  - On failover, the vNICs or flows on the dead member move to a survivor, and the switches relearn the MACs.
+  - **Carrier loss** (NIC, cable or switch port down) is detected immediately in every mode (`bond_downdelay` 0).
+  - **Failures without carrier loss** (a hung switch, a unidirectional link) are only detected by LACP: within about 3 s on the fast rate, or up to 90 s on slow (AHV Admin Guide). LACP liveness is LACPDU receipt only (OVS `lib/lacp.c`), so a switch whose data plane hangs while it keeps sending LACPDUs is never detected.
+  - **Active-backup, MAC pinning and no-bond never detect a hang.** They watch carrier only, and AHV adds no run-time check that moves the active member. The blackhole lasts until the hang becomes carrier loss (the switch is powered off or its ports are admin-downed); OVS then fails over in the same tick.
+  - **LACP rate.** Prism Active-Active always sets fast with fallback to active-backup, and neither can be changed afterwards (AHV Admin Guide 11.2). A slow host rate exists only when set outside Prism (CLI or installer). A slow switch-side rate alone still leaves the host detecting in 3 s (`inferred`).
+  - **`lacp-fallback-ab`** (profile `bond.lacpFallbackAb`). A member whose LACP times out is detached while another is still negotiated, so the LAG carries on with the survivor. Only when no member is negotiated does the bond run active-backup over every member with carrier (`lacpState: fallback`).
+  - On failover, the vNICs or flows on the dead member move to a survivor, and the switches relearn the MACs (OVS sends a RARP per moved MAC).
+  - **MAC-pinning rebalance** follows OVS: a hash moves only off a member that carries at least 2 hashes with traffic, at least 3 % more load than the lighter member, and only if the move narrows the gap. The 1 Mbps floor is not modeled (loads are message counts).
   - **Misplacement.** If the VLAN a vNIC uses is not carried on the surviving member's switch, its traffic blackholes. The bond is not VLAN-aware.
 - **MTU mismatch.** Messages are tagged with a size class (`small` for heartbeats and keep-alives, `large` for 1 MiB IO). Large frames are dropped on links whose MTU is lower than the endpoint MTU, so the "small IO works, large IO stalls" misconfiguration can be shown.
 - **Latency.** Latency accumulates along the path into IO latency reported by VMs. It is illustrative only and never drives timing.
@@ -630,7 +635,10 @@ T1 (AHV + FlashArray):
 15. **Bond comparison, one node NIC down.** In each mode, check whether any NVMe path is lost, how long the blip lasts, and how the load redistributes.
 16. **MAC pinning + strict A/B.** A rebalance pins the VLAN-A vNIC to the uplink on Switch B, and its paths blackhole with no hardware failure (misconfiguration).
 17. **LACP across two switches without MLAG** (misconfiguration).
-18. **LACP slow rate with a hung switch** (no carrier loss): hashes blackhole for up to 90 s, compared with about 3 s on the fast rate.
+18. **LACP slow rate with a hung switch** (no carrier loss): hashes blackhole for up to 90 s, compared with about 3 s on the fast rate. The slow variant is a host rate set outside Prism.
+19. Misconfiguration: switch flow control (PFC or global pause) enabled.
+20. **Hung Switch A with every host's `vs0` active on it** (OVS default). No bond notices, CVM-to-CVM traffic is lost cluster-wide, Zookeeper quorum is lost and writes stop, although the NVMe paths through Switch B are healthy. No HA restarts. Powering Switch A off fails every `vs0` over and the cluster recovers.
+21. **Hung Switch A with `vs0-active-member: alternate`.** Nodes 1 and 3 are each isolated; nodes 2 and 4 keep quorum (N−2). The isolated hosts are fenced at T+60, their VMs self-terminate 45 s after the first failed IO, and AHV HA restarts them by T+120.
 
 T2 (HCI AHV):
 
@@ -845,6 +853,8 @@ Stream H raised these while writing the acceptance scenarios. Each is labeled wi
 | 7 | T1-lab-3: what starts the force-shutdown timer, and the restart delay. | Counts from the **first IO that could not complete** on that VM. On expiry the VM is powered off and restarted through AHV HA on a node with array connectivity, at the next HA cycle. | `assumption` (lab L2) |
 | 8 | T2-04: initial Acropolis leader. | Deterministic: the lowest node id (`node-1`). | decided (model) |
 | 9 | CVM boot time. | Add `cluster.cvmBootS` to the profile (`assumption`). Failback is still gated by the 30 s stable rule after `stargate.up`. | `assumption` |
+| 10 | T1-20: what a hung switch does to `vs0` active-backup. | Nothing detects it (OVS checks carrier only; AHV's gateway checks run only during vswitch changes). With every host active on the hung switch, ZK quorum is lost at once, writes stop and HA does nothing. Recovery only through carrier loss: power-off or port admin-down. | `verified` (no detection) / `inferred` (cluster effect) |
+| 11 | T1-21: HA timeline for hosts isolated by a hung switch. | The existing AHV HA model: leader re-election at T+20 when the leader host is isolated, disconnected at T+20, fenced at T+60, isolated VMs self-terminate 45 s after the first failed IO, restart by T+120. The AHV Admin Guide's "disconnected for 40 seconds, the VMs are restarted" would let restarts begin at T+60; the model restarts at the Bible's T+120 bound. | `inferred` |
 
 ### Phase 2 contract backlog (from stream H)
 
@@ -872,6 +882,7 @@ Owner-supplied field practice from deployment walkthroughs. The full comparison 
 - **ISL.** Field practice keeps storage VLANs **off the ISL** (single hop from node to array; the ISL adds latency and can become a bottleneck). The Cisco Validated Design allows storage traffic on the ISL. The option `isl-storage-vlans`: pruned | allowed.
 - **Switch ports.** FA data ports are typically access ports (untagged) on the switch, while node ports are trunks.
 - **MAC pinning + isolated VLANs.** With isolated VLANs, `per-fabric` and VLAN-aware MAC pinning reach the same failure outcome, by different mechanisms.
+- **`vs0` and a hung switch.** No storage layout protects management: `vs0` is Active/Backup, which never detects a hung switch. Which switch each host's `vs0` is active on decides whether a hang costs the whole cluster (T1-20) or only the hosts on that switch (T1-21). See `docs/research/storage-network-configs.md`, "The hung switch and `vs0`".
 
 ### 15.2 Backlog from field input
 

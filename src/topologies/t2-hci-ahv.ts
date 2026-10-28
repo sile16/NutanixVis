@@ -17,6 +17,7 @@ import {
   nodeCountOption,
   switchPair,
   VLANS,
+  vs0ActiveMemberOption,
 } from './parts';
 import { defineTopology, type Topology } from './schema';
 
@@ -43,6 +44,7 @@ export const t2Options = {
     false,
   ),
   vs0BondMode: vs0BondOption(),
+  vs0ActiveMember: vs0ActiveMemberOption(),
   lacpRate: lacpRateOption(),
   mlag: mlagOption(),
 } as const;
@@ -79,6 +81,7 @@ export function buildT2(params: Partial<T2Params> = {}): Topology {
         bondMode: p.vs0BondMode,
         lacpRate: p.lacpRate,
         backplane: p.backplane,
+        vs0ActiveMember: p.vs0ActiveMember,
       }),
     );
     devices.push(...host.devices);

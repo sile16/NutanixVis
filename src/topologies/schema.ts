@@ -65,6 +65,11 @@ const VSwitchSpec = z.object({
   /** NICs cabled for this vswitch (superset of `uplinks`); candidates for `vswitch.set-uplinks`. */
   members: z.array(id).optional(),
   lacpRate: z.enum(['fast', 'slow']).optional(),
+  /**
+   * Active-backup member the bond starts on (`ovs-appctl bond/set-active-slave`). Absent: the
+   * first linked uplink, as OVS picks "the first member to be enabled" (OVS bonding docs).
+   */
+  initialActive: id.optional(),
   mtu: z.number().int().default(1500),
 });
 

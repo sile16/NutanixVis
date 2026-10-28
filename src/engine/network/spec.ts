@@ -77,6 +77,13 @@ export interface BondSpec {
   /** LACP rate, used only in `balance-tcp`. Default `fast`. */
   readonly lacpRate?: LacpRate;
   /**
+   * Active-backup member to start on, as set with `ovs-appctl bond/set-active-slave`. It is
+   * preferred whenever the bond must pick a new active member (start, failover, mode change)
+   * and it is usable. There is no failback to it while another member is active. Default: the
+   * first live uplink in `uplinks` order.
+   */
+  readonly initialActive?: string;
+  /**
    * Bonds sharing a group (e.g. the virtual switch name `vs1` on every host) change mode and
    * LACP rate together: mixed bond modes on one virtual switch are not supported (SPEC §5.5).
    */
@@ -115,6 +122,12 @@ export interface NetworkConfig {
   readonly lacpSlowDetectS: number;
   /** balance-slb / balance-tcp hash-bucket rebalance interval. */
   readonly slbRebalanceIntervalS: number;
+  /**
+   * `lacp-fallback-ab` on balance-tcp bonds. A member whose LACP times out is detached while
+   * another member is still negotiated. Only when no member is negotiated does the bond run
+   * active-backup over every member with carrier. Off: the bond goes down instead.
+   */
+  readonly lacpFallbackAb: boolean;
 }
 
 /** Placeholder defaults for engine tests; real runs pass profile values (SPEC §5.3). */
@@ -122,6 +135,7 @@ export const DEFAULT_NETWORK_CONFIG: NetworkConfig = {
   lacpFastDetectS: 3,
   lacpSlowDetectS: 90,
   slbRebalanceIntervalS: 10,
+  lacpFallbackAb: true,
 };
 
 export interface NetworkSpec {
@@ -192,6 +206,9 @@ export function validateNetworkSpec(spec: NetworkSpec): void {
     for (const u of b.uplinks) {
       if (!members.includes(u))
         throw new NetworkError(`bond ${b.id}: uplink '${u}' is not a member`);
+    }
+    if (b.initialActive !== undefined && !members.includes(b.initialActive)) {
+      throw new NetworkError(`bond ${b.id}: initial active '${b.initialActive}' is not a member`);
     }
     if (new Set(b.uplinks).size !== b.uplinks.length) {
       throw new NetworkError(`bond ${b.id}: duplicate uplinks`);

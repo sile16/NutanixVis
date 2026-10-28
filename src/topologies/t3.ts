@@ -18,6 +18,7 @@ import {
   mlagOption,
   switchPair,
   VLANS,
+  vs0ActiveMemberOption,
 } from './parts';
 import { defineTopology, type Topology } from './schema';
 
@@ -30,6 +31,7 @@ const bondOptions = {
   // reports (`cluster.ft.insufficient-nodes`), so it is allowed here.
   replicationFactor: option('replication-factor', 'Replication factor', [2, 3], 2),
   vs0BondMode: vs0BondOption(),
+  vs0ActiveMember: vs0ActiveMemberOption(),
   lacpRate: lacpRateOption(),
   mlag: mlagOption(),
 } as const;
@@ -57,6 +59,7 @@ interface T3Resolved {
   coCount: number;
   storageCount: number;
   vs0BondMode: T3CoSoParams['vs0BondMode'];
+  vs0ActiveMember: T3CoSoParams['vs0ActiveMember'];
   lacpRate: T3CoSoParams['lacpRate'];
   mlag: boolean;
 }
@@ -82,6 +85,7 @@ function buildT3(
         bondMode: p.vs0BondMode,
         lacpRate: p.lacpRate,
         backplane: false,
+        vs0ActiveMember: p.vs0ActiveMember,
       }),
     );
     devices.push(...host.devices);

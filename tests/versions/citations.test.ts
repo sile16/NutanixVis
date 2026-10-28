@@ -19,6 +19,8 @@ const PUBLIC_HOSTS = new Set([
   'nvmexpress.org',
   'web.archive.org',
   'linux.die.net',
+  // Public source code (SPDK on GitHub, Linux on kernel.org), pinned where possible.
+  'git.kernel.org',
   // Nutanix-employee technical blog (community-grade source, labeled unverified/assumption).
   'www.joshodgers.com',
 ]);

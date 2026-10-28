@@ -31,6 +31,6 @@ export const WORKLOAD: WorkloadModel = {
     32,
     'assumption',
     [],
-    'Illustrative guest queue depth per vDisk; deep enough that IO held KATO + CQT on a lost path does not exhaust it.',
+    'Illustrative guest queue depth per vDisk. On a silent NVMe path loss the queue-depth selector holds only a few slots; round-robin fills it (SPEC §6.4c).',
   ),
 };

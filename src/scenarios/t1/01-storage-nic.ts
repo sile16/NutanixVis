@@ -20,7 +20,7 @@ import {
   vswitch,
 } from '../helpers';
 import { cvmId, T1 } from '../ids';
-import { KATO, PATH_LOSS_WORST } from '../timers';
+import { KATO, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
 
 const END = by(PATH_LOSS_WORST) + 30;
 
@@ -91,7 +91,7 @@ function variant(placement: 'strict-ab' | 'tagged-both'): ScenarioDef {
             at(by(KATO), 'other CVMs keep every path', (s) =>
               allCvms(s, (c) => c.id === cvmId(1) || allPathsLive(c)),
             ),
-            alwaysFrom(T0, 'no command waits longer than KATO + CQT', (s) =>
+            alwaysFrom(T0, `no command waits longer than ${PATH_LOSS_RULE}`, (s) =>
               allVms(s, (v) => v.ioPendingS <= PATH_LOSS_WORST + SLACK),
             ),
           ]),
@@ -99,7 +99,7 @@ function variant(placement: 'strict-ab' | 'tagged-both'): ScenarioDef {
     ],
     narrative: trunked
       ? 'Node 1 loses one vs1 uplink. The MAC-pinning bond moves both CVM storage vNICs to eth3 on carrier loss, and because both storage VLANs are tagged on Switch B, the TCP connections survive and NVMe never notices. VM IO sees at most a brief blip.'
-      : 'Node 1 loses one vs1 uplink. The bond has nowhere to put the VLAN-A vNIC: Switch B does not carry VLAN 10, so (with VLAN-aware MAC pinning, an assumption) it is left without an uplink, and plain OVS would move it to eth3 where its frames go nowhere anyway. The CVM never sees the carrier loss: its VLAN-A paths fall silent and are declared lost one keep-alive timeout later. New IO moves to the VLAN-B paths at once, and commands caught in flight are held for the quiesce time and retried, so VMs only see a latency spike.',
+      : 'Node 1 loses one vs1 uplink. The bond has nowhere to put the VLAN-A vNIC: Switch B does not carry VLAN 10, so (with VLAN-aware MAC pinning, an assumption) it is left without an uplink, and plain OVS would move it to eth3 where its frames go nowhere anyway. The CVM never sees the carrier loss: its VLAN-A paths fall silent and are declared lost one keep-alive timeout later. Until then the queue-depth path selector stops giving them new IO once their commands stop completing; after the loss new IO uses the VLAN-B paths, and the commands stuck on VLAN A are retried 3 × KATO + CQT (about 45 s) after the last keep-alive, so VMs only see latency outliers.',
     cite: [
       'ntnx-ahv-admin-11.2',
       'everpure-nutanix-net-bp',

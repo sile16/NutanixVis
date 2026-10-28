@@ -21,12 +21,14 @@ export interface Citation {
     | 'SPDK'
     | 'NVM Express'
     | 'smartmontools'
+    | 'Linux kernel'
     | 'Community';
   /** ISO date the source was last checked. */
   readonly retrieved: string;
 }
 
 const RETRIEVED = '2026-10-27';
+const RETRIEVED_2026_10_28 = '2026-10-28';
 const PORTAL_DOC = 'https://portal.nutanix.com/page/documents/details?targetId=';
 const EVERPURE = 'https://support.everpuredata.com/r/';
 const BIBLE = 'https://www.nutanixbible.com/';
@@ -34,7 +36,7 @@ const NEXT = 'https://next.nutanix.com/';
 /** Portal KB search: for KBs cited by title whose number is not known. */
 const PORTAL_KBS = 'https://portal.nutanix.com/page/documents/kbs/list';
 
-type Entry = Omit<Citation, 'id' | 'retrieved'>;
+type Entry = Omit<Citation, 'id' | 'retrieved'> & { readonly retrieved?: string };
 
 const entries = {
   // ── Nutanix Bible ──────────────────────────────────────────────────────────
@@ -131,6 +133,13 @@ const entries = {
     url: PORTAL_KBS,
     publisher: 'Nutanix',
   },
+  'ntnx-cmdref-aos-7.6': {
+    title:
+      'Nutanix Command Reference (AOS 7.6), Controller VM Commands > cluster gflags: Hades external-storage NVMe/TCP transport (--nvme_ctrl_loss_tmo 3600, --nvme_num_io_queues 4, --enable_multipath)',
+    url: `${PORTAL_DOC}Command-Ref-AOS-v7_6:Command-Ref-AOS-v7_6`,
+    publisher: 'Nutanix',
+    retrieved: RETRIEVED_2026_10_28,
+  },
   'ntnx-blog-cvm-failure': {
     title: 'Nutanix blog — Nutanix Controller Failure. Will Users Notice? (archived copy)',
     url: 'https://web.archive.org/web/20250212144800/https://www.nutanix.com/blog/nutanix-controller-failure-will-users-notice',
@@ -153,6 +162,19 @@ const entries = {
       'Nutanix + Everpure 301 Technical Deck (Everpure, 2026): "Multipathing and NVMe timers (KATO 5 s, controller loss 3600 s, CQT 30 s) are set automatically and must not be changed." Training deck, not hosted publicly; link is the Everpure Nutanix documentation hub. Publication approved by the owner (2026-10-27).',
     url: `${EVERPURE}nutanix`,
     publisher: 'Everpure',
+  },
+  'everpure-nutanix-nci-cfg': {
+    title:
+      'Nutanix Cloud Infrastructure Configuration (KATO 5 s, Controller Loss Timeout 3600 s, NTNX CQT 30 s; Linux native multipathing)',
+    url: `${EVERPURE}nutanix/nutantix-everpure-bp-cloud-infrastructure-config`,
+    publisher: 'Everpure',
+    retrieved: RETRIEVED_2026_10_28,
+  },
+  'everpure-nutanix-troubleshooting': {
+    title: 'Troubleshooting Checklist for NCP with Everpure FlashArray',
+    url: `${EVERPURE}nutanix/nutanix-everpure-bp-troubleshooting-checklist`,
+    publisher: 'Everpure',
+    retrieved: RETRIEVED_2026_10_28,
   },
   'everpure-nutanix-net-bp': {
     title: 'Network Configuration for NCP with FlashArray',
@@ -223,6 +245,13 @@ const entries = {
     url: `${EVERPURE}flasharray-connectivity/nvme-tcp-best-practices`,
     publisher: 'Everpure',
   },
+  'everpure-linux-dm-multipath': {
+    title:
+      'Recommended DM-Multipath Settings (NVMe FlashArray device: path_selector queue-length, prio ana, fast_io_fail_tmo 10)',
+    url: `${EVERPURE}linux/recommended-dmmultipath-settings`,
+    publisher: 'Everpure',
+    retrieved: RETRIEVED_2026_10_28,
+  },
   'everpure-ana-faq': {
     title: 'FAQ: NVMe-oF and VMware',
     url: `${EVERPURE}howtos-for-vmware-solutions/faq-nvmeof-and-vmware`,
@@ -264,6 +293,27 @@ const entries = {
     title: 'NVM Express TCP Transport Specification',
     url: 'https://nvmexpress.org/specification/tcp-transport-specification/',
     publisher: 'NVM Express',
+  },
+  'nvme-base-spec-2.1': {
+    title:
+      'NVM Express Base Specification, Revision 2.1 (2024-08-05): §3.9.3.1.2 Keep Alive (host detects a timeout within KATT to 1.5 × KATT), §9.6 communication loss handling (wait 2 × KATT or 3 × KATT, then CQT, before retrying Delayed Retry commands)',
+    url: 'https://nvmexpress.org/wp-content/uploads/NVM-Express-Base-Specification-Revision-2.1-2024.08.05-Ratified.pdf',
+    publisher: 'NVM Express',
+    retrieved: RETRIEVED_2026_10_28,
+  },
+  'spdk-bdev-nvme-src': {
+    title:
+      'SPDK source, module/bdev/nvme/bdev_nvme.c (commit 652aadef): active-active selectors round_robin and queue_depth (_bdev_nvme_find_io_path_min_qd), path availability, IO retry',
+    url: 'https://github.com/spdk/spdk/blob/652aadef06e5c73d08e099f1b12ce3abcd42b50b/module/bdev/nvme/bdev_nvme.c',
+    publisher: 'SPDK',
+    retrieved: RETRIEVED_2026_10_28,
+  },
+  'linux-nvme-host': {
+    title:
+      'Linux kernel source, drivers/nvme/host (core.c: io_timeout 30 s, keep-alive; fabrics.h: NVMF_DEF_RECONNECT_DELAY 10 s, NVMF_DEF_CTRL_LOSS_TMO 600 s)',
+    url: 'https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/nvme/host',
+    publisher: 'Linux kernel',
+    retrieved: RETRIEVED_2026_10_28,
   },
   'nvme-base-spec': {
     title:
@@ -368,7 +418,7 @@ export const citations: Readonly<Record<CitationId, Citation>> = Object.freeze(
   Object.fromEntries(
     Object.entries(entries).map(([id, e]) => [
       id,
-      Object.freeze({ id, ...e, retrieved: RETRIEVED }),
+      Object.freeze({ id, ...e, retrieved: (e as Entry).retrieved ?? RETRIEVED }),
     ]),
   ),
 );

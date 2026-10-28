@@ -40,10 +40,21 @@ export const P: NumericProfile = numericView(current);
 
 /** NVMe keep-alive timeout: a silent path is lost KATO after its last exchange (SPEC §6.4c). */
 export const KATO = P.externalStorage.keepAliveTimeoutS;
-/** NVMe Command Quiesce Time: in-flight commands on a lost path are held CQT, then retried. */
+/** NVMe Command Quiesce Time: the last part of the wait before in-flight IO on a lost path retries. */
 export const CQT = P.externalStorage.commandQuiesceTimeS;
-/** Worst case for one command when a path is lost silently: about KATO + CQT (SPEC §6.4c). */
-export const PATH_LOSS_WORST = KATO + CQT;
+/**
+ * Worst case for one command when a path is lost silently: it is retried at k × KATO + CQT after
+ * the path's last successful exchange (k = `lostPathHoldKatoMultiplier`, 3; SPEC §6.4c), ≈ 45 s.
+ */
+export const PATH_LOSS_WORST = P.externalStorage.lostPathHoldKatoMultiplier * KATO + CQT;
+/** `PATH_LOSS_WORST` as a rule, for expectation labels. */
+export const PATH_LOSS_RULE = `${P.externalStorage.lostPathHoldKatoMultiplier} × KATO + CQT`;
+/**
+ * Worst case for one command when the target closes the connection (a disabled FA IP, a graceful
+ * controller reboot): the path is lost at once and in-flight IO waits CQT only (NVMe 2.1 §9.6.2
+ * step 2c; SPEC §6.4c).
+ */
+export const CLOSED_PATH_WORST = CQT;
 /** Redirector detection: NOP misses needed to mark a Stargate unhealthy, in seconds. */
 export const REDIRECT_DETECT = P.redirector.missesToUnhealthy * P.redirector.nopIntervalS;
 /** Detection plus the (assumed) IO stall while QEMU re-logs in to the new Stargate. */

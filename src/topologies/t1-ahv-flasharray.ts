@@ -86,6 +86,15 @@ export const t1Options = {
     ['active-active', 'active-passive'],
     'active-active',
   ),
+  // How active-active picks a path per command (SPEC §6.4b/§6.4c). Stargate's selector is not
+  // public; queue-depth follows Everpure's Linux guidance for FlashArray NVMe (`inferred`).
+  // round-robin shows how a queue-depth-bound guest stalls completely on one silent path loss.
+  pathSelector: option(
+    'nvme-path-selector',
+    'NVMe path selector',
+    ['queue-depth', 'round-robin'],
+    'queue-depth',
+  ),
   // DEPLOY-GUIDE "Compute Cluster High Availability": by default a node retries IO until the
   // array responds; an optional per-VM force-shutdown timeout restarts the VM on a node with
   // array connectivity. Applied to every VM (`vm.pathLossForceShutdownS`). Values illustrative.

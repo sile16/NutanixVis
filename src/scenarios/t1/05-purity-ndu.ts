@@ -20,7 +20,7 @@ import {
   t1Steady,
 } from '../helpers';
 import { CT0, CT1, FA, T1 } from '../ids';
-import { P, PATH_LOSS_WORST } from '../timers';
+import { CLOSED_PATH_WORST, P } from '../timers';
 
 const PAUSE = P.flasharray.plannedFailoverPauseS;
 /** Controller reboot length is not in the profile (no public figure); allow a long run. */
@@ -55,7 +55,8 @@ export default defineScenario({
         s,
         (v) =>
           (isRunning(v) || isStalled(v)) &&
-          v.ioPendingS <= Math.max(PAUSE, PATH_LOSS_WORST) + SLACK,
+          // A rebooting controller closes its connections: in-flight IO waits CQT, not 3 × KATO + CQT.
+          v.ioPendingS <= Math.max(PAUSE, CLOSED_PATH_WORST) + SLACK,
       ),
     ),
     at(

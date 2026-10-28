@@ -60,14 +60,14 @@ Each item names the profile field or model rule it affects. Until it is confirme
 | # | Question | Model today | Where | Lab |
 |---|---|---|---|---|
 | Q1 | Is about 32 minutes realistic for rebuilding a 4-node RF2 HCI cluster after a node failure (20% full)? | 1 GiB/s per surviving node, 20% fill | `hci.rebuildGiBpsPerNode`, `hci.initialUsedCapacityPct` | none yet |
-| Q2 | During the KATO window (5 s), can a guest's whole IO queue get stuck on the dead path, so the guest sees a stall of up to KATO + CQT (about 35 s) and not just latency outliers? | Only IO in flight on the dead path is held, for CQT, then retried | SPEC §6.4c, `workload/io.ts` queue depth | L5 |
-| Q3 | Does the integration set an NVMe IO timeout? SPDK's default is disabled. | 30 s | `externalStorage.ioTimeoutS` | L5 |
+| Q2 | During the KATO window (5 s), can a guest's whole IO queue get stuck on the dead path, so the guest sees a stall of up to KATO + CQT (about 35 s) and not just latency outliers? | Modeled (2026-10-28): new IO still reaches the dead path until KATO; in-flight IO retries at 3 × KATO + CQT ≈ 45 s. Queue-depth selector (default): partial stall. Round-robin: full stall (scenario `t1lab-04`). Still to measure | SPEC §6.4c, `externalStorage.lostPathHoldKatoMultiplier`, `pathSelector` | L5, L12 |
+| Q3 | Does the integration set an NVMe IO timeout? SPDK's default is disabled. | 45 s (`inferred`: ≥ 3 × KATO + CQT) | `externalStorage.ioTimeoutS` | L5 |
 | Q4 | What is the Zookeeper session timeout? How long do cluster services keep running when both switches fail, or when the whole array is lost? | Not timed. Services follow quorum. | `cluster.*` | L9 |
 | Q5 | What does Prism show for HA and cluster status when quorum is lost? | HA status is shown as the model computes it | `ClusterView` | L9 |
 | Q6 | A hung Switch A (link up, forwarding nothing) takes down the T1 management backplane through `vs0` active-backup. Should it be a scenario of its own? | Modeled. No dedicated scenario yet. | `bond.ts`, scenarios | L4-style (bonded lab) |
 | Q7 | Is `network_segment_status --last_task` the CVM command behind Prism's "Review Network Log"? | Labeled inferred in `docs/commands.md` | docs | any lab |
-| Q8 | Multipath policy and IO queues per path: active-active round robin with 4 queues? | Both are assumptions | `externalStorage.multipathPolicy`, `ioQueuesPerPath` | L12 |
-| Q9 | What is the reconnect delay after a path is lost? | 20 s (the SPDK example value) | `externalStorage.reconnectDelayS` | L5 |
+| Q8 | Multipath policy and IO queues per path: active-active round robin with 4 queues? | Active-active (`assumption`) with a queue-depth selector (`inferred`); 4 queues (`inferred` from the Hades gflag) | `externalStorage.multipathPolicy`, `pathSelector`, `ioQueuesPerPath` | L12 |
+| Q9 | What is the reconnect delay after a path is lost? | 10 s (the Linux default, `assumption`) | `externalStorage.reconnectDelayS` | L5 |
 | Q10 | How long does IO pause during a redirect, and how long until failback? | 3 s pause, failback after 30 s stable | `redirector.redirectStallS`, `failbackStableS` | L3 |
 | Q11 | How long do a CVM boot, a host reboot and a Cassandra rejoin take? | 180 s, 300 s, 600 s | `cluster.cvmBootS`, `hostRebootS`, `cassandraRejoinStableS` | L7 |
 | Q12 | How long do disk SMART checks and the replica-ack timeout take? | 10 s, 2 s | `hci.diskSmartCheckS`, `replicaAckTimeoutS` | none yet |

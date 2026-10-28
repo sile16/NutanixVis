@@ -30,6 +30,7 @@ export const t1LabOptions = {
   // tagged-both. strict-ab here demonstrates the resulting reachability gap.
   vlanPlacement: { ...t1Options.vlanPlacement, default: 'tagged-both' },
   multipathPolicy: t1Options.multipathPolicy,
+  pathSelector: t1Options.pathSelector,
   pathLossForceShutdownS: t1Options.pathLossForceShutdownS,
 } as const;
 

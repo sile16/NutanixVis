@@ -406,9 +406,9 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 - There is one NVMe controller per path: 2 VLANs × 2 controllers gives 4 paths per CVM.
 - If keep-alive (KATO) is missed, the path is marked lost.
 - Reconnect attempts repeat until the controller-loss timeout expires, then the controller is removed.
-- The integration sets the KATO, reconnect and controller-loss values automatically. **No public source for them was found.** Use `assumption` values from the profile and track them as a gap.
-  - Public generic guidance in TCP-BP can inform the assumptions but must not be presented as the integration's values.
-- The path selection policy is an `assumption`. The default is round-robin across live Optimized paths.
+- The integration sets KATO (5 s), CQT (30 s) and the controller-loss timeout (3600 s) automatically (Everpure "Nutanix Cloud Infrastructure Configuration", public; AOS 7.6 Command Reference Hades gflags). The reconnect delay and IO timeout are not published: the profile labels them `assumption` and `inferred` (§6.4c).
+  - Public generic guidance (TCP-BP, Everpure DM-multipath settings) can inform the model but must not be presented as the integration's values.
+- The multipath policy is an `assumption` (active-active across live Optimized paths). The path selector is `inferred`: **queue-depth** by default, round-robin as an option (§6.4b, §6.4c).
 
 **Objects**
 
@@ -448,8 +448,11 @@ This model drives both the IO distribution and the **path-usage view** in the UI
 3. **NVMe paths.** One NVMe controller connects each CVM storage vNIC to each FA target port on the same VLAN. In the default topology that is 2 vNICs × 2 FA ports per VLAN = **4 paths per CVM**, all ANA Optimized.
    - **Connections per path.** Each path is several TCP connections: 1 admin queue + Q IO queues, as defined by the NVMe/TCP spec. Q is an `assumption`, default 4.
 4. **Multipath policy** (Stargate/SPDK). The policy Nutanix configures **is not public**. SPDK supports both of these, so the simulator offers both as a profile option with the `assumption` label until lab L12 settles it:
-   - `active-active` (default): round-robin of each vDisk's IO across all live Optimized paths.
+   - `active-active` (default): each vDisk's IO spreads across all live Optimized paths. The **path selector** (topology option `nvme-path-selector`, profile `pathSelector`) picks the path per command:
+     - `queue-depth` (default, `inferred` from Everpure's Linux guidance for FlashArray NVMe: dm-multipath `queue-length`, TCP-BP "Queue Length Based"): the live path with the fewest outstanding commands.
+     - `round-robin`: the next live path in turn.
    - `active-passive`: one active path per vDisk, with vDisks spread across paths and failover on path loss.
+   - The two selectors look the same in steady state. They differ on a silent path loss (§6.4c item 3).
 5. **Bond.** The bond maps each path's TCP connections onto uplinks (§5.3).
 
 **Can one vDisk use both uplinks?**
@@ -472,16 +475,21 @@ This model drives both the IO distribution and the **path-usage view** in the UI
 
 ### 6.4c NVMe/TCP path-failure timing (T1)
 
-The integration sets the multipath and NVMe timers automatically, and they must not be changed (Everpure guidance). The model uses three profile fields: `keepAliveTimeoutS` (KATO), `commandQuiesceTimeS` (CQT) and `controllerLossTimeoutS`, plus `reconnectDelayS`. Their semantics follow the NVMe Base Specification (Keep Alive; TP4129 "KATO Corrections and Clarifications" introduced CQT):
+The integration sets the multipath and NVMe timers automatically, and they must not be changed (Everpure guidance). The model uses the profile fields `keepAliveTimeoutS` (KATO), `commandQuiesceTimeS` (CQT), `lostPathHoldKatoMultiplier`, `controllerLossTimeoutS`, `reconnectDelayS` and `ioTimeoutS`. Their semantics follow the NVMe Base Specification 2.1 (§3.9.3.1.2 Keep Alive; §9.6 communication loss handling, which includes CQT from TP4129):
 
 1. **Keep-alive.** The host sends Keep Alive on each path's admin queue every KATO/2. The target (the FA controller) also tears down an association that goes quiet for KATO.
 2. **Detecting a lost path.** The initiator runs **inside the CVM**, whose vNIC never sees a host uplink, cable or switch lose carrier.
-   - **Silent losses, the normal case:** a node NIC, cable or switch failure, an FA port failure, an FA controller crash, or a strict-A/B frame with no member carrying its VLAN. In each case, keep-alive goes unanswered and the path is lost **KATO after the last successful exchange**.
-   - **Fast losses, the exception:** if the far end is reachable and actively closes the connection, the path is lost on that error before KATO. Examples are a TCP reset, or a graceful controller shutdown during NDU (`inferred`).
-3. **IO after a path is lost.**
-   - **New IO** goes to the remaining live paths **immediately**. All paths are ANA Optimized, so with `active-active` the load just redistributes.
-   - **Commands in flight on the lost path** are **held for CQT** and then retried on another path. CQT gives the target time to quiesce them, which prevents stale or duplicate writes.
-   - So the worst case for a single command is about **KATO + CQT**. The VM sees an outlier latency spike on a fraction of its IO, not an outage. A guest only sees errors if that exceeds its disk timeout (Linux SCSI timeout 60 s, AHV Admin Guide).
+   - **Silent losses, the normal case:** a node NIC, cable or switch failure, an FA port failure, an FA controller crash, a pruned VLAN, or a strict-A/B frame with no member carrying its VLAN. In each case, keep-alive goes unanswered and the path is lost **KATO after the last successful exchange**. (The spec allows detection anywhere up to 1.5 × KATO; the model uses KATO.)
+   - **Fast losses, the exception:** if the far end is reachable and actively closes the connection, the path is lost on that error before KATO. Examples are a TCP reset, a disabled FA interface, or a graceful controller reboot during NDU (`inferred`).
+3. **IO around a path loss.**
+   - **During the detection window** the initiator cannot tell the path is dead, so **new IO still goes to it** according to the path selector; nothing is redistributed until the path is declared lost.
+     - `queue-depth`: the dead path's commands never complete, so its outstanding count grows and it soon stops getting new IO. A few commands are stuck: a **partial stall** (lower effective queue depth plus latency outliers).
+     - `round-robin`: every Nth new command goes to the dead path. A guest that keeps its queue full re-issues each completed IO at once, so within moments **all** its queue slots sit on the dead path: the guest **stalls completely** until the hold below expires. (`assumption`: the model's few IOs per tick stand for that closed loop.)
+   - **After the loss is declared,** new IO uses the remaining live paths. All paths are ANA Optimized, so with `active-active` the load just redistributes.
+   - **Commands in flight on a silently lost path** are retried on another path only at **`lostPathHoldKatoMultiplier` × KATO + CQT after the path's last successful exchange**. NVMe 2.1 §9.6.2 asks the host to wait until the controller must have detected the loss (2 × KATT with command-based keep-alive, 3 × KATT with traffic-based), then CQT, so the target can quiesce them and no stale or duplicate write lands. The multiplier is 3, an `assumption` (the conservative traffic-based case; the array's mode is not published). The spec lets reads retry at detection; the model holds all IO.
+   - **On a closed connection** (fast loss) the keep-alive wait does not apply (§9.6.2 step 2c): new IO moves to the other paths at once and commands in flight wait **CQT**.
+   - So the worst case for a single command is about **3 × KATO + CQT ≈ 45 s** after a silent loss, and CQT after a closed connection. With `queue-depth` the VM sees outliers on a fraction of its IO; with `round-robin` a queue-depth-bound guest sees a hard pause of that length. A guest only sees errors if the wait exceeds its disk timeout (Linux SCSI timeout 60 s, AHV Admin Guide).
+   - **IO timeout.** A command stuck on a live but broken queue (a hung bond member, no carrier loss) is aborted after `ioTimeoutS` and retried. It must be at least the hold above, or a command could be retried while still in flight: 45 s (`inferred`, the same §9.6 derivation applied to the published timers).
 4. **Reconnect.** A lost path retries every `reconnectDelayS`. When it reconnects, the path is restored (Optimized) and IO rebalances onto it.
 5. **Controller loss.** If a path has not reconnected within `controllerLossTimeoutS`, its controller is deleted, and the path stays gone until it is rediscovered.
    - The timeout is set long enough to ride out long FA controller reboots, such as an NDU with a firmware update.
@@ -493,7 +501,7 @@ The integration sets the multipath and NVMe timers automatically, and they must 
    - When a bond failover keeps the VLAN reachable, the TCP connections survive and NVMe never notices.
    - When it doesn't (strict A/B), the path is lost through keep-alive (item 2), and step 3 applies.
 
-**Values** (published with the owner's approval, 2026-10-27; citation `everpure-nutanix-301-deck`): **KATO 5 s, controller loss 3600 s, CQT 30 s**. They are set automatically and must not be changed. A single command's worst case on a path loss is therefore about 35 s, under the 60 s guest timeout. The reconnect delay, IO timeout and path policy are still `assumption`s.
+**Values.** **KATO 5 s, controller loss 3600 s, CQT 30 s** are set automatically and must not be changed (Everpure "Nutanix Cloud Infrastructure Configuration", public, `everpure-nutanix-nci-cfg`; Hades gflag `--nvme_ctrl_loss_tmo` in the AOS 7.6 Command Reference, `ntnx-cmdref-aos-7.6`; also `everpure-nutanix-301-deck`, published with the owner's approval). A single command's worst case on a silent path loss is therefore about 3 × 5 + 30 = 45 s, under the 60 s guest timeout. The IO timeout is 45 s (`inferred`); the reconnect delay is 10 s (`assumption`, the Linux `NVMF_DEF_RECONNECT_DELAY` default); the hold multiplier and the multipath policy are `assumption`s and the path selector is `inferred`. The generic 10 s multipath retry of HA-Scenarios (`flasharray.hostMultipathRetryS`) is SCSI / dm-multipath `fast_io_fail_tmo` behavior and does not apply to this path.
 
 **Flexibility rule.** Every timer and policy is a profile field and every behavior choice is a topology option. Real path-failover testing on a properly multipathed lab may change any of them; that is a data change, not a code change.
 
@@ -520,11 +528,11 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 
 | Failure | Detector and timer | IO effect | VM / HA effect | Data effect |
 |---|---|---|---|---|
-| **One node storage NIC or cable down** (`vs1` member) | **Bond first.** MAC pinning fails over on link state. LACP detects in ≤3 s (fast) or ≤90 s (slow). | **Strict A/B (default):** that NIC's VLAN has no other member, so its paths go silent and are lost after **KATO** (§6.4c). New IO then continues on the other VLAN's paths. In-flight commands on the lost paths are held CQT (§6.4c). **Tagged on both switches with storage VLANs allowed on the ISL:** the vNIC moves to the surviving uplink and **no NVMe path is lost** (`inferred`). If the ISL is pruned (the default), the paths are lost as in strict A/B. | None | None |
-| **One NVMe path down** (FA port, FA-side cable, or an unrecoverable node-side path) | Initiator keep-alive, value `assumption` (not public) | IO continues on the remaining paths, all ANA Optimized. Generic multipath retry is about 10 s (HA-Scenarios). | None | None (no RF; the array owns the data) |
-| **One storage switch down** | Keep-alive (KATO); the CVM never sees the carrier loss | Every path through that switch is lost after KATO: in strict A/B, all of one VLAN's paths. New IO then moves to the other fabric. In-flight commands are held CQT, so the worst case is about KATO + CQT (§6.4c). | None (stall < guest timeout) | None |
+| **One node storage NIC or cable down** (`vs1` member) | **Bond first.** MAC pinning fails over on link state. LACP detects in ≤3 s (fast) or ≤90 s (slow). | **Strict A/B (default):** that NIC's VLAN has no other member, so its paths go silent and are lost after **KATO** (§6.4c). New IO then continues on the other VLAN's paths. In-flight commands on the lost paths retry at 3 × KATO + CQT ≈ 45 s after the last exchange (§6.4c). **Tagged on both switches with storage VLANs allowed on the ISL:** the vNIC moves to the surviving uplink and **no NVMe path is lost** (`inferred`). If the ISL is pruned (the default), the paths are lost as in strict A/B. | None | None |
+| **One NVMe path down** (FA port, FA-side cable, a pruned VLAN, or an unrecoverable node-side path) | Initiator keep-alive: lost KATO (5 s) after the last exchange; at once if the target closes the connection | Until detection the selector still sends new IO to it (§6.4c item 3). **Queue-depth (default):** a few commands stuck, retried at 3 × KATO + CQT ≈ 45 s; IO continues on the other paths. **Round-robin:** a queue-depth-bound guest stalls completely for ≈ 45 s. The generic 10 s multipath retry (HA-Scenarios) is SCSI / dm-multipath behavior, not this path. | None (stall < guest timeout) | None (no RF; the array owns the data) |
+| **One storage switch down** | Keep-alive (KATO); the CVM never sees the carrier loss | Every path through that switch is lost after KATO: in strict A/B, all of one VLAN's paths. New IO then moves to the other fabric. In-flight commands retry at 3 × KATO + CQT, so the worst case is about 45 s (§6.4c); with round-robin the guest pauses for that long. | None (stall < guest timeout) | None |
 | **FA primary controller down** | Secondary sees claim expiry in about 1 s, then promotes | Array-wide pause from a few seconds up to about 16 s. The controller's ports disappear. | None, if the pause is under the guest timeout | None |
-| **FA secondary controller down** | — | Only IO on its paths stalls, then retries on the primary's paths | None | None |
+| **FA secondary controller down** | Keep-alive (KATO): a crash is silent | Only IO on its paths stalls, then retries on the primary's paths at 3 × KATO + CQT (§6.4c). A graceful reboot (NDU) closes the connections instead: its paths are lost at once and in-flight IO waits CQT. | None | None |
 | **FA IO stall on primary** | IO delay timeout of 15 s, then giveback | Pause of 15 s plus promotion | None | None |
 | **Stargate or CVM down** (host up) | Redirector NOP (as in T2) | Redirected to a remote Stargate, which takes the vDisk lock and NVMe Persistent Reservation (Bible ext-storage) | None | None (no rebuild) |
 | **One CVM loses all array paths** (Stargate alive) | Stargate still answers NOPs, so **the redirector has no reason to move** (`inferred`) | **IO retries until the array responds** (DEPLOY-GUIDE) | Optional **per-VM force-shutdown timeout** restarts the VM on a node with connectivity (DEPLOY-GUIDE). Otherwise the VM stalls. | None |
@@ -535,7 +543,7 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 **Known gaps.** These are `assumption` values in the profile until a public source exists:
 
 - The length of the redirect stall.
-- The integration's NVMe keep-alive, reconnect and controller-loss values.
+- The integration's NVMe reconnect delay, IO timeout, path selector and keep-alive mode (command- or traffic-based), and whether reads skip the in-flight hold. KATO, CQT and controller loss are published.
 - The default per-VM force-shutdown timeout.
 - The guest-visible effect of a long array outage.
 
@@ -681,6 +689,7 @@ T1-lab:
 1. Disable one FA data IP. That path is lost, and IO continues on the others.
 2. Disable all FA IPs on one storage VLAN. Every CVM loses those paths.
 3. Prune the storage VLAN on one node's switch port. That node loses all its array paths while keeping management, which tests the path-loss handling with and without the per-VM force-shutdown timeout.
+4. Prune VLAN 10 on one array port's switch port, so every CVM loses one path silently, under the queue-depth vs the round-robin path selector: partial stall vs full stall for ≈ 3 × KATO + CQT (§6.4c).
 
 ---
 

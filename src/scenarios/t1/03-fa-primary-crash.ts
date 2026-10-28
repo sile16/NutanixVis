@@ -20,7 +20,7 @@ import {
   t1Steady,
 } from '../helpers';
 import { CT0, CT1, T1 } from '../ids';
-import { KATO, P, PATH_LOSS_WORST } from '../timers';
+import { KATO, P, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
 
 const PAUSE = P.flasharray.primaryCrashPauseS;
 const WORST = Math.max(PAUSE, PATH_LOSS_WORST);
@@ -52,7 +52,7 @@ export default defineScenario({
       allCvms(s, (c) => onlyPathsLostTo(c, faInterfacesOn(s, CT0))),
     ),
     allRunningAt(by(WORST)),
-    alwaysFrom(T0, 'no command waits longer than the pause or KATO + CQT', (s) =>
+    alwaysFrom(T0, `no command waits longer than the pause or ${PATH_LOSS_RULE}`, (s) =>
       allVms(s, (v) => v.ioPendingS <= WORST + SLACK),
     ),
     neverSeen(END, 'vm.io.guest-timeout'),

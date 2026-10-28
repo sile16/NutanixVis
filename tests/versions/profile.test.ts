@@ -10,7 +10,7 @@ const EXPECTED_GROUPS: Record<string, number> = {
   cluster: 7,
   hci: 15,
   bond: 4,
-  externalStorage: 12,
+  externalStorage: 14,
   flasharray: 10,
   guest: 1,
 };
@@ -56,5 +56,16 @@ describe.each(Object.values(profiles))('profile $id', (profile) => {
     const h = profile.ahvHa;
     expect(h.timeoutStartS.value + h.disconnectTimeoutS.value).toBe(h.fenceAtS.value);
     expect(h.fenceAtS.value).toBeLessThan(h.restartByS.value);
+  });
+
+  it('NVMe IO timeout covers the lost-path hold (SPEC §6.4c)', () => {
+    // Otherwise a command could be aborted and retried elsewhere while still in flight.
+    const es = profile.externalStorage;
+    const hold =
+      es.lostPathHoldKatoMultiplier.value * es.keepAliveTimeoutS.value +
+      es.commandQuiesceTimeS.value;
+    expect(es.ioTimeoutS.value).toBeGreaterThanOrEqual(hold);
+    expect(es.lostPathHoldKatoMultiplier.value).toBeGreaterThanOrEqual(2);
+    expect(es.lostPathHoldKatoMultiplier.value).toBeLessThanOrEqual(3);
   });
 });

@@ -7,6 +7,11 @@
 import type { CitationId, Cited } from '../../engine/types';
 
 export type MultipathPolicy = 'active-active' | 'active-passive';
+/**
+ * How `active-active` picks a path for each new command (SPEC §6.4b). `queue-depth`: the live path
+ * with the fewest outstanding commands; `round-robin`: the next live path in turn.
+ */
+export type PathSelector = 'queue-depth' | 'round-robin';
 
 export interface Profile {
   readonly id: string;
@@ -106,18 +111,28 @@ export interface Profile {
     }>;
     readonly pathLossDefault: Cited<'retry-until-array-responds'>;
     readonly multipathPolicy: Cited<MultipathPolicy>;
+    /** Path selector for `active-active`; the `nvme-path-selector` topology option overrides it. */
+    readonly pathSelector: Cited<PathSelector>;
     readonly ioQueuesPerPath: Cited<number>;
     /**
      * NVMe Keep Alive Timeout (KATO). The host sends Keep Alive at KATO/2; a path whose keep-alive
-     * goes unanswered for KATO is declared lost (SPEC §6.4c).
+     * goes unanswered for KATO is declared lost (SPEC §6.4c). The spec allows detection anywhere
+     * from KATO to 1.5 × KATO; the model uses KATO, deterministically.
      */
     readonly keepAliveTimeoutS: Cited<number>;
     /**
-     * NVMe Command Quiesce Time (CQT, TP4129). After a path is declared lost, commands that were in
-     * flight on it are held for CQT before being retried on another path, so the target can quiesce
-     * them first (prevents stale-write corruption). New IO uses surviving paths immediately.
+     * NVMe Command Quiesce Time (CQT, TP4129). Commands in flight on a lost path are not retried on
+     * another path until the target has had time to detect the loss and then CQT to quiesce them
+     * (prevents stale-write corruption). See `lostPathHoldKatoMultiplier`.
      */
     readonly commandQuiesceTimeS: Cited<number>;
+    /**
+     * Commands in flight on a silently lost path are retried on another path at
+     * `lostPathHoldKatoMultiplier × KATO + CQT` after the path's last successful exchange (NVMe Base
+     * Spec 2.1 §9.6.2: the controller detects the loss within 2 × KATT with command-based or 3 × KATT
+     * with traffic-based keep-alive; then CQT). On a connection the target closed, only CQT applies.
+     */
+    readonly lostPathHoldKatoMultiplier: Cited<number>;
     /** Delay between reconnect attempts on a lost path. */
     readonly reconnectDelayS: Cited<number>;
     /**
@@ -126,7 +141,10 @@ export interface Profile {
      * `RECONNECT_FOREVER` (-1) = never delete.
      */
     readonly controllerLossTimeoutS: Cited<number>;
-    /** Per-command NVMe IO timeout: an IO stuck on a live-but-broken queue is aborted and retried. */
+    /**
+     * Per-command NVMe IO timeout: an IO stuck on a live-but-broken queue is aborted and retried.
+     * Must be at least the lost-path hold, or a command could be retried while still in flight.
+     */
     readonly ioTimeoutS: Cited<number>;
   };
 

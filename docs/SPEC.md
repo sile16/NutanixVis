@@ -682,8 +682,8 @@ T1-lab:
 **Packets**
 
 - One canvas overlay is driven by `requestAnimationFrame`.
-- Each tick's traces are replayed over the tick's real-time duration, so a packet moves along its link path using `geometry.pointAt`.
-- Packets are colored by category, and dropped packets show a red burst at `dropAt`.
+- Every cable that carried traffic within the activity window shows a continuous stream of dots, one stream per category and direction (`link-flow.ts`). Dots move at a fixed, slow on-screen speed (60 px/s at zoom 1, about one cable per 2–5 s, as in ActiveClusterVis) on wall-clock time, so they keep moving while paused and do not speed up at ×20 or ×60. Streams fade as their traffic ages out of the window, and none is drawn on a cable that is down.
+- Dots are colored by category. A new drop shows a one-off red burst at `dropAt`; a persistent drop (to something that is down, or the same site and reason as last tick) shows a steady red × instead, and its stream stops there.
 - Hovering a link lists recent traces.
 - Animation is cosmetic: it replays traces and never feeds back into the engine.
 

@@ -6,8 +6,6 @@ import {
   dropKey,
   orientLinks,
   persistentDrops,
-  roundCount,
-  spritesAt,
   steadyDropPoints,
   tracePath,
 } from './replay';
@@ -95,31 +93,6 @@ describe('tracePath', () => {
   });
 });
 
-describe('spritesAt', () => {
-  const t0 = trace({ msgId: 'req', round: 0 });
-  const t1 = trace({ msgId: 'rsp', round: 1, links: ['l2', 'l1'] });
-  const drop = trace({ msgId: 'x', links: ['l1'], result: 'dropped', dropAt: 'l1' });
-
-  it('schedules rounds in sequence', () => {
-    const traces = [t0, t1];
-    const paths = traces.map((t) => tracePath(t, ctx));
-    expect(roundCount(traces)).toBe(2);
-    const early = spritesAt(traces, paths, 0.1);
-    expect(early).toHaveLength(1);
-    expect(early[0]).toMatchObject({ kind: 'packet', category: 'io-read' });
-    const late = spritesAt(traces, paths, 0.6);
-    expect(late).toHaveLength(1);
-    expect(spritesAt(traces, paths, 0.99)).toHaveLength(0);
-  });
-
-  it('turns a dropped packet into a burst at dropAt', () => {
-    const paths = [tracePath(drop, ctx)];
-    expect(spritesAt([drop], paths, 0.1)[0]?.kind).toBe('packet');
-    const burst = spritesAt([drop], paths, 0.5)[0];
-    expect(burst).toMatchObject({ kind: 'burst', x: 0, y: 50 });
-  });
-});
-
 describe('persistent drops (no blinking at a dead host)', () => {
   const toDead = trace({
     msgId: 'a',
@@ -168,11 +141,8 @@ describe('persistent drops (no blinking at a dead host)', () => {
     ]);
   });
 
-  it('draws no burst for a persistent drop, only a steady marker', () => {
+  it('marks persistent drop sites once each', () => {
     const paths = [tracePath(toDead, ctx)];
-    expect(spritesAt([toDead], paths, 0.1, [true])[0]?.kind).toBe('packet');
-    expect(spritesAt([toDead], paths, 0.5, [true])).toHaveLength(0);
-    expect(spritesAt([toDead], paths, 0.5, [false])[0]?.kind).toBe('burst');
     expect(steadyDropPoints([...paths, ...paths], [true, true])).toEqual([{ x: 0, y: 50 }]);
     expect(steadyDropPoints(paths, [false])).toEqual([]);
   });

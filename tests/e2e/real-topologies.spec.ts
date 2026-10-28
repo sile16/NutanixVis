@@ -240,3 +240,17 @@ test('context menu near the bottom edge stays inside the window', async ({ page 
   expect((menu?.y ?? 0) + (menu?.height ?? 0)).toBeLessThanOrEqual(720);
   expect((menu?.x ?? 0) + (menu?.width ?? 0)).toBeLessThanOrEqual(1280);
 });
+
+test('traffic dots keep streaming slowly while the simulation is paused', async ({ page }) => {
+  await open(page, 't1-ahv-flasharray');
+  await step(page, 3);
+  const overlay = page.getByTestId('packet-overlay');
+  await expect(overlay).not.toHaveAttribute('data-flows', '0');
+  const clock = await page.getByTestId('sim-clock').textContent();
+  const a = await overlay.evaluate((c) => (c as HTMLCanvasElement).toDataURL());
+  await page.waitForTimeout(400);
+  const b = await overlay.evaluate((c) => (c as HTMLCanvasElement).toDataURL());
+  expect(a).not.toEqual(b);
+  // Still paused: the clock did not move, only the dots did.
+  await expect(page.getByTestId('sim-clock')).toHaveText(clock ?? '');
+});

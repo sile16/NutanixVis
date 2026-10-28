@@ -43,7 +43,7 @@ export function Legend({
         Traffic{' '}
         <span className="font-normal">
           {animated
-            ? '(packets: this tick; glow: recent)'
+            ? '(dots and glow: recent ticks)'
             : reducedMotion
               ? '(reduced motion: highlighted)'
               : '(packets off: highlighted)'}

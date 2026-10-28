@@ -3,6 +3,7 @@ import type { Snapshot, Trace } from '../../engine/types';
 import { useSnapshot, useSnapshotHistory } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import { type ActivityWindow, buildActivityWindow } from './activity-window';
+import { type LinkFlow, linkFlows } from './link-flow';
 import { isCategoryVisible } from './traffic';
 
 export function usePrefersReducedMotion(): boolean {
@@ -74,4 +75,16 @@ export function usePreviousSnapshot(): Snapshot | undefined {
     const last = history.last(2);
     return last.length === 2 ? last[0] : undefined;
   }, [history, snapshot]);
+}
+
+/** Continuous dot streams over the same rolling window (legend filter applied). */
+export function useLinkFlows(ticks: number): readonly LinkFlow[] {
+  const snapshot = useSnapshot();
+  const history = useSnapshotHistory();
+  const traffic = useUi((s) => s.traffic);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the history grows per snapshot
+  return useMemo(
+    () => linkFlows(history.last(ticks), (c) => isCategoryVisible(traffic, c)),
+    [history, snapshot, ticks, traffic],
+  );
 }

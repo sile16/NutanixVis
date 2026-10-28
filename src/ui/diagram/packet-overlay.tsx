@@ -1,53 +1,73 @@
 /**
- * Packet overlay (SPEC §8): one `<canvas>` over the diagram, driven by requestAnimationFrame.
- * It replays the snapshot's traces over the tick's real-time window using `geometry.pointAt`
- * (via `replay.ts`) and the viewport from React Flow's public `getViewport()`. No React Flow
- * internals, and nothing here feeds back into the simulation.
+ * Packet overlay (SPEC §8): one `<canvas>` over the diagram, driven by requestAnimationFrame. It
+ * draws the continuous link flows (`link-flow.ts`) on wall-clock time, so dots keep a slow, steady
+ * pace whether the simulation is paused, stepping or running fast, using `geometry.pointAt` and the
+ * viewport from React Flow's public `getViewport()`. No React Flow internals, and nothing here
+ * feeds back into the simulation.
  *
- * Drops: a new drop bursts once; a persistent one (to something that is down, or the same site
- * and reason as last tick) gets a steady × instead, so a dead host's port does not blink.
- * `data-bursts` / `data-steady-drops` on the canvas expose the counts for tests.
+ * Drops: a new drop bursts once when its tick arrives; a persistent one (to something that is down,
+ * or the same site and reason as last tick) gets a steady × instead, so a dead host's port does not
+ * blink. `data-bursts` / `data-steady-drops` / `data-flows` on the canvas expose counts for tests.
  */
 import { useReactFlow } from '@xyflow/react';
 import { useEffect, useMemo, useRef } from 'react';
 import type { Trace } from '../../engine/types';
+import type { LinkGeometry, Point } from './geometry';
+import { flowDotsAt, type LinkFlow } from './link-flow';
 import {
   type DropContext,
   persistentDrops,
   type ReplayContext,
-  spritesAt,
   steadyDropPoints,
   tracePath,
 } from './replay';
 import { DROP_COLOR, trafficStyle } from './traffic';
 
 const PACKET_R = 3.6;
-const LOOP_GAP_MS = 350;
 const STEADY_X = 3.5;
+const BURST_MS = 900;
 
 export interface PacketOverlayProps {
+  readonly flows: readonly LinkFlow[];
+  readonly geometry: ReadonlyMap<string, LinkGeometry>;
+  /** Activity window length in ticks (stream fading). */
+  readonly ticks: number;
+  /** This tick's (visible) traces, for drop bursts and markers. */
   readonly traces: readonly Trace[];
-  /** Changes every tick; restarts the replay. */
+  /** Changes every tick; restarts the drop bursts. */
   readonly version: number;
   readonly ctx: ReplayContext;
   /** Which drops are persistent (not news) this tick. */
   readonly drops: DropContext;
-  /** Real-time duration of one replay. */
-  readonly windowMs: number;
-  /** Loop the replay (while paused) instead of playing it once. */
-  readonly loop: boolean;
 }
 
-export function PacketOverlay({ traces, version, ctx, drops, windowMs, loop }: PacketOverlayProps) {
+export function PacketOverlay({
+  flows,
+  geometry,
+  ticks,
+  traces,
+  version,
+  ctx,
+  drops,
+}: PacketOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { getViewport } = useReactFlow();
   const paths = useMemo(() => traces.map((t) => tracePath(t, ctx)), [traces, ctx]);
   const steady = useMemo(() => persistentDrops(traces, drops), [traces, drops]);
   const markers = useMemo(() => steadyDropPoints(paths, steady), [paths, steady]);
-  const bursts = traces.filter((t, i) => t.result === 'dropped' && !steady[i] && paths[i]).length;
+  const bursts = useMemo(() => {
+    const out = new Map<string, Point>();
+    traces.forEach((t, i) => {
+      const p = paths[i];
+      if (t.result !== 'dropped' || steady[i] || !p || p.dropU === null) return;
+      const at = p.at(p.dropU);
+      out.set(`${Math.round(at.x)},${Math.round(at.y)}`, at);
+    });
+    return [...out.values()];
+  }, [traces, paths, steady]);
   const startRef = useRef(0);
 
-  // Restart the replay whenever a new snapshot arrives.
+  // Restart the drop bursts whenever a new snapshot arrives.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is the restart trigger
   useEffect(() => {
     startRef.current = performance.now();
@@ -60,12 +80,10 @@ export function PacketOverlay({ traces, version, ctx, drops, windowMs, loop }: P
     const g = canvas.getContext('2d');
     if (!g) return;
 
-    let width = 0;
-    let height = 0;
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      width = parent.clientWidth;
-      height = parent.clientHeight;
+      const width = parent.clientWidth;
+      const height = parent.clientHeight;
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
       canvas.style.width = `${width}px`;
@@ -92,51 +110,51 @@ export function PacketOverlay({ traces, version, ctx, drops, windowMs, loop }: P
       g.clearRect(0, 0, canvas.width, canvas.height);
       const { x, y, zoom } = getViewport();
       g.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * x, dpr * y);
+      for (const d of flowDotsAt(flows, geometry, now, ticks)) {
+        g.globalAlpha = d.alpha;
+        g.beginPath();
+        g.arc(d.x, d.y, PACKET_R, 0, Math.PI * 2);
+        g.fillStyle = trafficStyle(d.category).color;
+        g.fill();
+        g.lineWidth = 1 / zoom;
+        g.strokeStyle = 'rgba(255,255,255,0.9)';
+        g.stroke();
+      }
+      g.globalAlpha = 1;
       // Steady markers for persistent drops: drawn every frame, never animated.
       if (markers.length) {
         g.lineWidth = 2;
         g.strokeStyle = DROP_COLOR;
         for (const m of markers) cross(m.x, m.y, STEADY_X);
       }
-      const elapsed = now - startRef.current;
-      const phase = loop ? (elapsed % (windowMs + LOOP_GAP_MS)) / windowMs : elapsed / windowMs;
-      if (phase > 1 || phase < 0) return;
-      for (const s of spritesAt(traces, paths, phase, steady)) {
-        if (s.kind === 'packet') {
-          g.beginPath();
-          g.arc(s.x, s.y, PACKET_R, 0, Math.PI * 2);
-          g.fillStyle = trafficStyle(s.category).color;
-          g.fill();
-          g.lineWidth = 1 / zoom;
-          g.strokeStyle = 'rgba(255,255,255,0.9)';
-          g.stroke();
-        } else {
-          const r = PACKET_R + 10 * s.progress;
-          g.globalAlpha = 1 - s.progress * 0.8;
-          g.beginPath();
-          g.arc(s.x, s.y, r, 0, Math.PI * 2);
-          g.lineWidth = 2;
-          g.strokeStyle = DROP_COLOR;
-          g.stroke();
-          // An × marks the drop point, so a drop isn't conveyed by color alone.
-          cross(s.x, s.y, 4);
-          g.globalAlpha = 1;
-        }
+      const progress = (now - startRef.current) / BURST_MS;
+      if (progress < 0 || progress > 1) return;
+      for (const b of bursts) {
+        g.globalAlpha = 1 - progress * 0.8;
+        g.beginPath();
+        g.arc(b.x, b.y, PACKET_R + 10 * progress, 0, Math.PI * 2);
+        g.lineWidth = 2;
+        g.strokeStyle = DROP_COLOR;
+        g.stroke();
+        // An × marks the drop point, so a drop isn't conveyed by color alone.
+        cross(b.x, b.y, 4);
       }
+      g.globalAlpha = 1;
     };
     raf = requestAnimationFrame(draw);
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, [traces, paths, steady, markers, windowMs, loop, getViewport]);
+  }, [flows, geometry, ticks, markers, bursts, getViewport]);
 
   return (
     <canvas
       ref={canvasRef}
       className="pointer-events-none absolute inset-0 z-[4]"
       data-testid="packet-overlay"
-      data-bursts={bursts}
+      data-flows={flows.length}
+      data-bursts={bursts.length}
       data-steady-drops={markers.length}
     />
   );

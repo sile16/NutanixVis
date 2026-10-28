@@ -1,6 +1,6 @@
 /**
  * The topology diagram: React Flow renders device nodes and cables laid out by `layout.ts` and
- * routed by `geometry.ts`; the canvas `PacketOverlay` replays traces on top. The diagram only
+ * routed by `geometry.ts`; the canvas `PacketOverlay` streams traffic dots on top. The diagram only
  * reads snapshots; user intent goes through the UI store and `useSimControls`.
  */
 import {
@@ -16,7 +16,6 @@ import {
 } from '@xyflow/react';
 import { useCallback, useMemo, useState } from 'react';
 import type { DeviceView, Snapshot } from '../../engine/types';
-import { PAUSED_REPLAY_MS, playbackSchedule } from '../store/playback';
 import { useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import { glowOpacity } from './activity-window';
@@ -26,6 +25,7 @@ import { buildEdges, buildNodes, type CableEdge, type DeviceNode } from './flow'
 import { computeLinkGeometries, type Point } from './geometry';
 import {
   useActivityWindow,
+  useLinkFlows,
   usePrefersReducedMotion,
   usePreviousSnapshot,
   useTraceHistory,
@@ -75,8 +75,6 @@ export function Diagram({
   const layoutEdit = useUi((s) => s.layoutEdit);
   const showPackets = useUi((s) => s.showPackets);
   const bondUtilHost = useUi((s) => s.bondUtilHost);
-  const playing = useUi((s) => s.playing);
-  const speed = useUi((s) => s.speed);
   const traffic = useUi((s) => s.traffic);
   const reducedMotion = usePrefersReducedMotion();
   const history = useTraceHistory();
@@ -115,6 +113,7 @@ export function Diagram({
   // Activity views aggregate a rolling window so multipath round-robin doesn't flicker.
   const activityTicks = useUi((s) => s.activityTicks);
   const win = useActivityWindow(activityTicks);
+  const flows = useLinkFlows(activityTicks);
   const pathUsage = useMemo(
     () =>
       selection?.type === 'device'
@@ -234,8 +233,6 @@ export function Diagram({
     [select],
   );
 
-  const replayWindow = playing ? playbackSchedule(speed).intervalMs : PAUSED_REPLAY_MS;
-
   return (
     <div className="relative h-full w-full" data-testid="diagram">
       <ReactFlow<DeviceNode, CableEdge>
@@ -277,12 +274,13 @@ export function Diagram({
         <Controls showInteractive={false} position="bottom-right" fitViewOptions={FIT_VIEW} />
         {animate ? (
           <PacketOverlay
+            flows={flows}
+            geometry={geometries}
+            ticks={win.ticks}
             traces={visibleTraces}
             version={snapshot.version}
             ctx={replayCtx}
             drops={drops}
-            windowMs={replayWindow}
-            loop={!playing}
           />
         ) : null}
         <Panel position="bottom-left">

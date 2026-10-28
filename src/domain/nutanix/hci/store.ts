@@ -9,7 +9,15 @@
  *   held by the RF Oplog copies on the nodes that acked them, Bible 4g), `filling` (a substitute
  *   or Curator copy still being populated) or `stale` (dropped from metadata after Curator
  *   restored RF elsewhere; garbage until the next Curator scan removes it).
- * - A replica is available when its CVM's Stargate is serving and its disk is online.
+ * - A replica is available when its CVM's Stargate is serving, the cluster has not declared that
+ *   Stargate down, and its disk is online.
+ * - Stargate-down detection (KB "IO freeze in UVMs is expected when CVM on different node
+ *   shutdown or Stargate on different node crashes", `inferred`): a silent peer (node power
+ *   loss, hang, network isolation) is declared down when its Zookeeper session expires,
+ *   `hci.stargateDownDetectS` after it went silent; a cleanly stopped Stargate closes its session,
+ *   so it is declared down after `hci.stargateStopDetectS`. Until then writing Stargates still
+ *   target its replicas, so writes that need one stall. The rebuild clock starts at the
+ *   declaration.
  * - An extent group is reachable if an `ok` replica is available, or a `behind` one is available
  *   together with another available copy holding the missed writes (`inferred`).
  *
@@ -58,6 +66,12 @@ export type Resiliency = 'OK' | 'Rebuilding' | 'Critical';
 
 type PairStatus = 'ok' | 'dropped' | 'unknown';
 
+/** A CVM the cluster is losing: since when, and how long until it is declared down. */
+interface Suspect {
+  readonly since: number;
+  readonly detectS: number;
+}
+
 const round1 = (x: number) => Math.round(x * 10) / 10;
 
 export class HciStore {
@@ -84,6 +98,9 @@ export class HciStore {
   /** `hci-rebuild` frames acked by their target this tick (by message id). */
   private readonly rebuildAcks = new Set<string>();
   private wasAvailable = true;
+  /** CVMs that are not serving (or are outside the ZK quorum side), by when that started. */
+  private readonly suspects = new Map<DeviceId, Suspect>();
+  private lastObserve = -1;
   private capacityLevel: 'ok' | 'warn' | 'read-only' = 'ok';
 
   constructor(
@@ -140,10 +157,48 @@ export class HciStore {
 
   // ── Availability ──────────────────────────────────────────────────────────
 
+  /** The CVM's Stargate is actually serving (it answers replica and rebuild frames). */
   nodeServing(cvm: DeviceId): boolean {
     const c = this.cluster;
     if (!this.nodes.has(cvm)) return false;
     return c === undefined || (c.isCvmUp(cvm) && c.isStargateUp(cvm));
+  }
+
+  /**
+   * Track which Stargates the cluster is losing, once per tick (see header). A CVM that is down
+   * is silent; one that runs with Stargate stopped is a clean stop; one outside the quorum side
+   * (while a side has quorum) is isolated, hence silent.
+   */
+  observe(now: number): void {
+    if (this.lastObserve === now) return;
+    this.lastObserve = now;
+    const c = this.cluster;
+    if (c === undefined) return;
+    const H = this.profile.hci;
+    for (const n of this.nodeIds) {
+      let detectS: number | undefined;
+      if (!c.isCvmUp(n)) detectS = H.stargateDownDetectS.value;
+      else if (!c.isStargateUp(n)) detectS = H.stargateStopDetectS.value;
+      else if (c.zkQuorum() && c.inQuorum?.(n) === false) detectS = H.stargateDownDetectS.value;
+      if (detectS === undefined) this.suspects.delete(n);
+      else if (!this.suspects.has(n)) this.suspects.set(n, { since: now, detectS });
+    }
+  }
+
+  /** The cluster has declared this CVM's Stargate down (its ZK session is gone). */
+  nodeDown(cvm: DeviceId): boolean {
+    const s = this.suspects.get(cvm);
+    return s !== undefined && this.lastObserve - s.since >= s.detectS;
+  }
+
+  /** The CVM went silent but is not declared down yet: writes that need it wait. */
+  awaitingDetection(cvm: DeviceId): boolean {
+    return this.suspects.has(cvm) && !this.nodeDown(cvm);
+  }
+
+  /** Serving and not declared down: usable as a replica holder, source or target. */
+  nodeUp(cvm: DeviceId): boolean {
+    return this.nodeServing(cvm) && !this.nodeDown(cvm);
   }
 
   diskServing(id: DeviceId): boolean {
@@ -151,7 +206,16 @@ export class HciStore {
   }
 
   available(r: Replica): boolean {
-    return this.nodeServing(r.node) && this.diskServing(r.disk);
+    return this.nodeUp(r.node) && this.diskServing(r.disk);
+  }
+
+  /**
+   * A writing Stargate still targets this replica: its node is not declared down and, if it is
+   * up, its disk is online (a silent node's disks are unknown to the writer).
+   */
+  private writable(r: Replica): boolean {
+    if (this.nodeDown(r.node)) return false;
+    return !this.nodeServing(r.node) || this.diskServing(r.disk);
   }
 
   metadataAvailable(): boolean {
@@ -162,17 +226,17 @@ export class HciStore {
   curatorCanRun(): boolean {
     const c = this.cluster;
     if (c !== undefined && !(c.zkQuorum() && c.metadataAvailable())) return false;
-    return this.nodeIds.some((n) => this.nodeServing(n));
+    return this.nodeIds.some((n) => this.nodeUp(n));
   }
 
   /** Curator master: the lowest serving CVM (`assumption`: election order is not published). */
   curatorLeader(): DeviceId {
-    return this.nodeIds.find((n) => this.nodeServing(n)) ?? this.nodeIds[0] ?? 'cluster';
+    return this.nodeIds.find((n) => this.nodeUp(n)) ?? this.nodeIds[0] ?? 'cluster';
   }
 
   /** Nodes that can take a new replica now. */
   candidates(): DeviceId[] {
-    return this.nodeIds.filter((n) => this.nodeServing(n) && this.servingDisks(n).length > 0);
+    return this.nodeIds.filter((n) => this.nodeUp(n) && this.servingDisks(n).length > 0);
   }
 
   private servingDisks(node: DeviceId): DiskHandle[] {
@@ -286,8 +350,10 @@ export class HciStore {
   }
 
   /**
-   * Nodes a write must reach: every available complete or filling replica, plus substitutes on
-   * other healthy nodes for unavailable ones, so RF copies are always written (Bible 4g, 4i).
+   * Nodes a write must reach: every complete or filling replica the writer still believes in
+   * (`writable`: a silent node not yet declared down is still targeted, so the write stalls until
+   * it is), plus substitutes on other healthy nodes for the rest, so RF copies are always
+   * written (Bible 4g, 4i).
    * `undefined` = the write cannot be placed now (no live copy, or too few healthy nodes): hang.
    */
   writePlan(
@@ -298,7 +364,7 @@ export class HciStore {
     if (!this.reachable(eg)) return undefined;
     const targets = [...pinned].map(([node, disk]) => ({ node, disk, substitute: false }));
     for (const r of eg.replicas) {
-      if (r.state === 'stale' || !this.available(r) || tried.has(r.node) || pinned.has(r.node)) {
+      if (r.state === 'stale' || !this.writable(r) || tried.has(r.node) || pinned.has(r.node)) {
         continue;
       }
       targets.push({ node: r.node, disk: r.disk, substitute: false });
@@ -420,6 +486,7 @@ export class HciStore {
   advance(ctx: Ctx): void {
     if (this.lastAdvance === ctx.now) return;
     this.lastAdvance = ctx.now;
+    this.observe(ctx.now);
     this.dropUnneededFills();
     this.detectFailures(ctx);
     this.rebuild(ctx);
@@ -438,15 +505,29 @@ export class HciStore {
     }
   }
 
-  /** Rebuild starts `hci.rebuildStartDelayS` after replicas become unavailable (Bible 4i). */
+  /**
+   * Where an unavailable replica was lost: its disk (node up), or its CVM once the cluster has
+   * declared that Stargate down. `undefined` while the node is silent but not yet declared down.
+   */
+  private lostKey(r: Replica): string | undefined {
+    if (this.nodeUp(r.node)) return `disk:${r.disk}`;
+    return this.nodeDown(r.node) ? `cvm:${r.node}` : undefined;
+  }
+
+  /**
+   * Rebuild starts `hci.rebuildStartDelayS` after a location is lost: for a CVM, counted from
+   * when its Stargate is declared down; for a disk, from when Stargate marks it offline (Bible
+   * 4i; KBs "Delayed rebuild for planned maintenance events", "Slow data rebuild after failure
+   * on clusters with Erasure Coding enabled").
+   */
   private detectFailures(ctx: Ctx): void {
     const now = ctx.now;
     const seen = new Map<string, DeviceId>();
     for (const eg of this.egs) {
       for (const r of eg.replicas) {
         if ((r.state !== 'ok' && r.state !== 'behind') || this.available(r)) continue;
-        const key = this.nodeServing(r.node) ? `disk:${r.disk}` : `cvm:${r.node}`;
-        seen.set(key, r.node);
+        const key = this.lostKey(r);
+        if (key !== undefined) seen.set(key, r.node);
       }
     }
     for (const key of [...this.lost.keys()]) {
@@ -475,7 +556,7 @@ export class HciStore {
             ? `Curator starts re-replicating the extent groups that had a copy on ${node}`
             : `Curator starts re-replicating the extent groups that had a copy on ${diskId}`,
         causeIds: cause === undefined ? [] : [cause],
-        cite: ['ntnx-bible-4i'],
+        cite: this.profile.hci.rebuildStartDelayS.cite,
         confidence: this.profile.hci.rebuildStartDelayS.confidence,
       });
     }
@@ -487,6 +568,7 @@ export class HciStore {
    *    them and is `ok` again (`assumption`: modeled as one exchange, the delta being small).
    * 2. Rebuild: copy under-replicated extent groups at `rebuildGiBpsPerNode` × surviving nodes
    *    (`assumption`), fewest live copies first, onto new targets chosen by `placeReplicas`.
+   *    A group waits until the rebuild for a location it lost has started (`detectFailures`).
    * A copy only progresses over a source → target pair whose last `hci-rebuild` frame the target
    * acked, so network faults or a dead target Stargate stall it.
    */
@@ -512,6 +594,7 @@ export class HciStore {
     let progressed = false;
     let placeable = false;
     let short = false;
+    let waiting = false;
     if (canRun) {
       for (const eg of this.egs) {
         const holders = eg.replicas.filter(
@@ -538,6 +621,10 @@ export class HciStore {
     let budget = canRun ? this.profile.hci.rebuildGiBpsPerNode.value * cand.length : 0;
     const size = this.replicaGiB();
     for (const eg of canRun ? jobs : []) {
+      if (!this.rebuildDue(eg)) {
+        waiting = true;
+        continue;
+      }
       const live = this.liveReplicas(eg);
       const fills = this.fillingReplicas(eg);
       const need = this.rf - live.length - fills.length;
@@ -575,7 +662,7 @@ export class HciStore {
     }
     const under = this.underReplicated();
     // Critical rather than Rebuilding when RF cannot be restored with the nodes that remain.
-    this.stalled = under > 0 && (!canRun || short || (!placeable && !progressed));
+    this.stalled = under > 0 && (!canRun || short || (!placeable && !progressed && !waiting));
 
     this.rebuildAcks.clear();
     const next = new Map<string, string>();
@@ -596,6 +683,21 @@ export class HciStore {
     }
     this.lastPairs = next;
     this.finishIfDone(ctx, under);
+  }
+
+  /**
+   * Curator copies a group once the rebuild for one of the locations it lost has started, or
+   * right away when it is short for another reason (no lost location pending).
+   */
+  private rebuildDue(eg: ExtentGroup): boolean {
+    let pending = false;
+    for (const r of eg.replicas) {
+      if ((r.state !== 'ok' && r.state !== 'behind') || this.available(r)) continue;
+      const key = this.lostKey(r);
+      if (key !== undefined && this.announced.has(key)) return true;
+      pending = true;
+    }
+    return !pending;
   }
 
   /** A copy is complete; once RF copies are live, unavailable old copies leave the metadata. */

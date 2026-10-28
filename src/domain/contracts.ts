@@ -100,6 +100,11 @@ export interface ClusterView {
   /** Endpoints of a CVM on external-storage segments (T1). */
   cvmStorageEndpoints(cvm: DeviceId): readonly EndpointId[];
   zkQuorum(): boolean;
+  /**
+   * The CVM is on the Zookeeper quorum side. Optional: the HCI store uses `false` (while some
+   * side has quorum) as "this Stargate's ZK session is expiring", i.e. a silent peer.
+   */
+  inQuorum?(cvm: DeviceId): boolean;
   metadataAvailable(): boolean;
   /** Host fenced by AHV HA: IO from it must not be served. */
   isHostFenced(host: DeviceId): boolean;

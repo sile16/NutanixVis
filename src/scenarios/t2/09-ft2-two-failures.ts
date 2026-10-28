@@ -14,7 +14,7 @@ import {
   vmsOfNode,
 } from '../helpers';
 import { nodeId, T2 } from '../ids';
-import { P } from '../timers';
+import { NODE_REBUILD_START, P } from '../timers';
 
 const HA = P.ahvHa;
 const END = by(HA.restartByS) + 30;
@@ -37,8 +37,10 @@ export default defineScenario({
       (s) => derived(s).ftConfigured === 2 && derived(s).nodeFailureTolerance === 2,
     ),
     alwaysFrom(T0, 'ZK (3 of 5), metadata (RF5) and data (RF3) stay available', storageAvailable),
-    atCtx(by(P.hci.rebuildStartDelayS), 'rebuild starts immediately', (_s, ctx) =>
-      eventSeen(ctx, 'curator.rebuild.start'),
+    atCtx(
+      by(NODE_REBUILD_START),
+      'rebuild starts 60 s after the nodes are declared down',
+      (_s, ctx) => eventSeen(ctx, 'curator.rebuild.start'),
     ),
     at(by(HA.restartByS), 'VMs from both nodes restarted on the survivors', (s) =>
       [1, 2].every((n) =>
@@ -53,7 +55,7 @@ export default defineScenario({
     ...baseInvariants(),
   ],
   narrative:
-    'On an FT2 cluster data has three copies, metadata five, and Zookeeper runs on five nodes. Two nodes fail at once: every extent group and metadata range still has a live majority, so storage stays up, Curator starts rebuilding, and HA restarts the VMs from both nodes on the remaining three.',
+    'On an FT2 cluster data has three copies, metadata five, and Zookeeper runs on five nodes. Two nodes fail at once: every extent group and metadata range still has a live majority, so storage stays up. Once both Stargates are declared down (ZK session expiry), Curator starts rebuilding after its start delay, and HA restarts the VMs from both nodes on the remaining three.',
   cite: ['ntnx-bible-4i', 'ntnx-bible-5b'],
   status: 'active',
 });

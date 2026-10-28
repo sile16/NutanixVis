@@ -14,7 +14,7 @@ import {
   vms,
 } from '../helpers';
 import { nodeId, T2 } from '../ids';
-import { P } from '../timers';
+import { NODE_REBUILD_START, nodeRebuildS, P } from '../timers';
 
 const HA = P.ahvHa;
 const FIRST = nodeId(4);
@@ -22,9 +22,13 @@ const SECOND = nodeId(3);
 
 /** After the rebuild and the ring detach have both finished, a second failure is survivable. */
 function afterRebuild(): ScenarioDef {
-  // Wait for both the ring detach (30 min) and the rebuild (data ÷ rate, about 32 min with the
-  // default assumptions, see t2-02); the first expectation guards this if those change.
-  const SECOND_AT = T0 + P.cluster.cassandraRingDetachS + 600;
+  // Wait for both the ring detach (30 min) and the rebuild: Stargate-down detection plus the start
+  // delay, then the copy (data ÷ rate, about 64 min with the default assumptions, see t2-02). The
+  // rebuild is now the later of the two; a 10 % allowance on the copy plus 10 min of margin keeps
+  // the intent (fully rebuilt and detached) and the first expectation guards it.
+  const rebuild = nodeRebuildS(T2.topology, FIRST, T2.nodes.length - 1);
+  const REBUILT_AT = NODE_REBUILD_START + Math.ceil(rebuild.seconds * 1.1);
+  const SECOND_AT = T0 + Math.max(P.cluster.cassandraRingDetachS, REBUILT_AT) + 600;
   const END = by(HA.restartByS, SECOND_AT) + 30;
   return defineScenario({
     id: 't2-08-second-failure-after-rebuild',
@@ -54,7 +58,7 @@ function afterRebuild(): ScenarioDef {
       ...baseInvariants(),
     ],
     narrative:
-      'Node 4 fails, Curator restores every extent group to two copies on the remaining nodes, and after 30 minutes node 4 is detached from the metadata ring. When node 3 fails later, every piece of data and metadata still has a live majority, so storage stays up and HA restarts the VMs on the last two nodes. The cluster now has no failure tolerance left.',
+      'Node 4 fails. After 30 minutes it is detached from the metadata ring, and about an hour after the failure Curator has restored every extent group to two copies on the remaining nodes. When node 3 fails later, every piece of data and metadata still has a live majority, so storage stays up and HA restarts the VMs on the last two nodes. The cluster now has no failure tolerance left.',
     cite: ['ntnx-bible-4i', 'ntnx-bible-5b', 'ntnx-kb-1256'],
     status: 'active',
   });
@@ -62,7 +66,9 @@ function afterRebuild(): ScenarioDef {
 
 /** A second failure while the first rebuild is still running exceeds FT1. */
 function duringRebuild(): ScenarioDef {
-  const SECOND_AT = T0 + 30;
+  // Node 4 is declared down and its rebuild has started (`NODE_REBUILD_START`); node 3 fails
+  // 30 s into the copy.
+  const SECOND_AT = T0 + NODE_REBUILD_START + 30;
   const RETURN_AT = SECOND_AT + 600;
   // Node 4's replicas are reachable again once its CVM has booted and Stargate is up
   // (`cluster.cvmBootS`, SPEC §14 #9), not when HA restarts VMs.

@@ -7,6 +7,14 @@
  * and the extent group stays under-replicated until Curator rebuilds it (Bible 4i). A write that
  * reaches a non-local Stargate (the VM's own CVM is down) writes all RF copies remotely.
  *
+ * When a replica is re-placed depends on why it does not ack:
+ * - Its peer went silent (node power loss, hang, isolation): the write waits until the cluster
+ *   declares that Stargate down (`hci.stargateDownDetectS`, ZK session expiry; a clean Stargate
+ *   stop is `hci.stargateStopDetectS`). This is the IO freeze of KB "IO freeze in UVMs is
+ *   expected when CVM on different node shutdown or Stargate on different node crashes".
+ * - Its peer is up but the frame was dropped or not acked: `hci.replicaAckTimeoutS`.
+ * - Its disk went offline (Stargate sees that itself): at once.
+ *
  * Reads: from a live local replica if there is one, otherwise from a remote one
  * (`hci-read` → `hci-read-resp`). Checksums and scrubbing are out of scope.
  *
@@ -179,6 +187,7 @@ export class HciBackend implements StorageBackend {
   tick(ctx: Ctx): void {
     const e = asEngineContext(ctx);
     const timeout = ctx.profile.hci.replicaAckTimeoutS.value;
+    this.store.observe(ctx.now);
     for (const p of [...this.pending.values()]) {
       if (p.hung) {
         p.hung = false;
@@ -190,10 +199,12 @@ export class HciBackend implements StorageBackend {
       let failed = false;
       for (const [node, t] of p.targets) {
         if (t.acked) continue;
+        // A silent peer: hold the write until its Stargate is declared down.
+        if (this.store.awaitingDetection(node)) continue;
         const dropped = t.msgId !== undefined && e.trace(t.msgId)?.result === 'dropped';
         if (
           dropped ||
-          !this.store.nodeServing(node) ||
+          !this.store.nodeUp(node) ||
           !this.store.diskServing(t.disk) ||
           ctx.now - t.sentAt >= timeout
         ) {

@@ -116,10 +116,10 @@ export const current: Profile = {
       'No published figure. Model value for CVM power-on to Stargate serving; replace from lab testing.',
     ),
     cassandraRejoinStableS: c(
-      600,
-      'assumption',
-      ['ntnx-bible-4i', 'ntnx-kb-1256'],
-      'Auto ring-repair re-adds a detached node after it has been stable for an unspecified time.',
+      1800,
+      'inferred',
+      ['ntnx-kb-1256', 'ntnx-bible-4i'],
+      'KB-1256: a detached node is "added back to the ring if the node has been stable for 30 minutes". KB text not yet confirmed on the portal.',
     ),
     hostRebootS: c(
       300,
@@ -131,22 +131,27 @@ export const current: Profile = {
 
   hci: {
     rebuildStartDelayS: c(
-      0,
-      'verified',
-      ['ntnx-bible-4i'],
-      'Rebuild begins immediately on an unplanned failure.',
+      60,
+      'inferred',
+      ['ntnx-bible-4i', 'ntnx-kb-delayed-rebuild', 'ntnx-kb-slow-rebuild-ec'],
+      'Counted from when the Stargate is declared down. Bible 4i "immediately" means no long repair-delay timer; the KBs give a selective Curator scan / rebuild 60 s after Stargate is down. KB text not yet confirmed on the portal.',
     ),
     curatorPartialScanS: c(
       3600,
-      'unverified',
-      ['ntnx-community-cvm-components'],
-      'Partial scan "every hour".',
+      'inferred',
+      [
+        'ntnx-kb-2101',
+        'ntnx-community-curator-scans',
+        'ntnx-community-cvm-components',
+        'ntnx-community-free-space',
+      ],
+      'Partial scan about 1 h after the last one (three Nutanix-staff community posts agree; KB-2101 by title, KB text not yet confirmed on the portal).',
     ),
     curatorFullScanS: c(
       21600,
-      'unverified',
-      ['ntnx-community-cvm-components'],
-      'Full scan "around every 6 hours".',
+      'inferred',
+      ['ntnx-kb-2101', 'ntnx-community-curator-scans', 'ntnx-community-cvm-components'],
+      'Full scan about 6 h after the last one (Nutanix-staff community posts; KB-2101 by title, KB text not yet confirmed on the portal).',
     ),
     diskOfflineEventsPerHourToStayOffline: c(
       3,
@@ -171,18 +176,23 @@ export const current: Profile = {
     extentGroupsPerVdisk: c(
       8,
       'assumption',
-      [],
-      'Model granularity (SPEC §6.3 default). Real extent groups are ~1–4 MiB, so a vDisk has thousands.',
+      ['ntnx-bible-4g'],
+      'Model granularity (SPEC §6.3 default). Real extent groups are 4 MiB (1 MiB with dedup), Bible 4g, so a vDisk has thousands.',
     ),
     /**
      * Curator re-replication throughput contributed by each surviving CVM node. The total rate is
      * this × N, so each node does ~1/N of the work (Bible 4i).
      */
     rebuildGiBpsPerNode: c(
-      1,
+      0.5,
       'assumption',
-      ['ntnx-bible-4i', 'ntnx-community-rebuild-rate'],
-      'No published per-node figure. Chosen to land in the range of a public lab test (>5 TB rebuilt in <20 min, ~9 GBps cluster-wide; Josh Odgers, "Nutanix resiliency part 1", 2018).',
+      [
+        'ntnx-bible-4i',
+        'ntnx-community-rebuild-rate',
+        'ntnx-community-rebuild-rate-rf3',
+        'ntnx-kb-slow-rebuild-ec',
+      ],
+      'No published per-node figure. Public 2018 lab tests (Josh Odgers, parts 1 and 3) work out to about 0.3–0.6 GB/s per surviving node; an all-flash node rebuild is "expected 1 to 2 hours" (KB, text not yet confirmed on the portal). Anecdotal.',
     ),
     /** Physical used capacity (replicas included) as % of raw, at t=0. Runtime: `hci.set-capacity`. */
     initialUsedCapacityPct: c(
@@ -192,13 +202,32 @@ export const current: Profile = {
       'Illustrative starting fill. Drives replica size, hence rebuild duration.',
     ),
     /** Hades SMART test duration once a disk's fault clears. */
-    diskSmartCheckS: c(10, 'assumption', ['ntnx-bible-4i'], 'Bible 4i gives no duration.'),
+    diskSmartCheckS: c(
+      120,
+      'assumption',
+      ['ntnx-bible-4i', 'ntnx-kb-hades', 'smartctl-man'],
+      'No published duration. Hades runs a smartctl short self-test, which takes a minute or two.',
+    ),
     /** Stargate replication / remote-read RPC: no ack within this → replica treated as unreachable. */
     replicaAckTimeoutS: c(
       2,
       'assumption',
       [],
-      'No published Stargate RPC timeout. Short, so a dropped replica write is re-placed within a few ticks.',
+      'No published Stargate RPC timeout. Applies to a dropped replica write whose peer is still up. A silent peer (power loss, hang, isolation) is handled by `stargateDownDetectS` (up to 20 s).',
+    ),
+    /** Silent peer Stargate → declared down when its ZK session expires (writes stall meanwhile). */
+    stargateDownDetectS: c(
+      20,
+      'inferred',
+      ['ntnx-kb-io-freeze-cvm-down'],
+      'KB: on a node hang or unexpected reboot "it could take up to 20 seconds for Zookeeper to determine that Stargate is down", with a noticeable IO stoppage. KB text not yet confirmed on the portal.',
+    ),
+    /** Cleanly stopped Stargate (process stop) → its ZK session closes at once. */
+    stargateStopDetectS: c(
+      1,
+      'inferred',
+      ['ntnx-kb-io-freeze-cvm-down'],
+      'KB: when Stargate stops, the IO pause is "~1 second or potentially less". KB text not yet confirmed on the portal.',
     ),
     /** Window for `diskOfflineEventsPerHourToStayOffline` (the rule is "per hour"). */
     diskOfflineWindowS: c(3600, 'verified', ['ntnx-bible-4i'], '"3 times within an hour".'),

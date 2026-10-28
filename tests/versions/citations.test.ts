@@ -16,6 +16,7 @@ const PUBLIC_HOSTS = new Set([
   'spdk.io',
   'nvmexpress.org',
   'web.archive.org',
+  'linux.die.net',
   // Nutanix-employee technical blog (community-grade source, labeled unverified/assumption).
   'www.joshodgers.com',
 ]);

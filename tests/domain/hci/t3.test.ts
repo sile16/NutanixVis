@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createHciDomain, MSG } from '../../../src/domain/nutanix/hci';
+import { current } from '../../../src/domain/versions/profiles/current';
 import { loadSimulation } from '../../../src/loader/simulation';
 import { harness } from './fakes';
 
@@ -25,7 +26,7 @@ describe('T3: compute-only + storage-only (SPEC §6.3a)', () => {
     const affected = h.workload.vms.filter((v) => v.home === 'node-4.cvm');
     expect(affected.length).toBeGreaterThan(0);
     h.sim.applyAction({ kind: 'fail', target: 'node-4' });
-    h.sim.tick();
+    h.sim.tick(current.hci.stargateDownDetectS.value + current.hci.rebuildStartDelayS.value + 1);
     expect(h.events('curator.rebuild.start').map((e) => e.deviceId)).toEqual(['node-4.cvm']);
     for (let i = 0; i < 20; i++) expect(h.sim.tick().derived.dataAvailable).toBe(true);
     for (const v of affected) {

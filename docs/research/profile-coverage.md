@@ -11,12 +11,12 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 <!-- coverage:begin -->
 | Confidence | Count |
 |---|---|
-| verified | 34 |
-| inferred | 5 |
-| unverified | 4 |
-| assumption | 17 |
+| verified | 33 |
+| inferred | 11 |
+| unverified | 2 |
+| assumption | 16 |
 | lab-observed | 0 |
-| **Total** | **60** |
+| **Total** | **62** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -39,20 +39,22 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `cluster.cassandraRingDetachS` | 1800 | verified | `ntnx-bible-4i`, `ntnx-kb-1256` | A node down for 30 min is removed from the metadata ring; re-added after it is stable. |
 | `cluster.minNodes` | 3 | verified | `ntnx-bible-4i` | FT1 without erasure coding; FT2 needs 5. |
 | `cluster.cvmBootS` | 180 | assumption |  | No published figure. Model value for CVM power-on to Stargate serving; replace from lab testing. |
-| `cluster.cassandraRejoinStableS` | 600 | assumption | `ntnx-bible-4i`, `ntnx-kb-1256` | Auto ring-repair re-adds a detached node after it has been stable for an unspecified time. |
+| `cluster.cassandraRejoinStableS` | 1800 | inferred | `ntnx-kb-1256`, `ntnx-bible-4i` | KB-1256: a detached node is "added back to the ring if the node has been stable for 30 minutes". KB text not yet confirmed on the portal. |
 | `cluster.hostRebootS` | 300 | assumption |  | No published figure; server POST + AHV boot takes minutes. Long enough that HA fences and restarts the VMs (as for a power loss). |
-| `hci.rebuildStartDelayS` | 0 | verified | `ntnx-bible-4i` | Rebuild begins immediately on an unplanned failure. |
-| `hci.curatorPartialScanS` | 3600 | unverified | `ntnx-community-cvm-components` | Partial scan "every hour". |
-| `hci.curatorFullScanS` | 21600 | unverified | `ntnx-community-cvm-components` | Full scan "around every 6 hours". |
+| `hci.rebuildStartDelayS` | 60 | inferred | `ntnx-bible-4i`, `ntnx-kb-delayed-rebuild`, `ntnx-kb-slow-rebuild-ec` | Counted from when the Stargate is declared down. Bible 4i "immediately" means no long repair-delay timer; the KBs give a selective Curator scan / rebuild 60 s after Stargate is down. KB text not yet confirmed on the portal. |
+| `hci.curatorPartialScanS` | 3600 | inferred | `ntnx-kb-2101`, `ntnx-community-curator-scans`, `ntnx-community-cvm-components`, `ntnx-community-free-space` | Partial scan about 1 h after the last one (three Nutanix-staff community posts agree; KB-2101 by title, KB text not yet confirmed on the portal). |
+| `hci.curatorFullScanS` | 21600 | inferred | `ntnx-kb-2101`, `ntnx-community-curator-scans`, `ntnx-community-cvm-components` | Full scan about 6 h after the last one (Nutanix-staff community posts; KB-2101 by title, KB text not yet confirmed on the portal). |
 | `hci.diskOfflineEventsPerHourToStayOffline` | 3 | verified | `ntnx-bible-4i` | Marked offline 3 times in an hour → Hades stops returning the disk to service. |
 | `hci.readOnlyCapacityPct` | 95 | verified | `ntnx-bible-4i` | Stargate goes read-only at 95 %. |
 | `hci.capacityWarnPct` | 75 | verified | `ntnx-bible-4i` | Default Prism warning threshold, as % of resilient capacity. |
 | `hci.vdiskOwnerMigrationRemoteIoS` | 300 | verified | `ntnx-bible-4a` | Stargate relinquishes the vDisk token after 300+ s of remote IO. |
-| `hci.extentGroupsPerVdisk` | 8 | assumption |  | Model granularity (SPEC §6.3 default). Real extent groups are ~1–4 MiB, so a vDisk has thousands. |
-| `hci.rebuildGiBpsPerNode` | 1 | assumption | `ntnx-bible-4i`, `ntnx-community-rebuild-rate` | No published per-node figure. Chosen to land in the range of a public lab test (>5 TB rebuilt in <20 min, ~9 GBps cluster-wide; Josh Odgers, "Nutanix resiliency part 1", 2018). |
+| `hci.extentGroupsPerVdisk` | 8 | assumption | `ntnx-bible-4g` | Model granularity (SPEC §6.3 default). Real extent groups are 4 MiB (1 MiB with dedup), Bible 4g, so a vDisk has thousands. |
+| `hci.rebuildGiBpsPerNode` | 0.5 | assumption | `ntnx-bible-4i`, `ntnx-community-rebuild-rate`, `ntnx-community-rebuild-rate-rf3`, `ntnx-kb-slow-rebuild-ec` | No published per-node figure. Public 2018 lab tests (Josh Odgers, parts 1 and 3) work out to about 0.3–0.6 GB/s per surviving node; an all-flash node rebuild is "expected 1 to 2 hours" (KB, text not yet confirmed on the portal). Anecdotal. |
 | `hci.initialUsedCapacityPct` | 20 | assumption |  | Illustrative starting fill. Drives replica size, hence rebuild duration. |
-| `hci.diskSmartCheckS` | 10 | assumption | `ntnx-bible-4i` | Bible 4i gives no duration. |
-| `hci.replicaAckTimeoutS` | 2 | assumption |  | No published Stargate RPC timeout. Short, so a dropped replica write is re-placed within a few ticks. |
+| `hci.diskSmartCheckS` | 120 | assumption | `ntnx-bible-4i`, `ntnx-kb-hades`, `smartctl-man` | No published duration. Hades runs a smartctl short self-test, which takes a minute or two. |
+| `hci.replicaAckTimeoutS` | 2 | assumption |  | No published Stargate RPC timeout. Applies to a dropped replica write whose peer is still up. A silent peer (power loss, hang, isolation) is handled by `stargateDownDetectS` (up to 20 s). |
+| `hci.stargateDownDetectS` | 20 | inferred | `ntnx-kb-io-freeze-cvm-down` | KB: on a node hang or unexpected reboot "it could take up to 20 seconds for Zookeeper to determine that Stargate is down", with a noticeable IO stoppage. KB text not yet confirmed on the portal. |
+| `hci.stargateStopDetectS` | 1 | inferred | `ntnx-kb-io-freeze-cvm-down` | KB: when Stargate stops, the IO pause is "~1 second or potentially less". KB text not yet confirmed on the portal. |
 | `hci.diskOfflineWindowS` | 3600 | verified | `ntnx-bible-4i` | "3 times within an hour". |
 | `bond.lacpFastDetectS` | 3 | verified | `ntnx-ahv-admin-11.2` |  |
 | `bond.lacpSlowDetectS` | 90 | verified | `ntnx-ahv-admin-11.2` |  |
@@ -96,7 +98,8 @@ These are the values the lab plan (`lab-validation-plan.md`) should upgrade firs
 | `externalStorage.reconnectDelayS` | 20 s | `reconnect_delay_sec` in SPDK's multipath example (`-o 20`). | L5 |
 | `externalStorage.controllerLossTimeoutS` | −1 (forever) | SPDK semantics: −1 means reconnect forever and never delete the controller, as in SPDK's multipath example (`-l -1`). This matches the deployment guide's default of retrying until the array responds. Exported as `RECONNECT_FOREVER`. | L1, L5 |
 | `cluster.zkMembersFt1` / `zkMembersFt2` | 3 / 5 | Only a community copy of the Bible text says "three or five nodes, depending on the redundancy factor". It is consistent with Bible 4i (FT2 means metadata RF5 and at least 5 nodes). | — |
-| `hci.curatorPartialScanS` / `curatorFullScanS` | 3600 / 21600 s | A community post says "every hour" and "around every 6 hours". The Bible gives no schedule. | — |
+| `hci.rebuildGiBpsPerNode` | 0.5 GiB/s | No per-node figure is published. Public 2018 lab tests (Josh Odgers, parts 1 and 3) work out to about 0.3–0.6 GB/s per surviving node, and a KB (cited by title) gives "expected 1 to 2 hours" for an all-flash node rebuild. | — |
+| `hci.diskSmartCheckS` | 120 s | Hades runs a `smartctl` short self-test (KB "Disk Manager (Hades)", by title), which takes a minute or two; no Nutanix duration is published. | — |
 
 **Not generic-host guidance.** The Everpure "NVMe/TCP Best Practices" KB (`everpure-nvme-tcp-bp`) needs a support login, and its content could not be read for this pass. The NVMe assumptions are therefore taken from public SPDK documentation only, because SPDK is the initiator the integration uses (Bible 8c).
 
@@ -110,7 +113,7 @@ These are the values the lab plan (`lab-validation-plan.md`) should upgrade firs
 | `everpure-nutanix-req` | Read | Purity//FA 6.10.3+ is the integration minimum (AOS 7.5+, AHV 11.0+). 10,000 vDisks needs AOS 7.6 with Purity//FA 6.11.8+ or 6.12.0+. 3–32 nodes. ActiveCluster: co-existence only. |
 | `everpure-nutanix-rn` | Read | The AOS 7.6 features (1:1 vDisk→volume with no metadata volume, 10,000 vDisks, FA async/ActiveDR/SafeMode) require Purity//FA 6.11.8 or 6.12.0. No Purity//FA line newer than 6.12 is listed. |
 | `everpure-nutanix-net-bp` | Read | Confirmed MAC pinning, at least 2 storage VLANs, and MTU 9216 on the fabric / 9000 at endpoints. |
-| `ntnx-bible-5b`, `-4i`, `-4a`, `-8c` | Read | Confirmed the HA timeline (1 Hz, T20/T60/T120, 45 s), the 30 min ring detach, immediate rebuild, 3 offline events per hour, 95 % read-only, the 75 % resilient-capacity warning, 300 s owner migration, and PR fencing. The Bible does not give the redirector NOP interval. |
+| `ntnx-bible-5b`, `-4i`, `-4a`, `-8c` | Read | Confirmed the HA timeline (1 Hz, T20/T60/T120, 45 s), the 30 min ring detach, rebuild "immediately" (no repair-delay timer), 3 offline events per hour, 95 % read-only, the 75 % resilient-capacity warning, 300 s owner migration, and PR fencing. The Bible does not give the redirector NOP interval. |
 | `ntnx-blog-cvm-failure` | Read (archived) | The live URL returns 404. The archived copy confirms the "two or more times in a 30-second period" rule and failback after "at least 30 seconds" stable. |
 | `spdk-jsonrpc`, `spdk-nvme-multipath` | Read | Keep-alive default 10 s. The multipath example uses `-l -1 -o 20`, active_active / round_robin. |
 | `ovs-bonding`, `ovs-vswitchd-conf` | Read | The rebalance runs every 10 s by default. LACP fast is a 1 s heartbeat and slow is 30 s. |

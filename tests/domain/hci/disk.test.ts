@@ -6,9 +6,10 @@ const T0 = 10;
 const DISK = 'node-1.disk-3';
 const LIMIT = current.hci.diskOfflineEventsPerHourToStayOffline.value;
 const SMART = current.hci.diskSmartCheckS.value;
+const DELAY = current.hci.rebuildStartDelayS.value;
 
 describe('disk failure (Bible 4i)', () => {
-  it('single disk failure: offline, immediate rebuild, no IO impact, back to OK', () => {
+  it('single disk failure: offline, rebuild after the start delay, no IO impact, back to OK', () => {
     const h = harness('t2-hci-ahv');
     h.sim.tick(T0);
     const replicas = h.store.replicasOnDisk(DISK);
@@ -20,13 +21,15 @@ describe('disk failure (Bible 4i)', () => {
     const off = h.events('disk.offline');
     expect(off.map((e) => e.deviceId)).toEqual([DISK]);
     expect(off[0]?.confidence).toBe('verified');
+    expect(s.derived.resiliency).toBe('Rebuilding');
+    // Stargate sees the disk go offline itself: no ZK detection, only the start delay.
+    h.sim.tick(DELAY);
     const start = h.events('curator.rebuild.start');
     expect(start).toHaveLength(1);
-    expect(start[0]?.t).toBe(s.simTime);
+    expect(start[0]?.t).toBe(s.simTime + DELAY);
     expect(start[0]?.deviceId).toBe('node-1.cvm');
     expect(start[0]?.causeIds).toEqual([`e${off[0]?.seq}`]);
     expect(h.sim.causalChain(`e${start[0]?.seq}`).map((e) => e.code)).toContain('disk.offline');
-    expect(s.derived.resiliency).toBe('Rebuilding');
 
     const END = T0 + 1200;
     let sawRebuilding = false;
@@ -76,7 +79,8 @@ describe('disk failure (Bible 4i)', () => {
   it(`a disk offline ${LIMIT} times within an hour stays offline (flapping)`, () => {
     const h = harness('t2-hci-ahv');
     h.sim.tick(T0);
-    const cycle = 60;
+    // Offline for a minute, then back after the SMART check plus a minute.
+    const cycle = SMART + 60;
     const at = (t: number) => {
       while (h.sim.getSnapshot().simTime < t) h.sim.tick();
     };

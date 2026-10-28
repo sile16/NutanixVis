@@ -44,6 +44,7 @@ Data locality [4]:
   - It drains to the extent store asynchronously.
   - Sequential writes with more than 1.5 MB outstanding bypass the Oplog.
 - **Data locality:** writes are always local first. If the local CVM is down, all replicas go remote and RF is still met [4][7].
+- **Extent and extent group sizes** [3]: an extent is 1 MB of logically contiguous data; an extent group is 1 MB or 4 MB of physically contiguous data "depending on deduplication" (4 MB by default, 1 MB with dedup). The model's 8 extent groups per vDisk are granularity only.
 
 ## 3. CVM failure
 
@@ -60,7 +61,11 @@ The failure matrix says: no HA event, no failed IO, and latency may rise [2].
 - **Trigger:** "If any process fails to respond two or more times in a 30-second period", the storage path is redirected.
 - **Failback:** "the data path will not be restored until the original CVM has been stable for at least 30 seconds."
 
-**Rebuild** starts as soon as Stargate is down, with no delay timer [6].
+**Stargate-down detection** [20]. A remote Stargate is seen as down through its Zookeeper session.
+- A Stargate that stops or crashes cleanly closes its session, so the IO pause is "~1 second or potentially less".
+- On a node hang or unexpected reboot, "it could take up to 20 seconds for Zookeeper to determine that Stargate is down", with "a noticeable I/O stoppage". The KB text describes another hypervisor's HA script, but the ZK-based detection is hypervisor-independent. The model applies 20 s to node power loss, hang, hard CVM power-off and network isolation (`hci.stargateDownDetectS`, `inferred`).
+
+**Rebuild** starts 60 s after Stargate is seen down [2][21][22]. The Bible's "immediately" means no long repair-delay timer; the KBs say a selective Curator scan is triggered "after 60 seconds" and that "in 60 seconds the cluster starts the data rebuild process". A delayed-rebuild preference exists but only postpones rebuilds for **planned** maintenance, not failures [21].
 
 ## 4. Host / node failure
 
@@ -81,27 +86,32 @@ The failure matrix says: no HA event, no failed IO, and latency may rise [2].
 
 
 ### Rebuild
-- Rebuild starts immediately on an unplanned failure [2].
-- The work is spread across all nodes, so each node does about 1/N of it.
-- A lab test rebuilt more than 5 TB in under 20 minutes at about 9 GBps [10].
+- Rebuild starts about 60 s after the failed node's Stargate is seen down [2][21][22], so roughly 80 s after a power loss.
+- Curator generates the replication tasks and Stargate executes them [22].
+- The work is spread across all nodes, so each node does about 1/N of it. "The larger the cluster, the faster the re-protection" [2].
+- **Rate.** No per-node figure is published. Public lab tests on 2013-era SATA-SSD nodes with 2 × 10 GbE:
+  - 16 nodes, RF2: "a little over 5TB" in "less than 20mins", "around 9GBps" [10].
+  - 12 nodes, RF3: ">4.5TB" in "approx 12mins", "over 6GBps" [23].
+  - Per surviving node that is about 0.3–0.6 GB/s. A KB states an all-flash node rebuild is "expected 1 to 2 hours" [22].
+  - The model uses 0.5 GiB/s per surviving node (`assumption`). A 4-node T2 cluster at 20 % fill re-protects one node (about 5.6 TiB) in about 64 min.
 
 ### Cassandra
 - If a node stays down for about 30 minutes, its CVM is detached from the metadata ring [2].
 - This is the auto ring-repair feature (KB-1256), and it raises alert A1055 [11].
-- The node is re-added after it has been stable for an unspecified time.
+- The node is re-added after it has been stable for 30 minutes: "A node will be automatically added back to the ring if the node has been stable for 30 minutes" (KB-1256, `inferred` until the KB text is confirmed on the portal).
 
 ### Resiliency status
 - The Prism Resiliency widget shows the status, as does `ncli cluster get-domain-fault-tolerance-status type=node|rackable_unit`.
-- A Curator partial scan updates it.
+- A Curator partial scan updates it. Partial scans run about 1 h after the previous one and full scans about 6 h after the previous one (Nutanix-staff posts [1][24][25]; KB-2101 by number).
 - The per-component rows (Metadata, Zookeeper, Extent Groups, Oplog, Stargate health, Free Space) are UNVERIFIED.
 
 ## 5. Disk failure and degraded node detection (DND)
 
 ### Disk
 - Stargate marks a disk offline after IO errors or when it stops responding past a threshold. The threshold value is UNVERIFIED.
-- Hades then runs a SMART check and returns the disk to service if it passes.
+- Hades then removes it from the data path and runs `smartctl` checks against it [26]; the disk returns to service if it passes. The test is the short self-test, which smartctl(8) describes as "usually under ten minutes" for ATA and takes on the order of a minute or two in practice. No Nutanix duration is published; the model uses 120 s (`assumption`).
 - If a disk goes offline 3 times in 1 h, it stays offline.
-- No HA event follows, and the rebuild starts immediately [2].
+- No HA event follows. The rebuild starts 60 s after Stargate marks the disk offline [2][21].
 - Checksums are verified on every read, and an idle scrubber also checks the data.
 
 ### DND
@@ -231,9 +241,13 @@ On return:
 | AHV VM restart | ≤T120 | [5] | verified |
 | Isolated-host VM self-terminate | 45 s after first failed IO | [5] | verified |
 | Acropolis leader re-election | ~T20 | [5] | verified |
-| Rebuild start | immediate | [2][6] | verified |
+| Stargate seen down (silent peer / clean stop) | up to 20 s / ~1 s | [20] | inferred (KB title) |
+| Rebuild start | 60 s after Stargate seen down | [2][21][22] | inferred (KB titles) |
+| Rebuild rate | ~0.3–0.6 GB/s per surviving node (model 0.5 GiB/s) | [10][23][22] | assumption (anecdotal) |
 | Cassandra ring detach | 30 min | [2], KB-1256 | verified |
-| Curator partial / full scan | ~1 h / ~6 h | [1] | unverified (community) |
+| Cassandra ring rejoin | stable 30 min | KB-1256 | inferred |
+| Curator partial / full scan | ~1 h / ~6 h | [1][24][25], KB-2101 | inferred (Nutanix staff) |
+| Hades SMART short test | model 120 s | [26], smartctl(8) | assumption |
 | Disk permanently offline | 3 offline events per hour | [2] | verified |
 | Stargate read-only | 95% capacity | [2] | verified |
 | Resilient-capacity warning | 75% (default) | [2] | verified |
@@ -279,4 +293,11 @@ These need portal or KB access, or Nutanix engineering:
 17. https://next.nutanix.com/how-it-works-22/two-node-clusters-39244
 18. https://next.nutanix.com/how-it-works-22/monitoring-a-two-node-cluster-during-failover-and-upgrade-38932
 19. https://www.joshodgers.com/tag/witness/
+20. Nutanix KB "IO freeze in UVMs is expected when CVM on different node shutdown or Stargate on different node crashes", cited by title (https://portal.nutanix.com/page/documents/kbs/list). KB text not yet confirmed on the portal.
+21. Nutanix KB "Delayed rebuild for planned maintenance events", cited by title (https://portal.nutanix.com/page/documents/kbs/list). KB text not yet confirmed on the portal.
+22. Nutanix KB "Slow data rebuild after failure on clusters with Erasure Coding enabled", cited by title (https://portal.nutanix.com/page/documents/kbs/list). KB text not yet confirmed on the portal.
+23. https://www.joshodgers.com/2018/06/05/nutanix-resiliency-part-3-node-failure-rebuild-performance-with-rf3/
+24. https://next.nutanix.com/how-it-works-22/curator-scans-types-and-frequency-or-where-is-our-free-space-33516
+25. https://next.nutanix.com/how-it-works-22/why-does-my-nutanix-cluster-not-show-free-or-reclaimed-space-after-deleting-many-vms-or-files-38052
+26. Nutanix KB "Disk Manager (Hades)", cited by title (https://portal.nutanix.com/page/documents/kbs/list). KB text not yet confirmed on the portal. smartctl(8): https://linux.die.net/man/8/smartctl
 - https://patents.google.com/patent/US11194680

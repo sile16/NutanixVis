@@ -17,7 +17,7 @@ import {
   vswitch,
 } from '../helpers';
 import { SW_A, T1 } from '../ids';
-import { KATO, PATH_LOSS_WORST } from '../timers';
+import { KATO, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
 
 const END = by(PATH_LOSS_WORST) + 60;
 
@@ -36,7 +36,7 @@ export default defineScenario({
       allCvms(s, (c) => onlyPathsLostTo(c, faInterfacesBehind(s, SW_A))),
     ),
     alwaysFrom(T0, 'VMs keep running (latency outliers only)', (s) => allVms(s, isRunning)),
-    alwaysFrom(T0, 'no command waits longer than KATO + CQT', (s) =>
+    alwaysFrom(T0, `no command waits longer than ${PATH_LOSS_RULE}`, (s) =>
       allVms(s, (v) => v.ioPendingS <= PATH_LOSS_WORST + SLACK),
     ),
     alwaysFrom(T0, 'no host is disconnected (vs0 fails over too)', (s) =>
@@ -46,7 +46,7 @@ export default defineScenario({
     ...baseInvariants(),
   ],
   narrative:
-    'Switch A fails. With isolated A/B storage VLANs every path on VLAN 10 runs through Switch A, so each CVM loses those two paths one keep-alive timeout later; the CVM never sees the carrier loss itself. New IO moves to the VLAN-B paths at once and in-flight commands are retried after the quiesce time. vs0 fails over to Switch B, so no host is lost and no HA event follows.',
+    'Switch A fails. With isolated A/B storage VLANs every path on VLAN 10 runs through Switch A, so each CVM loses those two paths one keep-alive timeout later; the CVM never sees the carrier loss itself. New IO then uses the VLAN-B paths, and commands stuck on VLAN A are retried 3 × KATO + CQT (about 45 s) after the last keep-alive. vs0 fails over to Switch B, so no host is lost and no HA event follows.',
   cite: [
     'everpure-nutanix-net-bp',
     'ntnx-ncp-everpure-deploy-7.6',

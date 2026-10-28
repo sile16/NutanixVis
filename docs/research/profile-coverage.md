@@ -12,11 +12,11 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | Confidence | Count |
 |---|---|
 | verified | 34 |
-| inferred | 5 |
+| inferred | 8 |
 | unverified | 4 |
-| assumption | 17 |
+| assumption | 16 |
 | lab-observed | 0 |
-| **Total** | **60** |
+| **Total** | **62** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -62,20 +62,22 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `externalStorage.minNodes` | 3 | verified | `ntnx-ncp-everpure-deploy-7.6`, `everpure-nutanix-req` | Supported size is 3–32 nodes. |
 | `externalStorage.nodeFailureTolerance` | { belowFiveNodes: 2, fiveOrMore: 3 } | verified | `ntnx-ncp-everpure-deploy-7.6` | Tolerated simultaneous failures = N − value: N−2 below 5 nodes, N−3 at 5 or more. |
 | `externalStorage.pathLossDefault` | 'retry-until-array-responds' | verified | `ntnx-ncp-everpure-deploy-7.6` | Optional per-VM force-shutdown timeout restarts the VM on a node with array connectivity. |
-| `externalStorage.multipathPolicy` | 'active-active' | assumption | `spdk-nvme-multipath`, `ntnx-bible-8c` | Policy Nutanix configures is not public. SPDK supports both; round-robin active-active chosen; lab L12. |
-| `externalStorage.ioQueuesPerPath` | 4 | assumption | `nvme-tcp-spec`, `spdk-jsonrpc` | One TCP connection per NVMe/TCP queue (spec). Integration value not public; 4 is a model abstraction; lab L12. |
-| `externalStorage.keepAliveTimeoutS` | 5 | verified | `everpure-nutanix-301-deck`, `nvme-base-spec` | Set automatically by the integration; must not be changed. Keep Alive is sent every KATO/2 (NVMe spec). |
-| `externalStorage.commandQuiesceTimeS` | 30 | verified | `everpure-nutanix-301-deck`, `nvme-base-spec` | Set automatically by the integration. In-flight commands on a lost path are held CQT before retry on another path (TP4129). |
-| `externalStorage.reconnectDelayS` | 20 | assumption | `spdk-nvme-multipath` | reconnect_delay_sec from the SPDK multipath example. Integration value not public; lab L5. |
-| `externalStorage.controllerLossTimeoutS` | 3600 | verified | `everpure-nutanix-301-deck` | Set automatically by the integration; long enough to ride out FA controller reboots (e.g. NDU with firmware). Until it expires, IO retries (DEPLOY-GUIDE "retries I/O until the array responds"). |
-| `externalStorage.ioTimeoutS` | 30 | assumption |  | Integration value not public. 30 s mirrors the common Linux NVMe io_timeout default; replace from lab testing. |
+| `externalStorage.multipathPolicy` | 'active-active' | assumption | `spdk-nvme-multipath`, `ntnx-bible-8c` | Policy Nutanix configures for Stargate is not public. SPDK supports both; active-active over every ANA Optimized path chosen; the path selector is `pathSelector`; lab L12. |
+| `externalStorage.pathSelector` | 'queue-depth' | inferred | `everpure-linux-dm-multipath`, `everpure-nvme-tcp-bp`, `spdk-bdev-nvme-src` | Stargate selector not public. Everpure Linux guidance for FlashArray NVMe devices is queue-length based (dm-multipath queue-length; NVMe/TCP BP "Queue Length Based"); SPDK offers round_robin and queue_depth. Topology option `nvme-path-selector`; lab L12. |
+| `externalStorage.ioQueuesPerPath` | 4 | inferred | `ntnx-cmdref-aos-7.6`, `nvme-tcp-spec` | AOS 7.6 Hades gflag --nvme_num_io_queues defaults to 4 IO queues per controller (the CVM kernel stack). One TCP connection per NVMe/TCP queue (spec). The Stargate count is not public; lab L12. |
+| `externalStorage.keepAliveTimeoutS` | 5 | verified | `everpure-nutanix-nci-cfg`, `everpure-nutanix-301-deck`, `nvme-base-spec-2.1` | Set automatically by the integration; must not be changed. Keep Alive is sent every KATO/2. The spec allows detection between KATO and 1.5 × KATO; the model declares a silent path lost at KATO. |
+| `externalStorage.commandQuiesceTimeS` | 30 | verified | `everpure-nutanix-nci-cfg`, `everpure-nutanix-301-deck`, `nvme-base-spec-2.1` | NTNX CQT, set automatically by the integration. In-flight commands on a lost path wait CQT after the loss-detection wait before retry on another path (NVMe 2.1 §9.6.3). |
+| `externalStorage.lostPathHoldKatoMultiplier` | 3 | assumption | `nvme-base-spec-2.1` | Conservative traffic-based-keep-alive case of NVMe 2.1 §9.6.2 (2 × KATT with command-based keep-alive); which mode the array uses is not published. Retry at 3 × KATO + CQT ≈ 45 s after the last exchange. The spec lets reads retry at detection; the model holds all in-flight IO (conservative default). |
+| `externalStorage.reconnectDelayS` | 10 | assumption | `linux-nvme-host`, `spdk-nvme-multipath` | Integration value not public. Linux NVMF_DEF_RECONNECT_DELAY (10 s), as used by the CVM kernel initiator; SPDK has no default (its multipath example uses 20 s); lab L5. |
+| `externalStorage.controllerLossTimeoutS` | 3600 | verified | `everpure-nutanix-nci-cfg`, `ntnx-cmdref-aos-7.6`, `everpure-nutanix-301-deck` | Set automatically by the integration (Hades gflag --nvme_ctrl_loss_tmo 3600); long enough to ride out FA controller reboots (e.g. NDU with firmware). Until it expires, IO retries (DEPLOY-GUIDE "retries I/O until the array responds"). |
+| `externalStorage.ioTimeoutS` | 45 | inferred | `nvme-base-spec-2.1`, `everpure-nutanix-nci-cfg` | Integration value not public. NVMe 2.1 §9.6 derivation 3 × KATO + CQT applied to the published timers: must be ≥ the lost-path hold, or IO could be retried while still in flight; lab L5. |
 | `flasharray.claimExpiryDetectS` | 1 | verified | `everpure-ha-crash` | Secondary detects expired drive-quorum claims in about 1 s. |
 | `flasharray.primaryCrashPauseS` | 16 | verified | `everpure-ha-crash` | No array IO for a few seconds up to ~16 s; the model uses the documented upper bound. |
 | `flasharray.promotionMaxS` | 15 | verified | `everpure-ha-timing` |  |
 | `flasharray.ioDelayTimeoutS` | 15 | verified | `everpure-ha-iodelay` | Primary IO stall → giveback after 15 s, then promotion. |
 | `flasharray.failoverObjectiveS` | 30 | verified | `everpure-ha-timing` | Design objective for a complete failover. |
 | `flasharray.plannedFailoverPauseS` | 15 | verified | `everpure-ha-planned`, `everpure-upgrade` |  |
-| `flasharray.hostMultipathRetryS` | 10 | inferred | `everpure-ha-scenarios` | Documented for generic hosts; applied to the CVM SPDK initiator by inference. |
+| `flasharray.hostMultipathRetryS` | 10 | inferred | `everpure-ha-scenarios`, `everpure-linux-dm-multipath` | Generic SCSI / dm-multipath hosts (fast_io_fail_tmo 10). Not the Stargate NVMe/TCP path, which detects loss by keep-alive (KATO) and holds in-flight IO (SPEC §6.4c). Informational; no model timing uses it. |
 | `flasharray.worstCaseSingleIoS` | 60 | verified | `everpure-host-timeouts` |  |
 | `flasharray.controllerRebootS` | 300 | assumption | `everpure-upgrade` | Model value for one controller reboot during NDU (minutes; longer with firmware updates). Replace from lab testing. |
 | `flasharray.serviceTimeMs` | { read: 0.2, write: 0.15 } | assumption |  | Illustrative array service time for displayed latency only; never drives timing. Replace from lab measurements. |
@@ -90,15 +92,13 @@ These are the values the lab plan (`lab-validation-plan.md`) should upgrade firs
 |---|---|---|---|
 | `redirector.redirectStallS` | 3 s | No AHV figure is published. A few ticks covers QEMU's re-login to the remote Stargate after the redirect decision (SPEC §6.3 "2–3 ticks"). | L3 |
 | `bond.slbRebalanceIntervalS` | 10 s | The documented Open vSwitch default ("Every 10 seconds, vswitchd rebalances"). Whether AHV tunes `bond-rebalance-interval` is not public. | L13 |
-| `externalStorage.multipathPolicy` | active-active | The policy Nutanix configures is not public. SPDK supports active-passive and active-active, and its multipath example uses active-active round-robin. | L12 |
-| `externalStorage.ioQueuesPerPath` | 4 | Each NVMe/TCP queue is one TCP connection (NVMe/TCP spec). SPDK asks for up to 1024 IO queues, capped by the target and CPU count. 4 is a readable model abstraction. | L12 |
-| `externalStorage.keepAliveTimeoutS` | 10 s | The SPDK `bdev_nvme` default `keep_alive_timeout_ms`. | L5 |
-| `externalStorage.reconnectDelayS` | 20 s | `reconnect_delay_sec` in SPDK's multipath example (`-o 20`). | L5 |
-| `externalStorage.controllerLossTimeoutS` | −1 (forever) | SPDK semantics: −1 means reconnect forever and never delete the controller, as in SPDK's multipath example (`-l -1`). This matches the deployment guide's default of retrying until the array responds. Exported as `RECONNECT_FOREVER`. | L1, L5 |
+| `externalStorage.multipathPolicy` | active-active | The policy Nutanix configures for Stargate is not public. SPDK supports active-passive and active-active. The selector (`pathSelector`, queue-depth, `inferred`) is a separate field. | L12 |
+| `externalStorage.lostPathHoldKatoMultiplier` | 3 | NVMe 2.1 §9.6.2: wait 2 × KATT (command-based keep-alive) or 3 × KATT (traffic-based) before CQT. The conservative traffic-based case; which mode the array uses is not published. All in-flight IO is held, although the spec lets reads retry at detection. | L5, L12 |
+| `externalStorage.reconnectDelayS` | 10 s | Linux `NVMF_DEF_RECONNECT_DELAY`, the default of the CVM's kernel initiator. SPDK has no default (its multipath example uses `-o 20`). | L5 |
 | `cluster.zkMembersFt1` / `zkMembersFt2` | 3 / 5 | Only a community copy of the Bible text says "three or five nodes, depending on the redundancy factor". It is consistent with Bible 4i (FT2 means metadata RF5 and at least 5 nodes). | — |
 | `hci.curatorPartialScanS` / `curatorFullScanS` | 3600 / 21600 s | A community post says "every hour" and "around every 6 hours". The Bible gives no schedule. | — |
 
-**Not generic-host guidance.** The Everpure "NVMe/TCP Best Practices" KB (`everpure-nvme-tcp-bp`) needs a support login, and its content could not be read for this pass. The NVMe assumptions are therefore taken from public SPDK documentation only, because SPDK is the initiator the integration uses (Bible 8c).
+**NVMe sources.** KATO, CQT and the controller-loss timeout are published in the public Everpure KB `everpure-nutanix-nci-cfg` and the AOS 7.6 Command Reference (`ntnx-cmdref-aos-7.6`). The lost-path hold and the IO timeout follow the NVMe Base Specification 2.1 (`nvme-base-spec-2.1`). Everpure's generic Linux guidance (`everpure-linux-dm-multipath`, `everpure-nvme-tcp-bp`) informs only the path selector, as `inferred`. `flasharray.hostMultipathRetryS` is generic SCSI / dm-multipath behavior and drives no NVMe timing.
 
 ## Verification log (2026-10-27)
 
@@ -113,6 +113,9 @@ These are the values the lab plan (`lab-validation-plan.md`) should upgrade firs
 | `ntnx-bible-5b`, `-4i`, `-4a`, `-8c` | Read | Confirmed the HA timeline (1 Hz, T20/T60/T120, 45 s), the 30 min ring detach, immediate rebuild, 3 offline events per hour, 95 % read-only, the 75 % resilient-capacity warning, 300 s owner migration, and PR fencing. The Bible does not give the redirector NOP interval. |
 | `ntnx-blog-cvm-failure` | Read (archived) | The live URL returns 404. The archived copy confirms the "two or more times in a 30-second period" rule and failback after "at least 30 seconds" stable. |
 | `spdk-jsonrpc`, `spdk-nvme-multipath` | Read | Keep-alive default 10 s. The multipath example uses `-l -1 -o 20`, active_active / round_robin. |
+| `everpure-nutanix-nci-cfg`, `everpure-nutanix-troubleshooting`, `everpure-linux-dm-multipath` (2026-10-28) | Read (public) | KATO 5 s, Controller Loss Timeout 3600 s, NTNX CQT 30 s, "Linux native multipathing". DM-multipath for FlashArray NVMe: `queue-length`, `prio ana`, `fast_io_fail_tmo 10`. |
+| `ntnx-cmdref-aos-7.6` (local portal copy, 2026-10-28) | Read | Hades gflags `--nvme_ctrl_loss_tmo` 3600 and `--nvme_num_io_queues` 4. |
+| `nvme-base-spec-2.1`, `spdk-bdev-nvme-src`, `linux-nvme-host` (2026-10-28) | Read | Keep-alive detection within KATT to 1.5 × KATT; §9.6 waits (2 × / 3 × KATT, then CQT); SPDK round_robin and queue_depth selectors; Linux `NVMF_DEF_RECONNECT_DELAY` 10 s and `io_timeout` 30 s. |
 | `ovs-bonding`, `ovs-vswitchd-conf` | Read | The rebalance runs every 10 s by default. LACP fast is a 1 s heartbeat and slow is 30 s. |
 | Everpure Purity//FA HA KBs (`everpure-ha-*`, `everpure-host-timeouts`) and `everpure-nvme-tcp-bp` | **Not reachable** (login required) | The values are kept from the earlier research pass in `nutanix-flasharray.md` §3. Re-check them with a support login. |
 
@@ -131,6 +134,7 @@ These are the values the lab plan (`lab-validation-plan.md`) should upgrade firs
 | nutanix-hci.md [6] [11] [12] [15] [16] [17] [18] | `ntnx-community-rebuild-cvm-down`, `ntnx-community-node-detach`, `ntnx-community-dnd`, `ntnx-community-segmentation`, `ntnx-community-beyond-ft`, `ntnx-community-two-node`, `ntnx-community-two-node-failover` |
 | KB-1256 | `ntnx-kb-1256` |
 | CO-node community posts | `ntnx-community-co-nodes-blog`, `ntnx-community-co-nodes` |
-| SPDK / OVS / NVMe | `spdk-nvme-multipath`, `spdk-jsonrpc`, `ovs-bonding`, `ovs-vswitchd-conf`, `nvme-tcp-spec` |
+| SPDK / OVS / NVMe | `spdk-nvme-multipath`, `spdk-jsonrpc`, `spdk-bdev-nvme-src`, `ovs-bonding`, `ovs-vswitchd-conf`, `nvme-tcp-spec`, `nvme-base-spec-2.1`, `linux-nvme-host` |
+| NCI-CFG / TROUBLESHOOT / DM-MPIO / CMDREF (nutanix-flasharray.md) | `everpure-nutanix-nci-cfg` / `everpure-nutanix-troubleshooting` / `everpure-linux-dm-multipath` / `ntnx-cmdref-aos-7.6` |
 
 Third-party blogs and the patent in `nutanix-hci.md` (joshodgers.com, derekseaman.com, patents.google.com) are background only. They are not in the registry, and no profile value depends on them.

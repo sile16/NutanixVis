@@ -20,7 +20,7 @@ import {
   wasEver,
 } from '../helpers';
 import { SW_B, T1 } from '../ids';
-import { KATO, P, PATH_LOSS_WORST } from '../timers';
+import { KATO, P, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
 
 function variant(rate: 'fast' | 'slow'): ScenarioDef {
   const detect = rate === 'fast' ? P.bond.lacpFastDetectS : P.bond.lacpSlowDetectS;
@@ -71,7 +71,7 @@ function variant(rate: 'fast' | 'slow'): ScenarioDef {
       at(by(settled), 'all VMs are running', (s) => allVms(s, isRunning)),
       ...(rate === 'fast'
         ? [
-            alwaysFrom(T0, 'no command waits longer than detection or KATO + CQT', (s) =>
+            alwaysFrom(T0, `no command waits longer than detection or ${PATH_LOSS_RULE}`, (s) =>
               allVms(s, (v) => v.ioPendingS <= Math.max(detect, PATH_LOSS_WORST) + SLACK),
             ),
           ]

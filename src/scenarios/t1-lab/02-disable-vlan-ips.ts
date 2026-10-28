@@ -14,9 +14,9 @@ import {
   t1Steady,
 } from '../helpers';
 import { T1_LAB } from '../ids';
-import { KATO, PATH_LOSS_WORST } from '../timers';
+import { CLOSED_PATH_WORST } from '../timers';
 
-const END = by(PATH_LOSS_WORST) + 30;
+const END = by(CLOSED_PATH_WORST) + 30;
 
 export default defineScenario({
   id: 't1lab-02-disable-vlan-10-ips',
@@ -34,18 +34,19 @@ export default defineScenario({
         .filter((i) => i.vlan === 10)
         .every((i) => !i.enabled),
     ),
-    at(by(KATO), 'every CVM loses all its VLAN-10 paths and keeps VLAN 20', (s) =>
+    // Disabled IPs refuse the connection: the paths are lost on the next frame, not after KATO.
+    at(by(0), 'every CVM loses all its VLAN-10 paths at once and keeps VLAN 20', (s) =>
       allCvms(s, (c) => onlyPathsLostTo(c, T1_LAB.faIfacesVlan10)),
     ),
     alwaysFrom(T0, 'VMs keep running on VLAN 20', (s) => allVms(s, isRunning)),
-    alwaysFrom(T0, 'no command waits longer than KATO + CQT', (s) =>
-      allVms(s, (v) => v.ioPendingS <= PATH_LOSS_WORST + SLACK),
+    alwaysFrom(T0, 'no command waits longer than CQT (closed connection)', (s) =>
+      allVms(s, (v) => v.ioPendingS <= CLOSED_PATH_WORST + SLACK),
     ),
     ...baseInvariants(),
   ],
   narrative:
-    "Every array IP on storage VLAN 10 is disabled, on both controllers. Each CVM's VLAN-10 vNIC loses all of its paths after the keep-alive timeout, while the VLAN-20 paths carry all the IO. This is why at least two storage VLANs are recommended.",
-  cite: ['everpure-nutanix-net-bp', 'nvme-base-spec', 'everpure-ana-faq'],
+    "Every array IP on storage VLAN 10 is disabled, on both controllers. The array refuses connections to them, so each CVM's VLAN-10 vNIC loses all of its paths at once, and the VLAN-20 paths carry all the IO; commands that were in flight on VLAN 10 are retried after the quiesce time (CQT). This is why at least two storage VLANs are recommended.",
+  cite: ['everpure-nutanix-net-bp', 'nvme-base-spec-2.1', 'everpure-ana-faq'],
   // todo until the workload issues at least one IO per NVMe path per tick (src/domain/workload/io.ts:
   // 2 reads + 2 writes, queue depth 32): with 1 + 1 a tick's two IOs can both land on the
   // silently lost paths, so the VM reads io-stalled for that tick although IO is flowing.

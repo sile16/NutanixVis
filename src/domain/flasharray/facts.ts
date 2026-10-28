@@ -5,7 +5,7 @@
  */
 import type { DeviceId, EndpointId } from '../../engine/types';
 import type { DeviceSpec, Topology } from '../../topologies/schema';
-import type { MultipathPolicy, Profile } from '../versions/profile';
+import type { MultipathPolicy, PathSelector, Profile } from '../versions/profile';
 
 type Of<K extends DeviceSpec['kind']> = Extract<DeviceSpec, { kind: K }>;
 
@@ -51,6 +51,7 @@ export interface FaFacts {
   readonly linkOfNic: ReadonlyMap<string, string>;
   readonly switches: readonly { readonly id: string; readonly flowControl: string }[];
   readonly multipathPolicy: MultipathPolicy;
+  readonly pathSelector: PathSelector;
 }
 
 const byId = (a: { readonly id: string }, b: { readonly id: string }) =>
@@ -63,6 +64,15 @@ function policyOf(t: Topology, profile: Profile): MultipathPolicy {
   return v === 'active-active' || v === 'active-passive'
     ? v
     : profile.externalStorage.multipathPolicy.value;
+}
+
+/** `nvme-path-selector` option value (SPEC §6.4b), else the profile default. */
+function selectorOf(t: Topology, profile: Profile): PathSelector {
+  const opt = t.options.find((o) => o.id === 'nvme-path-selector');
+  const v = opt?.value ?? opt?.default;
+  return v === 'queue-depth' || v === 'round-robin'
+    ? v
+    : profile.externalStorage.pathSelector.value;
 }
 
 export function readFacts(t: Topology, profile: Profile): FaFacts {
@@ -144,6 +154,7 @@ export function readFacts(t: Topology, profile: Profile): FaFacts {
     linkOfNic,
     switches: of('switch').map((s) => ({ id: s.id, flowControl: s.flowControl })),
     multipathPolicy: policyOf(t, profile),
+    pathSelector: selectorOf(t, profile),
   };
 }
 

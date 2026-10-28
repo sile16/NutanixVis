@@ -12,6 +12,8 @@ const ES = current.externalStorage;
 const KATO = ES.keepAliveTimeoutS.value;
 const CQT = ES.commandQuiesceTimeS.value;
 const RECONNECT = ES.reconnectDelayS.value;
+/** In-flight IO on a silently lost path retries k × KATO + CQT after its last exchange (§6.4c). */
+const HOLD = ES.lostPathHoldKatoMultiplier.value * KATO + CQT;
 const T0 = 10;
 const T1 = 't1-ahv-flasharray';
 const CVMS = [1, 2, 3, 4].map((n) => `node-${n}.cvm`);
@@ -117,7 +119,7 @@ describe('controller HA', () => {
     // The mgmt VIP follows the primary.
     expect(r.sim.net.endpoint('fa.vir0')?.attach.id).toBe('fa.ct1.eth0');
     expect(faView(r).mgmtApi).toBe('up');
-    expect(w.maxPending).toBeLessThanOrEqual(Math.max(pause, KATO + CQT));
+    expect(w.maxPending).toBeLessThanOrEqual(Math.max(pause, HOLD));
     expect(
       inOrder(r.events(), [
         ['device.failed', 'fa.ct0'],
@@ -143,7 +145,7 @@ describe('controller HA', () => {
     expect(r.events('fa.claim.expired')).toHaveLength(0);
     expect(ctrl(r, 'fa.ct0').role).toBe('primary');
     expect(onlyLostOn(r, (i) => i.startsWith('fa.ct1.'))).toBe(true);
-    expect(w.maxPending).toBeLessThanOrEqual(KATO + CQT);
+    expect(w.maxPending).toBeLessThanOrEqual(HOLD);
     // Recovering CT1 brings it back as secondary and its paths reconnect.
     r.sim.applyAction({ kind: 'recover', target: 'fa.ct1' });
     runTo(r, T0 + 50 + RECONNECT + 1);
@@ -220,7 +222,10 @@ describe('controller HA', () => {
     expect(gb).toBeLessThanOrEqual(r1 + reboot + RECONNECT);
     expect(r.events('nvme.all-paths.lost')).toHaveLength(0);
     expect(w.maxPause).toBe(FA.plannedFailoverPauseS.value);
-    expect(w.maxPending).toBeLessThanOrEqual(Math.max(FA.plannedFailoverPauseS.value, KATO + CQT));
+    // In-flight IO on a closed connection waits CQT only (NVMe 2.1 §9.6.2 step 2c), not the
+    // k × KATO + CQT of a silent loss; new IO moved to the peer's paths at once.
+    expect(w.maxPending).toBeLessThanOrEqual(Math.max(FA.plannedFailoverPauseS.value, CQT + 1));
+    expect(w.maxPending).toBeLessThan(HOLD);
     expect(ctrl(r, 'fa.ct1')).toMatchObject({ role: 'primary', state: 'up' });
     expect(ctrl(r, 'fa.ct0')).toMatchObject({ role: 'secondary', state: 'up' });
     expect(allLive(r)).toBe(true);
@@ -304,7 +309,7 @@ describe('storage NIC loss: strict A/B vs tagged on both switches', () => {
     const r = loadWithStubs(T1, { 'vlan-placement': 'strict-ab' });
     runTo(r, T0);
     r.sim.applyAction({ kind: 'fail', target: 'node-1.eth1' });
-    const w = watch(r, T0 + KATO + CQT + 10);
+    const w = watch(r, T0 + HOLD + 10);
     const lost = r.events('nvme.path.lost');
     expect(new Set(lost.map((e) => e.deviceId))).toEqual(new Set(['node-1.cvm']));
     expect(lost.map((e) => e.text.split(' ')[0]).sort()).toEqual([
@@ -312,7 +317,7 @@ describe('storage NIC loss: strict A/B vs tagged on both switches', () => {
       'node-1.cvm.storage-a~fa.ct1.eth10.v10',
     ]);
     expect(lost.every((e) => e.t <= T0 + 1 + KATO)).toBe(true);
-    expect(w.maxPending).toBeLessThanOrEqual(KATO + CQT);
+    expect(w.maxPending).toBeLessThanOrEqual(HOLD);
     for (const st of r.stubs.values()) expect(st.errors()).toHaveLength(0);
   });
 
@@ -460,7 +465,7 @@ describe('scenario-shaped checks', () => {
       target: 'node-1.vs1',
       params: { vnic: 'node-1.cvm.storage-a', member: 'node-1.eth3' },
     });
-    const w = watch(r, T0 + KATO + CQT + 5);
+    const w = watch(r, T0 + HOLD + 5);
     expect(r.events('net.bond.rebalance').map((e) => e.deviceId)).toEqual(['node-1.vs1']);
     expect(r.events('net.link.down')).toHaveLength(0);
     const lost = r.events('nvme.path.lost');
@@ -469,7 +474,7 @@ describe('scenario-shaped checks', () => {
       'node-1.cvm.storage-a~fa.ct1.eth10.v10',
     ]);
     expect(lost.every((e) => e.t > T0 + 1 && e.t <= T0 + 1 + KATO)).toBe(true);
-    expect(w.maxPending).toBeLessThanOrEqual(KATO + CQT);
+    expect(w.maxPending).toBeLessThanOrEqual(HOLD);
   });
 
   it('T1-12: MTU mismatch keeps every path up while large IO never completes', () => {

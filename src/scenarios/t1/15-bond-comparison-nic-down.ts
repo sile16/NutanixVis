@@ -18,7 +18,7 @@ import {
   vswitch,
 } from '../helpers';
 import { T1, vmId } from '../ids';
-import { KATO, PATH_LOSS_WORST } from '../timers';
+import { KATO, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
 
 type Mode = 'active-backup' | 'balance-slb' | 'balance-tcp';
 type Placement = 'tagged-both' | 'strict-ab';
@@ -71,7 +71,7 @@ function variant(mode: Mode, placement: Placement): ScenarioDef {
             at(by(KATO), 'node 1 loses its VLAN-A paths after KATO', (s) =>
               onlyPathsLostTo(cvm(s, 1), T1.faIfacesA),
             ),
-            alwaysFrom(T0, 'no command waits longer than KATO + CQT', (s) =>
+            alwaysFrom(T0, `no command waits longer than ${PATH_LOSS_RULE}`, (s) =>
               vmsOfNode(s, 1).every((v) => v.ioPendingS <= PATH_LOSS_WORST + SLACK),
             ),
           ]),

@@ -19,7 +19,7 @@ import {
   vswitch,
 } from '../helpers';
 import { cvmId, T1 } from '../ids';
-import { KATO, PATH_LOSS_WORST } from '../timers';
+import { KATO, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
 
 const END = by(PATH_LOSS_WORST) + 30;
 
@@ -62,7 +62,7 @@ export default defineScenario({
       allCvms(s, (c) => c.id === cvmId(1) || allPathsLive(c)),
     ),
     alwaysFrom(T0, 'VMs keep running on the VLAN-B paths', (s) => allVms(s, isRunning)),
-    alwaysFrom(T0, 'no command waits longer than KATO + CQT', (s) =>
+    alwaysFrom(T0, `no command waits longer than ${PATH_LOSS_RULE}`, (s) =>
       allVms(s, (v) => v.ioPendingS <= PATH_LOSS_WORST + SLACK),
     ),
     neverSeen(END, 'net.link.down'),

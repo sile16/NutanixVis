@@ -17,7 +17,7 @@ import {
   t1Steady,
 } from '../helpers';
 import { CT0, CT1, T1 } from '../ids';
-import { KATO, PATH_LOSS_WORST } from '../timers';
+import { KATO, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
 
 const END = by(PATH_LOSS_WORST) + 60;
 
@@ -35,14 +35,14 @@ export default defineScenario({
       allCvms(s, (c) => onlyPathsLostTo(c, faInterfacesOn(s, CT1))),
     ),
     alwaysFrom(T0, 'VMs keep running (latency outliers only)', (s) => allVms(s, isRunning)),
-    alwaysFrom(T0, "only IO in flight on CT1's paths waits, at most KATO + CQT", (s) =>
+    alwaysFrom(T0, `only IO in flight on CT1's paths waits, at most ${PATH_LOSS_RULE}`, (s) =>
       allVms(s, (v) => v.ioPendingS <= PATH_LOSS_WORST + SLACK),
     ),
     neverSeen(END, 'fa.promotion.start'),
     ...baseInvariants(),
   ],
   narrative:
-    "The secondary controller CT1 crashes. There is no array-wide pause: CT0 keeps the drives and keeps serving. CT1's paths go silent and are declared lost one keep-alive timeout later; new IO moves to CT0's paths at once, and commands caught in flight are retried after the quiesce time.",
+    "The secondary controller CT1 crashes. There is no array-wide pause: CT0 keeps the drives and keeps serving. CT1's paths go silent and are declared lost one keep-alive timeout later; new IO then uses CT0's paths, and commands caught on CT1's paths are retried 3 × KATO + CQT (about 45 s) after the last keep-alive.",
   cite: ['everpure-ha-secondary', 'everpure-ana-faq', 'nvme-base-spec'],
   status: 'active',
 });

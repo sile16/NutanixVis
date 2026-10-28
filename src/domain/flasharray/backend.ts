@@ -149,6 +149,7 @@ export class ExternalStorageBackend implements StorageBackend {
       cvm,
       profile,
       policy: facts.multipathPolicy,
+      selector: facts.pathSelector,
       paths: pathsFor(facts.storageEndpoints.get(cvm) ?? []),
       pathsFor,
       causes,

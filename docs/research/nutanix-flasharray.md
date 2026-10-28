@@ -1,4 +1,4 @@
-# Nutanix + Everpure FlashArray (external storage): research notes (2026-10-27)
+# Nutanix + Everpure FlashArray (external storage): research notes (2026-10-27, NVMe timing 2026-10-28)
 
 **Scope.**
 
@@ -34,6 +34,13 @@
 | NPIV | [What does NPIV look like in action](https://support.everpuredata.com/r/flasharray-block-services/what-does-npiv-look-like-in-action) |
 | UPG | [Performing the Upgrade](https://support.everpuredata.com/r/purityfa-upgrades/performing-the-upgrade-05) |
 | FA-REP | [Using FA Replication with Nutanix](https://support.everpuredata.com/r/nutanix/fa-rep-nutanix-using-fa-replication) |
+| NCI-CFG | [Nutanix Cloud Infrastructure Configuration](https://support.everpuredata.com/r/nutanix/nutantix-everpure-bp-cloud-infrastructure-config) (public) |
+| TROUBLESHOOT | [Troubleshooting Checklist for NCP with Everpure FlashArray](https://support.everpuredata.com/r/nutanix/nutanix-everpure-bp-troubleshooting-checklist) (public) |
+| DM-MPIO | [Recommended DM-Multipath Settings](https://support.everpuredata.com/r/linux/recommended-dmmultipath-settings) (public) |
+| CMDREF | Nutanix: *Command Reference, AOS 7.6* (July 27, 2026), "Controller VM Commands > cluster" gflags (portal.nutanix.com). A local copy is in `NutanixDocs/` (git-ignored). |
+| NVME-2.1 | [NVM Express Base Specification, Revision 2.1](https://nvmexpress.org/wp-content/uploads/NVM-Express-Base-Specification-Revision-2.1-2024.08.05-Ratified.pdf) (2024-08-05), §3.9.3.1.2 and §9.6 |
+| SPDK-SRC | [SPDK `module/bdev/nvme/bdev_nvme.c`](https://github.com/spdk/spdk/blob/652aadef06e5c73d08e099f1b12ce3abcd42b50b/module/bdev/nvme/bdev_nvme.c), commit `652aadef` |
+| LINUX-SRC | [Linux `drivers/nvme/host`](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/nvme/host) (`core.c`, `fabrics.h`) |
 
 ## 1. The integration (current release)
 
@@ -96,8 +103,8 @@
   - No LAG across FA controllers. NVMe/TCP on port 4420.
 - **FA management.** Each controller has a management interface plus a controller virtual IP that moves to whichever controller is primary (DEPLOY-GUIDE Tables 3 and 10).
 - **ANA.** A physical FA reports **every path as ANA Optimized**, including paths on the secondary controller (ANA-FAQ).
-- **Initiator timers.** "Multipathing and NVMe timers (KATO 5 s, controller loss 3600 s, CQT 30 s) are set automatically and must not be changed" (Everpure, *Nutanix + Everpure 301 Technical Deck*). Publication was approved by the owner on 2026-10-27. The reconnect delay is still not documented; the model uses 20 s from SPDK's multipath example as an `assumption`.
-- **Path selection policy.** Not publicly documented (gap). The model assumes SPDK `active_active` with round-robin across live Optimized paths, which SPDK says uses ANA-optimized paths only while any exist ([SPDK NVMe Multipath](https://spdk.io/doc/nvme_multipath.html)).
+- **Initiator timers.** KATO 5 s, Controller Loss Timeout 3600 s and NTNX CQT 30 s are set automatically and must not be changed (NCI-CFG, public; also the *Nutanix + Everpure 301 Technical Deck*, publication approved by the owner on 2026-10-27). CMDREF lists the Hades gflag `--nvme_ctrl_loss_tmo` with default 3600. The reconnect delay and the IO timeout are not published; see §2c.
+- **Path selection policy.** Not publicly documented for Stargate (gap). The model uses SPDK-style `active_active` across live Optimized paths, which SPDK says uses ANA-optimized paths only while any exist ([SPDK NVMe Multipath](https://spdk.io/doc/nvme_multipath.html)), with a **queue-depth** selector by default (§2c).
 
 ## 2a. Bond vs individual NICs: why this differs from generic Linux NVMe/TCP guidance
 
@@ -136,11 +143,39 @@ From the deployment guide ("Creating an Internal Interface"): each storage segme
 
 **Not documented publicly:**
 
-- The Stargate/SPDK multipath policy. SPDK's NVMe bdev supports both active-passive and active-active (round-robin or queue-depth selection).
-- The number of IO queues (TCP connections) per NVMe controller.
+- The Stargate/SPDK multipath policy and selector. SPDK's NVMe bdev supports both active-passive and active-active (round-robin or queue-depth selection).
+- The number of IO queues (TCP connections) per Stargate NVMe controller. CMDREF gives the CVM kernel stack's default, `--nvme_num_io_queues` 4, which the model reuses (`inferred`).
 - Whether Nutanix tunes the OVS `balance-slb` rebalance interval. The OVS default is 10 s.
 
 These are `assumption` values in the model and are tested by lab experiments L12 and L13.
+
+## 2c. NVMe/TCP path-failure timing (SPEC §6.4c)
+
+**Two initiator stacks in the CVM.** Stargate's user-space SPDK initiator carries vDisk IO (BIBLE-ARCH). The CVM also has a Linux kernel NVMe/TCP initiator managed by Hades, with dm-multipath, for the CVM's service volumes: CMDREF lists the Hades `nvmf_transport` gflags (`--nvme_ctrl_loss_tmo` 3600, `--nvme_num_io_queues` 4, `--enable_multipath`), and NCI-CFG says "Nutanix will be leveraging Linux native multipathing". This section is about the Stargate data path.
+
+**Detection** (NVME-2.1 §3.9.3.1.2). The host sends Keep Alive every KATO/2 and detects a timeout when a Keep Alive gets no completion within KATT of being sent, so a silent loss is detected between KATO and 1.5 × KATO after the last exchange. The model uses KATO, deterministically. A connection the target closes (an interface disabled, a controller rebooting gracefully during an NDU) is lost at once.
+
+**New IO during the detection window.** Until the path is declared lost, the initiator cannot tell it is dead, and the selector keeps giving it new IO. In SPDK a path is skipped only once its qpair is disconnected or its namespace inaccessible (SPDK-SRC), which a silent loss does not cause.
+
+- **Round-robin.** Every Nth new command goes to the dead path. A guest that keeps a fixed queue depth re-issues each completed IO at once, so with sub-millisecond service times all of its queue slots end up on the dead path within moments: a **full stall** until the stuck commands are retried.
+- **Queue-depth** (`_bdev_nvme_find_io_path_min_qd`, SPDK-SRC; dm-multipath `queue-length`). The dead path's outstanding count only grows, so it soon stops getting new IO. About the commands in flight at the failure, plus a few, get stuck: a **partial stall** (a lower effective queue depth plus latency outliers). Everpure's Linux guidance for FlashArray NVMe devices is queue-length based (DM-MPIO; TCP-BP "Queue Length Based"), so the model defaults to it (`inferred`); the topology option `nvme-path-selector` switches to round-robin.
+
+**In-flight IO on a lost path** (NVME-2.1 §9.6.2–9.6.3). Before retrying an outstanding command that modifies data on another path, the host should wait until the controller must have detected the loss: 2 × KATT after the most recent Keep Alive with command-based keep-alive, or 3 × KATT after the most recent command with traffic-based keep-alive. Then it waits CQT (or an implementation-specific time if CQT is 0). Reads may be retried right after detection. The model holds **all** in-flight IO until **3 × KATO + CQT ≈ 45 s after the last successful exchange** (`lostPathHoldKatoMultiplier` 3, an `assumption`: the conservative traffic-based case; which mode the array uses is not published). On a connection the target closed, the keep-alive wait does not apply (§9.6.2 step 2c), so in-flight IO waits CQT and new IO moves to the remaining paths at once.
+
+**Values.**
+
+| Field | Value | Basis | Confidence |
+|---|---|---|---|
+| `keepAliveTimeoutS` | 5 s | NCI-CFG | verified |
+| `commandQuiesceTimeS` | 30 s | NCI-CFG ("NTNX CQT") | verified |
+| `controllerLossTimeoutS` | 3600 s | NCI-CFG, CMDREF | verified |
+| `lostPathHoldKatoMultiplier` | 3 | NVME-2.1 §9.6.2, traffic-based case | assumption |
+| `ioTimeoutS` | 45 s | 3 × KATO + CQT: an IO timeout shorter than the hold could retry a command still in flight | inferred |
+| `reconnectDelayS` | 10 s | Linux `NVMF_DEF_RECONNECT_DELAY` (LINUX-SRC); SPDK has no default and its multipath example uses 20 s | assumption |
+| `ioQueuesPerPath` | 4 | CMDREF `--nvme_num_io_queues` (kernel stack) | inferred |
+| `pathSelector` | queue-depth | DM-MPIO, TCP-BP, SPDK-SRC | inferred |
+
+The 10 s "multipath retry" in HA-Scenarios is the SCSI / dm-multipath `fast_io_fail_tmo` of generic hosts (DM-MPIO lists `fast_io_fail_tmo 10`). It does not apply to the Stargate NVMe/TCP path, which detects loss by keep-alive.
 
 ## 3. FlashArray controller HA
 
@@ -159,7 +194,7 @@ These are `assumption` values in the model and are tested by lab experiments L12
 | Planned failover or NDU | Pause ≤15 s. The upgrade reboots the secondary first, then the primary. | HA-Planned, UPG |
 | Rebooting controller | Its Ethernet/NVMe ports disappear, because NPIV covers FC SCSI only. | NPIV |
 | Secondary crash | No array-wide pause. Only IO on the secondary's paths stalls, then retries on the primary's paths. | HA-Secondary |
-| Host-side port or link loss | Multipath retries within about 10 s if another path exists. | HA-Scenarios |
+| Host-side port or link loss | Generic SCSI / dm-multipath hosts retry within about 10 s (`fast_io_fail_tmo`) if another path exists. NVMe/TCP detection is keep-alive based instead (§2c). | HA-Scenarios |
 
 ## 4. Nutanix compute cluster HA (DEPLOY-GUIDE "Compute Cluster High Availability")
 
@@ -181,14 +216,16 @@ These are `assumption` values in the model and are tested by lab experiments L12
 
 | Name | Value | Source | Confidence |
 |---|---|---|---|
-| NVMe keep-alive / reconnect / controller-loss (integration) | 10 s / 20 s / forever (model) | SPDK docs (not the integration) | assumption |
+| NVMe keep-alive / CQT / controller loss (integration) | 5 s / 30 s / 3600 s | NCI-CFG, CMDREF | verified |
+| NVMe in-flight retry after a silent path loss | 3 × KATO + CQT ≈ 45 s after the last exchange | NVME-2.1 §9.6 | assumption (multiplier) |
+| NVMe IO timeout / reconnect delay | 45 s / 10 s (model) | NVME-2.1 derivation / LINUX-SRC default | inferred / assumption |
 | FA IO delay timeout | 15 s | HA-IODelay | verified |
 | FA promotion | ≤15 s | HA-Timing | verified |
 | FA total failover objective | ≤30 s | HA-Timing | verified |
 | FA primary crash: detection / pause | ~1 s / a few s to ~16 s | HA-Crash | verified |
 | FA planned failover pause | ≤15 s | HA-Planned | verified |
 | FA worst-case single IO | 60 s | HOST-TMO | verified |
-| Multipath retry after path loss | ~10 s | HA-Scenarios | inferred (verified for generic hosts) |
+| Multipath retry after path loss (generic SCSI hosts) | ~10 s | HA-Scenarios, DM-MPIO | verified for generic hosts; not the NVMe path |
 | AHV HA timeline | 1 s poll; T20 / T60 / T120 | BIBLE-AHV | verified |
 | Isolated VM self-terminate | 45 s | BIBLE-AHV | verified |
 | Node-failure tolerance | N−2 (<5 nodes) / N−3 (≥5) | DEPLOY-GUIDE | verified |
@@ -199,7 +236,7 @@ These are `assumption` values in the model and are tested by lab experiments L12
 
 ## Gaps (need a public source or an owner decision)
 
-- The integration's NVMe reconnect delay, IO timeout and path policy. KATO, CQT and controller loss are now known (see §2).
+- The integration's NVMe reconnect delay, IO timeout, path policy and selector, and whether reads skip the in-flight hold. KATO, CQT and controller loss are published (NCI-CFG, CMDREF). Lab L5 and L12 should measure the stall breadth and length with a queue-depth-bound guest.
 - Whether the redirector moves IO to a remote CVM when only the local CVM's array paths are lost.
 - The guest-visible effect of a long array outage.
 - The default length of the per-VM force-shutdown timeout, if one exists.

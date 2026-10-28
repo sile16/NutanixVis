@@ -1,12 +1,13 @@
 /**
  * NVMe/TCP initiator state machine (SPEC §6.4c) on a minimal fabric with a fake target. Timing is
  * asserted at its boundaries: keep-alive cadence, loss at exactly KATO, in-flight retry at
- * KATO + CQT, reconnect cadence and controller deletion, all read from the profile.
+ * k × KATO + CQT after the last exchange (CQT on a closed connection), the path selectors'
+ * detection-window behavior, reconnect cadence and controller deletion, all read from the profile.
  */
 import { describe, expect, it } from 'vitest';
 import { NvmeTcpInitiator } from '../../../src/domain/nvme-tcp/initiator';
 import { RECONNECT_FOREVER } from '../../../src/domain/versions/cited';
-import type { MultipathPolicy, Profile } from '../../../src/domain/versions/profile';
+import type { MultipathPolicy, PathSelector, Profile } from '../../../src/domain/versions/profile';
 import { current } from '../../../src/domain/versions/profiles/current';
 import { createSimulation, type EngineSimulation } from '../../../src/engine/sim';
 import type { SimEvent } from '../../../src/engine/types';
@@ -19,6 +20,8 @@ const CQT = ES.commandQuiesceTimeS.value;
 const RECONNECT = ES.reconnectDelayS.value;
 const CTRL_LOSS = ES.controllerLossTimeoutS.value;
 const IO_TIMEOUT = ES.ioTimeoutS.value;
+/** NVMe 2.1 §9.6.2–9.6.3: in-flight IO on a silently lost path retries this long after its last exchange. */
+const HOLD = ES.lostPathHoldKatoMultiplier.value * KATO + CQT;
 
 const P0 = 'h1.cvm.ep10~tgt.ep0';
 const P1 = 'h1.cvm.ep10~tgt.ep1';
@@ -38,13 +41,20 @@ interface Rig {
 }
 
 function rig(
-  o: { profile?: Profile; policy?: MultipathPolicy; fabric?: FabricOptions; io?: StubIo } = {},
+  o: {
+    profile?: Profile;
+    policy?: MultipathPolicy;
+    selector?: PathSelector;
+    fabric?: FabricOptions;
+    io?: StubIo;
+  } = {},
 ): Rig {
   const profile = o.profile ?? current;
   const init = new NvmeTcpInitiator({
     cvm: 'h1.cvm',
     profile,
     policy: o.policy ?? 'active-active',
+    ...(o.selector ? { selector: o.selector } : {}),
     paths: [
       { local: 'h1.cvm.ep10', remote: 'tgt.ep0' },
       { local: 'h1.cvm.ep10', remote: 'tgt.ep1' },
@@ -116,25 +126,29 @@ describe('silent path loss (KATO)', () => {
     expect(r.init.health()).toBe('degraded');
   });
 
-  it('holds in-flight commands CQT, then retries them on another path', () => {
+  it('holds in-flight commands until k × KATO + CQT after the last exchange, then retries', () => {
+    expect(IO_TIMEOUT).toBeGreaterThanOrEqual(HOLD);
     const r = rig();
     r.runTo(10);
+    const last = r.init.lastExchange(P0) ?? -1;
     r.sim.applyAction({ kind: 'link-down', target: 'l-tgt-p0' });
     r.runTo(30);
     const lost = lostAt(r, P0) ?? -1;
+    expect(lost).toBe(last + KATO);
     const held = r.init.outstanding().held;
     expect(held).toBeGreaterThan(0);
-    r.runTo(lost + CQT - 1);
+    const retryAt = last + HOLD;
+    r.runTo(retryAt - 1);
     expect(r.init.outstanding().held).toBe(held);
     r.sim.tick();
     expect(r.init.outstanding().held).toBe(0);
-    const retried = r.cvm.completedAt(lost + CQT).filter((c) => c.req.issuedAt <= lost);
+    const retried = r.cvm.completedAt(retryAt).filter((c) => c.req.issuedAt <= lost);
     expect(retried.length).toBe(held);
     for (const c of retried) {
       expect(c.outcome.status).toBe('ok');
-      expect(lost + CQT - c.req.issuedAt).toBeLessThanOrEqual(KATO + CQT);
+      expect(retryAt - c.req.issuedAt).toBeLessThanOrEqual(HOLD);
     }
-    // New IO never waited: everything issued after the loss completed in its own tick.
+    // New IO after detection never waited: it completed in its own tick.
     const late = r.cvm.done.filter((c) => c.req.issuedAt > lost);
     expect(late.every((c) => c.completedAt === c.req.issuedAt)).toBe(true);
     expect(r.cvm.errors()).toHaveLength(0);
@@ -184,11 +198,68 @@ describe('fast path loss (refused)', () => {
     const ev = r.events('nvme.path.lost')[0];
     expect(ev?.text).toMatch(/refused/);
     expect(ev?.confidence).toBe('inferred');
-    // Refused commands are still held CQT before the retry.
+    // Refused commands are still held CQT before the retry (NVMe 2.1 §9.6.2 step 2c: the
+    // controller closed the connection, so no keep-alive wait), not k × KATO + CQT.
     const held = r.init.outstanding().held;
     expect(held).toBeGreaterThan(0);
-    r.runTo(11 + CQT);
+    r.runTo(11 + CQT - 1);
+    expect(r.init.outstanding().held).toBe(held);
+    r.sim.tick();
     expect(r.init.outstanding().held).toBe(0);
+  });
+});
+
+describe('detection window: new IO still reaches a silently dead path', () => {
+  /** Completions of vm1 per tick over [from, to]. */
+  const perTick = (r: Rig, from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, k) => r.cvm.completedAt(from + k).length);
+
+  it('queue-depth: the dead path keeps a few stuck commands; the guest only slows (partial)', () => {
+    const r = rig({ selector: 'queue-depth', io: { perTick: 4, depth: 32 } });
+    r.runTo(10);
+    const last = r.init.lastExchange(P0) ?? -1;
+    r.sim.applyAction({ kind: 'link-down', target: 'l-tgt-p0' });
+    r.runTo(last + KATO - 1);
+    // Not redistributed yet: the initiator still believes P0 is live and has used it.
+    expect(r.init.pathStates()[P0]).toBe('live');
+    const stuck = r.init.outstanding().inflight;
+    expect(stuck).toBeGreaterThan(0);
+    expect(stuck).toBeLessThan(8);
+    r.runTo(last + HOLD - 1);
+    const outlier = r.cvm.maxPendingS(last + HOLD - 1);
+    r.runTo(last + HOLD + 1);
+    // IO completed every tick: the stall is partial (fewer free slots, some outliers).
+    expect(perTick(r, 12, last + HOLD).every((n) => n > 0)).toBe(true);
+    expect(outlier).toBeGreaterThan(KATO + CQT);
+    expect(r.cvm.maxPendingS(last + HOLD + 1)).toBeLessThanOrEqual(1);
+    expect(r.cvm.errors()).toHaveLength(0);
+  });
+
+  it('round-robin: every guest slot ends up on the dead path; a full stall until the hold expires', () => {
+    const r = rig({ selector: 'round-robin', io: { perTick: 4, depth: 32 } });
+    r.runTo(10);
+    const last = r.init.lastExchange(P0) ?? -1;
+    r.sim.applyAction({ kind: 'link-down', target: 'l-tgt-p0' });
+    r.runTo(last + HOLD + 1);
+    expect(lostAt(r, P0)).toBe(last + KATO);
+    // After the tick that reveals the stuck command, nothing completes until the retry.
+    expect(perTick(r, 13, last + HOLD - 1).every((n) => n === 0)).toBe(true);
+    // The closed loop filled the guest queue.
+    const done = r.cvm.completedAt(last + HOLD);
+    expect(done.length).toBe(32);
+    expect(done.every((c) => c.outcome.status === 'ok')).toBe(true);
+    expect(r.cvm.maxPendingS(last + HOLD + 1)).toBeLessThanOrEqual(1);
+    expect(r.cvm.errors()).toHaveLength(0);
+  });
+
+  it('round-robin on a closed connection: only the commands in flight wait (CQT), others go on', () => {
+    const r = rig({ selector: 'round-robin', io: { perTick: 4, depth: 32 } });
+    r.runTo(10);
+    r.tgt.down.add('tgt.ep0');
+    r.runTo(11 + CQT + 1);
+    expect(lostAt(r, P0)).toBe(11);
+    expect(perTick(r, 12, 11 + CQT - 1).every((n) => n > 0)).toBe(true);
+    expect(r.cvm.maxPendingS(11 + CQT + 1)).toBeLessThanOrEqual(1);
   });
 });
 

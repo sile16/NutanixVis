@@ -14,7 +14,7 @@ import {
   t1Steady,
 } from '../helpers';
 import { T1_LAB } from '../ids';
-import { KATO, P, PATH_LOSS_WORST } from '../timers';
+import { CLOSED_PATH_WORST, P } from '../timers';
 
 const IP = 'fa.ct0.eth10.v10';
 const ENABLE_AT = T0 + 120;
@@ -35,18 +35,19 @@ export default defineScenario({
   ],
   expect: [
     ...t1Steady(),
-    at(by(KATO), 'every CVM loses exactly the path to that IP', (s) =>
+    // A disabled IP refuses the connection: the path is lost on the next frame, not after KATO.
+    at(by(0), 'every CVM loses exactly the path to that IP, at once', (s) =>
       allCvms(s, (c) => onlyPathsLostTo(c, [IP])),
     ),
     alwaysFrom(T0, 'VMs keep running (latency outliers only)', (s) => allVms(s, isRunning)),
-    alwaysFrom(T0, 'no command waits longer than KATO + CQT', (s) =>
-      allVms(s, (v) => v.ioPendingS <= PATH_LOSS_WORST + SLACK),
+    alwaysFrom(T0, 'no command waits longer than CQT (closed connection)', (s) =>
+      allVms(s, (v) => v.ioPendingS <= CLOSED_PATH_WORST + SLACK),
     ),
     at(END, 'the path reconnects once the IP is back', (s) => allCvms(s, allPathsLive)),
     ...baseInvariants(),
   ],
   narrative:
-    "One of the array's data IPs is disabled. Every CVM's path to that IP goes silent and is declared lost after the keep-alive timeout, while IO carries on over the other paths, which are all ANA Optimized. When the IP comes back, the next reconnect attempt restores the path.",
-  cite: ['nvme-base-spec', 'everpure-ana-faq', 'everpure-ha-scenarios'],
+    "One of the array's data IPs is disabled. The array refuses connections to it, so every CVM loses its path to that IP at once, without waiting for the keep-alive timeout. New IO carries on over the other paths, which are all ANA Optimized; the commands that were in flight on the lost path are retried after the quiesce time (CQT). When the IP comes back, the next reconnect attempt restores the path.",
+  cite: ['nvme-base-spec-2.1', 'everpure-ana-faq', 'everpure-nutanix-nci-cfg'],
   status: 'active',
 });

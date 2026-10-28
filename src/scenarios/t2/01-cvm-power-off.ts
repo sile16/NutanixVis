@@ -18,7 +18,14 @@ import {
   wasEver,
 } from '../helpers';
 import { cvmId, nodeId, T2 } from '../ids';
-import { P, REDIRECT_DETECT, REDIRECT_PAUSE } from '../timers';
+import {
+  NODE_REBUILD_START,
+  P,
+  REDIRECT_DETECT,
+  REDIRECT_PAUSE,
+  SILENT_NODE_PAUSE,
+  STARGATE_DOWN,
+} from '../timers';
 
 const CVM = cvmId(1);
 const POWER_ON_AT = T0 + 120;
@@ -50,10 +57,12 @@ export default defineScenario({
         (v) => isRunning(v) && v.host === nodeId(1) && v.ownerCvm !== null && v.ownerCvm !== CVM,
       ),
     ),
-    alwaysFrom(T0, 'node 1 VM IO pause bounded by detection plus redirect stall', (s) =>
-      vmsOfNode(s, 1).every((v) => v.ioPendingS <= REDIRECT_PAUSE + SLACK),
+    // After the redirect, the remote Stargate's writes still need CVM 1's replica until CVM 1 is
+    // declared down (a hard power-off: ZK session expiry, `hci.stargateDownDetectS`).
+    alwaysFrom(T0, 'node 1 VM IO pause bounded by Stargate-down detection', (s) =>
+      vmsOfNode(s, 1).every((v) => v.ioPendingS <= SILENT_NODE_PAUSE + SLACK),
     ),
-    atCtx(by(P.hci.rebuildStartDelayS + REDIRECT_DETECT), 'rebuild starts immediately', (_s, ctx) =>
+    atCtx(by(NODE_REBUILD_START), 'rebuild starts 60 s after CVM 1 is declared down', (_s, ctx) =>
       eventSeen(ctx, 'curator.rebuild.start'),
     ),
     atCtx(POWER_ON_AT, 'resiliency shows Rebuilding', (_s, ctx) =>
@@ -78,8 +87,13 @@ export default defineScenario({
     neverSeen(END, 'ha.vm.restarted'),
     ...baseInvariants(),
   ],
-  narrative:
-    "CVM 1 is powered off while node 1 keeps running its VMs. The host's iSCSI redirector misses two NOPs, marks the local Stargate unhealthy, and QEMU's iSCSI login is redirected to a healthy remote Stargate after a short pause. Curator starts rebuilding the lost replicas right away. When CVM 1 is back and its Stargate has been stable for 30 s, the VMs fail back to local IO.",
-  cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-5b', 'ntnx-bible-4i', 'ntnx-blog-cvm-failure'],
+  narrative: `CVM 1 is powered off while node 1 keeps running its VMs. The host's iSCSI redirector misses two NOPs, marks the local Stargate unhealthy, and QEMU's iSCSI login is redirected to a healthy remote Stargate after a short pause. Writes that need a replica on CVM 1 stall until the cluster declares its Stargate down (Zookeeper session expiry, ${STARGATE_DOWN} s), and Curator starts rebuilding the lost replicas ${P.hci.rebuildStartDelayS} s after that. When CVM 1 is back and its Stargate has been stable for ${P.redirector.failbackStableS} s, the VMs fail back to local IO.`,
+  cite: [
+    'ntnx-ahv-admin-11.2',
+    'ntnx-bible-5b',
+    'ntnx-bible-4i',
+    'ntnx-blog-cvm-failure',
+    'ntnx-kb-io-freeze-cvm-down',
+  ],
   status: 'active',
 });

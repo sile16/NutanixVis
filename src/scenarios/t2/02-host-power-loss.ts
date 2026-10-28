@@ -1,4 +1,3 @@
-import { buildTopology } from '../../topologies';
 import { defineScenario } from '../define';
 import {
   allRunningAt,
@@ -18,26 +17,28 @@ import {
   wasEver,
 } from '../helpers';
 import { cvmId, nodeId, T2 } from '../ids';
-import { P } from '../timers';
+import { NODE_REBUILD_START, nodeRebuildS, P, STARGATE_DOWN } from '../timers';
 
 const HA = P.ahvHa;
 const LOST = nodeId(2);
 const DETACH = P.cluster.cassandraRingDetachS;
 /**
- * Rebuild duration (SPEC §6.3 "Curator rebuild", Bible 4i): Curator re-copies node 2's share of
- * the used capacity, spread over the surviving nodes at `hci.rebuildGiBpsPerNode` each. Placement
- * is balanced, so node 2 held `initialUsedCapacityPct` of its own raw capacity. Both inputs are
- * `assumption`s, so the expectation tracks them rather than a fixed time: with the defaults this is
- * about 32 min, i.e. the rebuild is still running when the 30 min ring detach happens.
+ * Rebuild timing (SPEC §6.3 "Curator rebuild", Bible 4i). Node 2's Stargate is declared down when
+ * its ZK session expires (`hci.stargateDownDetectS`), and Curator starts `hci.rebuildStartDelayS`
+ * later. It then re-copies node 2's share of the used capacity over the three survivors at
+ * `hci.rebuildGiBpsPerNode` each. The rate and fill are `assumption`s, so the expectation tracks
+ * them rather than a fixed time: with the defaults the copy takes about 64 min, so the 30 min ring
+ * detach happens while the rebuild is still running.
  */
-const LOST_RAW_TIB = buildTopology(T2.topology)
-  .devices.filter((d) => d.kind === 'disk' && d.parent === LOST)
-  .reduce((sum, d) => sum + (d.kind === 'disk' ? d.capacityTiB : 0), 0);
-const LOST_GIB = (P.hci.initialUsedCapacityPct / 100) * LOST_RAW_TIB * 1024;
-const REBUILD_S = LOST_GIB / (P.hci.rebuildGiBpsPerNode * (T2.nodes.length - 1));
+const { lostGiB: LOST_GIB, seconds: REBUILD_S } = nodeRebuildS(
+  T2.topology,
+  LOST,
+  T2.nodes.length - 1,
+);
+const REBUILD_AT = T0 + NODE_REBUILD_START;
 /** ±10 % around the modeled duration: catches a stalled rebuild and one not limited by the rate. */
-const REBUILDING_UNTIL = T0 + Math.floor(REBUILD_S * 0.9);
-const REBUILT_BY = T0 + Math.ceil(REBUILD_S * 1.1);
+const REBUILDING_UNTIL = REBUILD_AT + Math.floor(REBUILD_S * 0.9);
+const REBUILT_BY = REBUILD_AT + Math.ceil(REBUILD_S * 1.1);
 const END = Math.max(by(DETACH) + 60, REBUILT_BY);
 
 export default defineScenario({
@@ -53,7 +54,12 @@ export default defineScenario({
       'node 2 is not the Acropolis leader (see t2-04)',
       (s) => derived(s).acropolisLeader !== LOST,
     ),
-    atCtx(by(P.hci.rebuildStartDelayS), 'rebuild starts immediately', (_s, ctx) =>
+    atCtx(
+      before(NODE_REBUILD_START),
+      'no rebuild before node 2 is declared down plus the start delay',
+      (_s, ctx) => !eventSeen(ctx, 'curator.rebuild.start'),
+    ),
+    atCtx(by(NODE_REBUILD_START), 'rebuild starts 60 s after node 2 is declared down', (_s, ctx) =>
       eventSeen(ctx, 'curator.rebuild.start'),
     ),
     at(
@@ -89,6 +95,11 @@ export default defineScenario({
         eventSeen(ctx, 'cassandra.node.detached', { device: cvmId(2) }),
     ),
     at(
+      by(DETACH),
+      'the ring detach happens while the rebuild is still running',
+      (s) => derived(s).resiliency === 'Rebuilding' && derived(s).underReplicated > 0,
+    ),
+    at(
       REBUILDING_UNTIL,
       'rebuild is rate-limited: still running at 90% of data ÷ (rate × 3 survivors)',
       (s) => derived(s).resiliency === 'Rebuilding' && derived(s).underReplicated > 0,
@@ -103,7 +114,14 @@ export default defineScenario({
     ),
     ...baseInvariants(),
   ],
-  narrative: `Node 2 loses power, and AHV HA follows its timeline: the 40 s timeout starts at T+20, the host's IO is fenced at T+60, and its VMs restart elsewhere by T+120. Curator starts re-replicating node 2's extent groups immediately, spread across the three surviving nodes. Its duration follows from the data node 2 held and the rebuild rate, both modeled assumptions: about ${(LOST_GIB / 1024).toFixed(1)} TiB at ${P.hci.rebuildGiBpsPerNode} GiB/s per node, roughly ${Math.round(REBUILD_S / 60)} min. Meanwhile, after 30 minutes down, CVM 2 is detached from the Cassandra metadata ring.`,
-  cite: ['ntnx-bible-5b', 'ntnx-bible-4i', 'ntnx-kb-1256', 'ntnx-ahv-admin-11.2'],
+  narrative: `Node 2 loses power, and AHV HA follows its timeline: the 40 s timeout starts at T+20, the host's IO is fenced at T+60, and its VMs restart elsewhere by T+120. The cluster declares node 2's Stargate down when its Zookeeper session expires after ${STARGATE_DOWN} s, and Curator starts re-replicating node 2's extent groups ${P.hci.rebuildStartDelayS} s later, spread across the three surviving nodes. The copy time follows from the data node 2 held and the rebuild rate, both modeled assumptions: about ${(LOST_GIB / 1024).toFixed(1)} TiB at ${P.hci.rebuildGiBpsPerNode} GiB/s per node, roughly ${Math.round(REBUILD_S / 60)} min. After 30 minutes down, while the rebuild is still running, CVM 2 is detached from the Cassandra metadata ring.`,
+  cite: [
+    'ntnx-bible-5b',
+    'ntnx-bible-4i',
+    'ntnx-kb-1256',
+    'ntnx-ahv-admin-11.2',
+    'ntnx-kb-io-freeze-cvm-down',
+    'ntnx-kb-delayed-rebuild',
+  ],
   status: 'active',
 });

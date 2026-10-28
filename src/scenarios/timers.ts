@@ -10,6 +10,7 @@
 import type { Profile } from '../domain/versions/profile';
 import { current } from '../domain/versions/profiles/current';
 import type { Cited } from '../engine/types';
+import { buildTopology, type OptionValues, type TopologyId } from '../topologies';
 
 type Section = Exclude<keyof Profile, 'id' | 'label'>;
 type NumericKeys<T> = { [K in keyof T]-?: T[K] extends Cited<number> ? K : never }[keyof T];
@@ -47,3 +48,31 @@ export const PATH_LOSS_WORST = KATO + CQT;
 export const REDIRECT_DETECT = P.redirector.missesToUnhealthy * P.redirector.nopIntervalS;
 /** Detection plus the (assumed) IO stall while QEMU re-logs in to the new Stargate. */
 export const REDIRECT_PAUSE = REDIRECT_DETECT + P.redirector.redirectStallS;
+
+/**
+ * A silent Stargate (node power loss, hang, isolation) is declared down when its Zookeeper
+ * session expires; until then, writes that need a replica on it stall (SPEC §6.3).
+ */
+export const STARGATE_DOWN = P.hci.stargateDownDetectS;
+/** Curator rebuild start after a node loss: Stargate-down detection, then the start delay. */
+export const NODE_REBUILD_START = STARGATE_DOWN + P.hci.rebuildStartDelayS;
+/** Worst VM IO pause when a node's Stargate goes silent: the redirect or the replica-write stall. */
+export const SILENT_NODE_PAUSE = Math.max(REDIRECT_PAUSE, STARGATE_DOWN);
+
+/**
+ * Curator copy time for one lost CVM node (SPEC §6.3 "Curator rebuild", Bible 4i): its share of
+ * the used capacity (placement is balanced, so `initialUsedCapacityPct` of its own raw capacity),
+ * spread over `survivors` nodes at `hci.rebuildGiBpsPerNode` each. Both inputs are `assumption`s.
+ */
+export function nodeRebuildS(
+  topology: TopologyId,
+  node: string,
+  survivors: number,
+  options: OptionValues = {},
+): { lostGiB: number; seconds: number } {
+  const rawTiB = buildTopology(topology, options)
+    .devices.filter((d) => d.kind === 'disk' && d.parent === node)
+    .reduce((sum, d) => sum + (d.kind === 'disk' ? d.capacityTiB : 0), 0);
+  const lostGiB = (P.hci.initialUsedCapacityPct / 100) * rawTiB * 1024;
+  return { lostGiB, seconds: lostGiB / (P.hci.rebuildGiBpsPerNode * survivors) };
+}

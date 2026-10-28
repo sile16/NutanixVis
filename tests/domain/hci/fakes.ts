@@ -32,6 +32,8 @@ type Ctx = TickContext<Profile>;
 export class FakeCluster implements ClusterView {
   readonly cvms = new Map<DeviceId, StubCvm>();
   readonly stargateStopped = new Set<DeviceId>();
+  /** CVMs outside the ZK quorum side (network isolation, as the cluster sees it). */
+  readonly outOfQuorum = new Set<DeviceId>();
   metadataOverride: boolean | undefined;
   now = 0;
 
@@ -54,6 +56,9 @@ export class FakeCluster implements ClusterView {
   }
   zkQuorum(): boolean {
     return this.metadataAvailable();
+  }
+  inQuorum(cvm: DeviceId): boolean {
+    return this.isCvmUp(cvm) && !this.outOfQuorum.has(cvm);
   }
   metadataAvailable(): boolean {
     if (this.metadataOverride !== undefined) return this.metadataOverride;

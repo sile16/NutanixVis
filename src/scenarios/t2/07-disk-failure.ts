@@ -39,8 +39,10 @@ function hardFailure(): ScenarioDef {
         (s, ctx) =>
           disk(s, DISK).state !== 'online' && eventSeen(ctx, 'disk.offline', { device: DISK }),
       ),
-      atCtx(by(P.hci.rebuildStartDelayS), 'rebuild starts immediately', (_s, ctx) =>
-        eventSeen(ctx, 'curator.rebuild.start'),
+      atCtx(
+        by(P.hci.rebuildStartDelayS),
+        'rebuild starts 60 s after the disk goes offline',
+        (_s, ctx) => eventSeen(ctx, 'curator.rebuild.start'),
       ),
       alwaysFrom(T0, 'VM IO continues, re-read from replicas', (s) => allVms(s, isRunning)),
       alwaysFrom(T0, 'storage stays available', (s) => derived(s).dataAvailable),
@@ -53,16 +55,19 @@ function hardFailure(): ScenarioDef {
       neverSeen(END, 'ha.host.disconnected'),
       ...baseInvariants(),
     ],
-    narrative:
-      "One SSD on node 1 fails. Stargate takes it offline and reads are served from the other replicas, so VMs see no IO errors and there is no HA event. Curator starts re-replicating the disk's data immediately.",
+    narrative: `One SSD on node 1 fails. Stargate takes it offline and reads are served from the other replicas, so VMs see no IO errors and there is no HA event. Curator starts re-replicating the disk's data ${P.hci.rebuildStartDelayS} s later.`,
     cite: ['ntnx-bible-4i', 'ntnx-bible-4g'],
     status: 'active',
   });
 }
 
-/** Offline/recover cycles a minute apart: 3 offline events inside an hour keep the disk out. */
+/**
+ * Offline/recover cycles: offline for `cycle` s, then back for `cycle` s. The cycle outlasts the
+ * Hades SMART check (`hci.diskSmartCheckS`) so each blip can finish it; three offline events
+ * still fall inside an hour, which keeps the disk out.
+ */
 function flapping(): ScenarioDef {
-  const cycle = 60;
+  const cycle = P.hci.diskSmartCheckS + 60;
   const steps: ScenarioStep[] = [];
   for (let i = 0; i < LIMIT; i++) {
     steps.push({ at: T0 + i * 2 * cycle, action: { kind: 'disk.fail', target: DISK } });

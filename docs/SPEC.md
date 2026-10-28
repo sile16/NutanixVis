@@ -313,12 +313,21 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 
 **Extent groups**
 
-- Each vDisk is abstracted to E extent groups (default 8). Replica placement is deterministic: RF2 or RF3, with one replica local when written and the rest on other nodes, block- or rack-aware when enabled.
+- Each vDisk is abstracted to E extent groups (default 8). Real extent groups are 4 MiB, or 1 MiB with deduplication (Bible 4g), so a real vDisk has thousands; E is model granularity only.
+- Replica placement is deterministic: RF2 or RF3, with one replica local when written and the rest on other nodes, block- or rack-aware when enabled.
 
 **Writes**
 
 - A write goes to the local Oplog and is synchronously replicated to RF−1 remote CVMs before it is acknowledged (Bible 4g). Replication packets are shown on the diagram.
 - With the local CVM down, all replicas are written remotely.
+
+**Stargate-down detection** (KB "IO freeze in UVMs is expected when CVM on different node shutdown or Stargate on different node crashes", cited by title, `inferred`)
+
+- A peer Stargate that goes **silent** (node power loss, hang, hard CVM power-off, or network isolation, i.e. outside the ZK quorum side) is declared down when its Zookeeper session expires: `hci.stargateDownDetectS` = 20 s.
+- A **cleanly stopped** Stargate closes its session and is declared down in `hci.stargateStopDetectS` = 1 s.
+- Until the declaration, writing Stargates still target the silent node's replicas, so writes that need one **stall**. Then the replica is re-placed on another node. This is the visible IO freeze of up to about 20 s.
+- A replica write to a peer that is still up but dropped the frame or did not ack is re-placed after `hci.replicaAckTimeoutS` (2 s, `assumption`). A disk that Stargate marks offline is skipped at once.
+- Once declared down, the node's replicas stop counting as live copies and the rebuild clock starts. The model approximates a CVM reboot command as a silent loss (the cluster view cannot tell it from a power-off).
 
 **Autopath on AHV**
 
@@ -329,13 +338,15 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 
 **Curator rebuild**
 
-- Rebuild starts immediately when Stargate or a disk goes down (Bible 4i).
-- It runs at a modeled rate spread across the N surviving nodes, so each node does about 1/N.
-- The resiliency status shows Rebuilding until all extent groups are back to RF.
+- Rebuild starts `hci.rebuildStartDelayS` = **60 s** after a Stargate is declared down, or after Stargate marks a disk offline (`inferred`). Bible 4i's "immediately" means there is no long repair-delay timer; the KBs "Delayed rebuild for planned maintenance events" and "Slow data rebuild after failure on clusters with Erasure Coding enabled" (cited by title) give the 60 s selective-scan trigger. For a node power loss the rebuild therefore starts about 80 s after the failure.
+- It runs at `hci.rebuildGiBpsPerNode` = 0.5 GiB/s per surviving node (`assumption`), spread across the N survivors, so each node does about 1/N. Josh Odgers' public 2018 tests work out to about 0.3–0.6 GB/s per surviving node, and an all-flash node rebuild is "expected 1 to 2 hours" (KB above). With the defaults, a 4-node T2 cluster at 20 % fill re-protects one node in about 64 min, so the 30 min ring detach happens mid-rebuild.
+- The resiliency status shows Rebuilding from the failure (including the wait for the start) until all extent groups are back to RF.
+- Curator partial scans run about every hour and full scans about every 6 h (`inferred`: Nutanix-staff community posts, KB-2101 by number). Extra copies left by a returning node are removed at the next partial scan.
+- Ring rejoin: a detached node is re-added after it has been stable for `cluster.cassandraRejoinStableS` = 30 min (KB-1256, `inferred`).
 
 **Disks**
 
-- A disk fails into offline, then a SMART check runs. If the disk goes offline 3 times in an hour, it stays offline.
+- A disk fails into offline. When the fault clears, Hades runs a `smartctl` short self-test (`hci.diskSmartCheckS` = 120 s, `assumption`: a short test takes a minute or two, smartctl(8)) and returns the disk if it passes. If the disk goes offline 3 times in an hour, it stays offline.
 - Stargate goes read-only at 95% capacity. A capacity slider in later versions is optional.
 
 **Data outcomes beyond FT**
@@ -363,6 +374,7 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 **Cluster services in T3**
 
 - Zookeeper, Cassandra, Stargate and Curator run only on **CVM-bearing nodes** (HCI and SO). Quorum, RF placement, FT and rebuild are counted over those nodes only.
+- An SO node failure follows the T2 timing (§6.3): writes needing its replicas stall until its Stargate is declared down (about 20 s), and Curator starts the rebuild 60 s later. A CO node holds no data, so its failure starts no rebuild.
 - CO nodes count toward HA compute capacity only.
 
 **Sizing guidance** (community 2019, `unverified`): a 2 HC : 1 CO ratio, and starting with 4 HCI nodes. The model shows this as an advisory warning, not a hard rule.
@@ -493,12 +505,12 @@ This is the reference that E, F, G and H implement. Each row is about **one** fa
 
 | Failure | Detector and timer | IO effect | VM / HA effect | Data effect |
 |---|---|---|---|---|
-| **Stargate process down** (CVM up) | iSCSI redirector NOP to the local Stargate, about 1 s; ≥2 misses in 30 s mark it unhealthy (`inferred`) | The QEMU iSCSI re-login is redirected to a healthy remote Stargate (AHV Admin Guide "Storage Overview"). There is a brief stall whose length is an `assumption`. Latency rises. | None | Rebuild starts **immediately** (Bible 4i) |
-| **CVM down** (host up) | Same as above, plus loss of the CVM's ZK and Cassandra membership | Redirected to a remote CVM (AHV Admin Guide). Failback after 30 s stable. | None, and the VM keeps running (AHV Admin Guide) | Rebuild starts immediately. The node is detached from the Cassandra ring after 30 min. Leaders it held are re-elected. |
+| **Stargate process down** (CVM up) | iSCSI redirector NOP to the local Stargate, about 1 s; ≥2 misses in 30 s mark it unhealthy (`inferred`) | The QEMU iSCSI re-login is redirected to a healthy remote Stargate (AHV Admin Guide "Storage Overview"). There is a brief stall whose length is an `assumption`. Latency rises. | None | Rebuild starts 60 s after the Stargate is declared down (clean stop: about 1 s), §6.3 |
+| **CVM down** (host up) | Same as above, plus loss of the CVM's ZK and Cassandra membership | Redirected to a remote CVM (AHV Admin Guide). Failback after 30 s stable. | None, and the VM keeps running (AHV Admin Guide) | Writes needing its replicas stall until it is declared down (about 20 s); rebuild starts 60 s later (§6.3). The node is detached from the Cassandra ring after 30 min. Leaders it held are re-elected. |
 | **Host / node down** | Acropolis leader heartbeat at 1 Hz; HA fault detection also covers host management-service heartbeats and a corrupt or read-only root FS (AHV Admin Guide) | — | T+20 the 40 s timeout starts; T+60 fence; T+120 restart, subject to resources. HA status goes OK → Healing → Critical/OK. | As for CVM down |
-| **Host network isolation** | As for host down, from the majority side | The local Stargate cannot complete RF writes and is in the ZK minority, so writes fail | Isolated VMs self-terminate 45 s after their first failed IO, then restart on the majority side by T+120 | — |
+| **Host network isolation** | As for host down, from the majority side | The local Stargate cannot complete RF writes and is in the ZK minority, so writes fail | Isolated VMs self-terminate 45 s after their first failed IO, then restart on the majority side by T+120 | The majority declares its Stargate down at ZK session expiry (about 20 s); rebuild starts 60 s later (§6.3) |
 | **One uplink or ToR down** | Bond: active-backup on link state; LACP fast ≤3 s / slow ≤90 s | Hashes on the dead member blackhole until detection (LACP only) | None if a member survives | None |
-| **Disk down** | Stargate IO error, then a Hades SMART check; 3 offline events in 1 h keeps the disk offline | None (re-read from a replica) | None | Rebuild immediately |
+| **Disk down** | Stargate IO error, then a Hades SMART check; 3 offline events in 1 h keeps the disk offline | None (re-read from a replica) | None | Rebuild starts 60 s after the disk goes offline |
 | **Failures beyond FT** | — | IO to unreachable extents or metadata hangs (`unverified` cluster-wide effect) | Guests time out (Linux SCSI timeout 60 s, AHV Admin Guide) | Data unavailable, not lost, until a replica returns |
 | **vSwitch quick update over 30 s** | — | — | HA is triggered (AHV Admin Guide) | — |
 
@@ -643,7 +655,7 @@ T1 (AHV + FlashArray):
 T2 (HCI AHV):
 
 1. CVM power-off triggers Autopath, then failback after 30 s stable.
-2. Host power loss: fence at T+60, restart at T+120, immediate rebuild, ring detach at 30 min.
+2. Host power loss: fence at T+60, restart at T+120, rebuild from about T+80 (about 64 min), ring detach at 30 min mid-rebuild.
 3. Host network isolation, with isolated VMs self-terminating at 45 s.
 4. The host running the Acropolis leader fails.
 5. Single uplink or ToR failure with active-backup bonds.

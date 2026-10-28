@@ -20,6 +20,7 @@ export interface Citation {
     | 'Open vSwitch'
     | 'SPDK'
     | 'NVM Express'
+    | 'smartmontools'
     | 'Community';
   /** ISO date the source was last checked. */
   readonly retrieved: string;
@@ -30,6 +31,8 @@ const PORTAL_DOC = 'https://portal.nutanix.com/page/documents/details?targetId='
 const EVERPURE = 'https://support.everpuredata.com/r/';
 const BIBLE = 'https://www.nutanixbible.com/';
 const NEXT = 'https://next.nutanix.com/';
+/** Portal KB search: for KBs cited by title whose number is not known. */
+const PORTAL_KBS = 'https://portal.nutanix.com/page/documents/kbs/list';
 
 type Entry = Omit<Citation, 'id' | 'retrieved'>;
 
@@ -96,6 +99,36 @@ const entries = {
   'ntnx-kb-1256': {
     title: 'Nutanix KB-1256: Cassandra node auto ring-repair / detach from metadata ring',
     url: 'https://portal.nutanix.com/kb/1256',
+    publisher: 'Nutanix',
+  },
+  'ntnx-kb-2101': {
+    title:
+      'Nutanix KB-2101: Curator scan types and schedule (cited by number; KB text not yet confirmed on the portal)',
+    url: 'https://portal.nutanix.com/kb/2101',
+    publisher: 'Nutanix',
+  },
+  'ntnx-kb-delayed-rebuild': {
+    title:
+      'Nutanix KB: "Delayed rebuild for planned maintenance events" (cited by title; KB text not yet confirmed on the portal)',
+    url: PORTAL_KBS,
+    publisher: 'Nutanix',
+  },
+  'ntnx-kb-slow-rebuild-ec': {
+    title:
+      'Nutanix KB: "Slow data rebuild after failure on clusters with Erasure Coding enabled" (cited by title; KB text not yet confirmed on the portal)',
+    url: PORTAL_KBS,
+    publisher: 'Nutanix',
+  },
+  'ntnx-kb-io-freeze-cvm-down': {
+    title:
+      'Nutanix KB: "IO freeze in UVMs is expected when CVM on different node shutdown or Stargate on different node crashes" (cited by title; KB text not yet confirmed on the portal)',
+    url: PORTAL_KBS,
+    publisher: 'Nutanix',
+  },
+  'ntnx-kb-hades': {
+    title:
+      'Nutanix KB: "Disk Manager (Hades)" (cited by title; KB text not yet confirmed on the portal)',
+    url: PORTAL_KBS,
     publisher: 'Nutanix',
   },
   'ntnx-blog-cvm-failure': {
@@ -297,10 +330,34 @@ const entries = {
     url: `${NEXT}questions/22699`,
     publisher: 'Community',
   },
+  'ntnx-community-rebuild-rate-rf3': {
+    title:
+      'Josh Odgers: "Nutanix Resiliency – Part 3 – Node failure rebuild performance with RF3" (2018)',
+    url: 'https://www.joshodgers.com/2018/06/05/nutanix-resiliency-part-3-node-failure-rebuild-performance-with-rf3/',
+    publisher: 'Community',
+  },
+  'ntnx-community-curator-scans': {
+    title:
+      'Nutanix Community — Curator scans types and frequency or where is our free space (Nutanix staff)',
+    url: `${NEXT}how-it-works-22/curator-scans-types-and-frequency-or-where-is-our-free-space-33516`,
+    publisher: 'Community',
+  },
+  'ntnx-community-free-space': {
+    title:
+      'Nutanix Community — Why does my Nutanix cluster not show free or reclaimed space after deleting many VMs or files (Nutanix staff)',
+    url: `${NEXT}how-it-works-22/why-does-my-nutanix-cluster-not-show-free-or-reclaimed-space-after-deleting-many-vms-or-files-38052`,
+    publisher: 'Community',
+  },
   'ntnx-community-co-nodes': {
     title: 'Nutanix Community — What are the Nutanix compute nodes',
     url: `${NEXT}how-it-works-22/what-are-the-nutanix-compute-nodes-37488`,
     publisher: 'Community',
+  },
+  // ── Other ──────────────────────────────────────────────────────────────────
+  'smartctl-man': {
+    title: 'smartctl(8) manual page: "-t short" runs the SMART Short Self Test',
+    url: 'https://linux.die.net/man/8/smartctl',
+    publisher: 'smartmontools',
   },
 } as const satisfies Record<string, Entry>;
 

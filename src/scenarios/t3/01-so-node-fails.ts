@@ -18,7 +18,7 @@ import {
   vms,
 } from '../helpers';
 import { cvmId, nodeId, T3_CO_SO } from '../ids';
-import { P, REDIRECT_PAUSE } from '../timers';
+import { NODE_REBUILD_START, P, REDIRECT_PAUSE, SILENT_NODE_PAUSE, STARGATE_DOWN } from '../timers';
 
 const SO = 4;
 const END = by(P.ahvHa.restartByS) + 30;
@@ -43,18 +43,24 @@ export default defineScenario({
         return now !== undefined && isRunning(now) && now.ownerCvm !== cvmId(SO);
       });
     }),
-    alwaysFrom(T0, 'CO VM IO pause bounded by detection plus redirect stall', (s) =>
-      allVms(s, (v) => v.ioPendingS <= REDIRECT_PAUSE + SLACK),
+    // Writes that need a replica on node 4 stall until its Stargate is declared down (ZK session
+    // expiry, `hci.stargateDownDetectS`), which outlasts the redirect.
+    alwaysFrom(T0, 'VM IO pause bounded by Stargate-down detection', (s) =>
+      allVms(s, (v) => v.ioPendingS <= SILENT_NODE_PAUSE + SLACK),
     ),
-    atCtx(by(P.hci.rebuildStartDelayS), 'rebuild starts immediately', (_s, ctx) =>
+    atCtx(by(NODE_REBUILD_START), 'rebuild starts 60 s after node 4 is declared down', (_s, ctx) =>
       eventSeen(ctx, 'curator.rebuild.start'),
     ),
     always('no VM is ever placed on a storage-only node', noVmOnStorageOnly),
     neverSeen(END, 'ha.vm.restarted'),
     ...baseInvariants(),
   ],
-  narrative:
-    'Storage-only node 4 fails. It runs no VMs, so there is nothing for AHV HA to restart, but Curator starts rebuilding its replicas at once. Compute-only VMs whose Stargate was on node 4 have their iSCSI sessions redirected to another storage node after a short pause.',
-  cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-4i', 'ntnx-community-co-nodes'],
+  narrative: `Storage-only node 4 fails. It runs no VMs, so there is nothing for AHV HA to restart. Compute-only VMs whose Stargate was on node 4 have their iSCSI sessions redirected to another storage node after a short pause. Writes that need a replica on node 4 stall until the cluster declares its Stargate down (Zookeeper session expiry, ${STARGATE_DOWN} s), and Curator starts rebuilding node 4's replicas ${P.hci.rebuildStartDelayS} s after that.`,
+  cite: [
+    'ntnx-ahv-admin-11.2',
+    'ntnx-bible-4i',
+    'ntnx-community-co-nodes',
+    'ntnx-kb-io-freeze-cvm-down',
+  ],
   status: 'active',
 });

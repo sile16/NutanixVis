@@ -72,6 +72,14 @@ export interface Profile {
     readonly diskOfflineWindowS: Cited<number>;
     /** Stargate replication / remote-read RPC: no ack within this → replica treated unreachable. */
     readonly replicaAckTimeoutS: Cited<number>;
+    /**
+     * A peer Stargate that goes silent (node power loss, hang, network isolation) is declared down
+     * when its Zookeeper session expires. Until then, writes needing a replica on it stall; the
+     * rebuild clock (`rebuildStartDelayS`) starts at the declaration.
+     */
+    readonly stargateDownDetectS: Cited<number>;
+    /** A cleanly stopped Stargate closes its Zookeeper session: declared down this fast. */
+    readonly stargateStopDetectS: Cited<number>;
   };
 
   /** AHV virtual switch bonds (AHV Admin Guide Table 9). */

@@ -6,6 +6,7 @@ import type { Message } from '../../../src/engine/types';
 import { harness } from './fakes';
 
 const ACK_TIMEOUT = current.hci.replicaAckTimeoutS.value;
+const DETECT = current.hci.stargateDownDetectS.value;
 
 describe('write path (Bible 4g)', () => {
   it('steady state: every write is replicated RF−1 times and completes in its tick', () => {
@@ -70,11 +71,19 @@ describe('write path (Bible 4g)', () => {
     const h = harness('t2-hci-ahv');
     h.sim.tick(5);
     h.sim.applyAction({ kind: 'fail', target: 'node-1.cvm' });
-    h.sim.tick(20);
+    h.sim.tick(3);
     const vm = h.workload.vms.find((v) => v.vm === 'node-1.vm-1');
     expect(vm?.servedBy).toEqual(['node-1.cvm', 'node-2.cvm']);
-    const before = vm?.writes ?? 0;
+    // The remote Stargate still targets node-1's copy until node-1 is declared down: writes stall.
+    const stalled = vm?.writes ?? 0;
+    h.sim.tick(DETECT - 5);
+    expect(vm?.writes).toBe(stalled);
+    expect(h.workload.maxPendingS(h.sim.getSnapshot().simTime)).toBeGreaterThan(DETECT - 5);
     h.sim.tick(5);
+    const before = vm?.writes ?? 0;
+    expect(before).toBeGreaterThan(stalled);
+    // Every extent group of the vDisk gets written again (round-robin, one write per tick).
+    h.sim.tick(current.hci.extentGroupsPerVdisk.value + 2);
     expect(vm?.writes).toBeGreaterThan(before);
     expect(vm?.errors).toEqual([]);
 
@@ -86,6 +95,79 @@ describe('write path (Bible 4g)', () => {
       expect(new Set(current.map((r) => r.node)).size).toBe(current.length);
       expect(current.length).toBe(2);
     }
+  });
+});
+
+describe('Stargate-down detection (KB "IO freeze in UVMs is expected …")', () => {
+  const STOP = current.hci.stargateStopDetectS.value;
+  const DELAY = current.hci.rebuildStartDelayS.value;
+
+  /** Longest write latency among writes that completed after `from`. */
+  function worstWrite(h: ReturnType<typeof harness>, from: number) {
+    const done: IoCompletion[] = [];
+    const record = h.workload.record.bind(h.workload);
+    h.workload.record = (c) => {
+      done.push(c);
+      record(c);
+    };
+    return () =>
+      Math.max(
+        0,
+        ...done
+          .filter((c) => c.req.op === 'write' && c.req.issuedAt >= from)
+          .map((c) => c.completedAt - c.req.issuedAt),
+      );
+  }
+
+  /** Make a CVM silently stop answering replica and rebuild frames. */
+  function silence(h: ReturnType<typeof harness>, cvm: string) {
+    const b = h.backends.get(cvm);
+    if (!b?.onMessage) throw new Error('no backend');
+    const orig = b.onMessage.bind(b);
+    const hung = new Set<string>([MSG.replicate, MSG.rebuild]);
+    b.onMessage = (m: Message, c) => (hung.has(m.kind) ? true : orig(m, c));
+  }
+
+  it('a powered-off peer stalls writes that need it until it is declared down', () => {
+    const h = harness('t2-hci-ahv');
+    h.sim.tick(5);
+    const worst = worstWrite(h, 5);
+    h.sim.applyAction({ kind: 'fail', target: 'node-2.cvm' });
+    h.sim.tick(DETECT - 2);
+    expect(h.workload.maxPendingS(h.sim.getSnapshot().simTime)).toBeGreaterThanOrEqual(DETECT - 3);
+    h.sim.tick(4);
+    expect(worst()).toBeGreaterThanOrEqual(DETECT - 2);
+    expect(worst()).toBeLessThanOrEqual(DETECT + 2);
+    expect(h.workload.maxPendingS(h.sim.getSnapshot().simTime)).toBeLessThanOrEqual(1);
+    expect(h.workload.totals().errors).toBe(0);
+  });
+
+  it('a cleanly stopped Stargate is declared down within about a second', () => {
+    const h = harness('t2-hci-ahv');
+    h.sim.tick(5);
+    const worst = worstWrite(h, 5);
+    h.cluster.stargateStopped.add('node-2.cvm');
+    h.sim.tick(10);
+    expect(worst()).toBeLessThanOrEqual(STOP + 2);
+    expect(h.workload.totals().errors).toBe(0);
+  });
+
+  it('an isolated peer (outside the ZK quorum side) stalls writes, then rebuild starts', () => {
+    const h = harness('t2-hci-ahv');
+    h.sim.tick(5);
+    const worst = worstWrite(h, 5);
+    silence(h, 'node-2.cvm');
+    h.cluster.outOfQuorum.add('node-2.cvm');
+    const s1 = h.sim.tick();
+    h.sim.tick(DETECT + 3);
+    expect(worst()).toBeGreaterThanOrEqual(DETECT - 2);
+    expect(h.workload.maxPendingS(h.sim.getSnapshot().simTime)).toBeLessThanOrEqual(1);
+    // Its replicas no longer count as live once it is declared down.
+    expect(h.store.underReplicated()).toBeGreaterThan(0);
+    h.sim.tick(DELAY);
+    const start = h.events('curator.rebuild.start');
+    expect(start.map((e) => e.deviceId)).toEqual(['node-2.cvm']);
+    expect(start[0]?.t).toBe(s1.simTime + DETECT + DELAY);
   });
 });
 
@@ -124,6 +206,7 @@ describe('health()', () => {
     h.sim.applyAction({ kind: 'fail', target: 'node-4' });
     h.sim.tick(3);
     expect(b?.health()).toBe('degraded');
+    h.sim.tick(DETECT); // writes stop stalling on node-4 once it is declared down
     h.cluster.metadataOverride = false;
     expect(b?.health()).toBe('unavailable');
     // IO hangs while metadata is unavailable.

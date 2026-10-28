@@ -6,6 +6,10 @@ import { type Harness, harness } from './fakes';
 
 const T0 = 10;
 const RATE = current.hci.rebuildGiBpsPerNode.value;
+/** A powered-off node is declared down when its ZK session expires; rebuild starts after that. */
+const DETECT = current.hci.stargateDownDetectS.value;
+const DELAY = current.hci.rebuildStartDelayS.value;
+const STARTS_AFTER = DETECT + DELAY;
 
 /** Tick until `pred` holds (or `max` ticks); returns the snapshot where it first held. */
 function until(h: Harness, pred: (s: Snapshot) => boolean, max = 10_000): Snapshot {
@@ -19,19 +23,23 @@ function until(h: Harness, pred: (s: Snapshot) => boolean, max = 10_000): Snapsh
 const d = (s: Snapshot) => s.derived;
 
 describe('Curator rebuild (Bible 4i)', () => {
-  it('starts immediately on a node failure and progresses at the modeled rate to completion', () => {
+  it('starts once the node is declared down plus the start delay, then runs at the modeled rate', () => {
     const h = harness('t2-hci-ahv');
     h.sim.tick(T0);
     const lostGiB = h.store.replicasOn('node-4.cvm') * h.store.replicaGiB();
     h.sim.applyAction({ kind: 'fail', target: 'node-4' });
     const s1 = h.sim.tick();
+    // Under-replicated at once, but Curator waits for detection and the start delay.
+    expect(d(s1).resiliency).toBe('Rebuilding');
+    h.sim.tick(STARTS_AFTER - 1);
+    expect(h.events('curator.rebuild.start')).toHaveLength(0);
+    h.sim.tick();
 
     const start = h.events('curator.rebuild.start');
     expect(start).toHaveLength(1);
-    expect(start[0]?.t).toBe(s1.simTime + current.hci.rebuildStartDelayS.value);
+    expect(start[0]?.t).toBe(s1.simTime + STARTS_AFTER);
     expect(start[0]?.deviceId).toBe('node-4.cvm');
     expect(start[0]?.cite).toContain('ntnx-bible-4i');
-    expect(d(s1).resiliency).toBe('Rebuilding');
     expect(d(s1).dataAvailable).toBe(true);
 
     let prev = Number(d(s1)['hci.rebuildRemainingGiB']);
@@ -47,8 +55,8 @@ describe('Curator rebuild (Bible 4i)', () => {
     expect(sawTraffic).toBe(true);
     expect(d(done).underReplicated).toBe(0);
     expect(h.events('curator.rebuild.complete')).toHaveLength(1);
-    // Spread across the 3 survivors: ~lost / (rate × 3), plus a tick of pair probing.
-    const expected = lostGiB / (RATE * 3);
+    // Spread across the 3 survivors: ~lost / (rate × 3) after the start, plus a tick of probing.
+    const expected = STARTS_AFTER + lostGiB / (RATE * 3);
     const took = done.simTime - s1.simTime;
     expect(took).toBeGreaterThan(expected * 0.95);
     expect(took).toBeLessThan(expected * 1.1 + 5);
@@ -70,7 +78,8 @@ describe('Curator rebuild (Bible 4i)', () => {
     const h = harness('t2-hci-ahv');
     h.sim.tick(T0);
     h.cluster.stargateStopped.add('node-2.cvm');
-    h.sim.tick();
+    // A clean Stargate stop closes its ZK session, so detection is fast.
+    h.sim.tick(current.hci.stargateStopDetectS.value + DELAY + 1);
     expect(h.events('curator.rebuild.start').map((e) => e.deviceId)).toEqual(['node-2.cvm']);
   });
 
@@ -78,7 +87,7 @@ describe('Curator rebuild (Bible 4i)', () => {
     const h = harness('t2-hci-ahv');
     h.sim.tick(T0);
     h.sim.applyAction({ kind: 'fail', target: 'node-4' });
-    h.sim.tick(60);
+    h.sim.tick(STARTS_AFTER + 60);
     const before = Number(d(h.sim.getSnapshot()).underReplicated);
     h.sim.applyAction({ kind: 'recover', target: 'node-4' });
     const s = h.sim.tick();
@@ -97,7 +106,8 @@ describe('Curator rebuild (Bible 4i)', () => {
     const scan = current.hci.curatorPartialScanS.value;
     const s = until(h, (x) => x.simTime % scan === 0);
     expect(Number(d(s)['hci.garbageReplicas'])).toBe(0);
-    expect(h.events('curator.cleanup')).toHaveLength(1);
+    // (A scan that fell inside the long rebuild may already have removed earlier stale copies.)
+    expect(h.events('curator.cleanup').filter((e) => e.t > back.simTime)).toHaveLength(1);
     expect(d(s).resiliency).toBe('OK');
   });
 });
@@ -108,8 +118,9 @@ describe('T2 scenario shapes', () => {
     h.sim.tick(T0);
     h.sim.applyAction({ kind: 'fail', target: 'node-4' });
     h.sim.tick();
-    until(h, (s) => d(s).resiliency === 'OK');
-    const secondAt = T0 + current.cluster.cassandraRingDetachS.value + 600;
+    const rebuilt = until(h, (s) => d(s).resiliency === 'OK');
+    const secondAt =
+      Math.max(rebuilt.simTime, T0 + current.cluster.cassandraRingDetachS.value) + 600;
     until(h, (s) => s.simTime >= secondAt);
     expect(h.cluster.metadataAvailable()).toBe(true);
     h.sim.applyAction({ kind: 'fail', target: 'node-3' });
@@ -127,7 +138,7 @@ describe('T2 scenario shapes', () => {
     const h = harness('t2-hci-ahv');
     h.sim.tick(T0);
     h.sim.applyAction({ kind: 'fail', target: 'node-4' });
-    h.sim.tick(30);
+    h.sim.tick(STARTS_AFTER + 30);
     const mid = h.sim.getSnapshot();
     expect(d(mid).resiliency).toBe('Rebuilding');
     expect(Number(d(mid).underReplicated)).toBeGreaterThan(0);
@@ -161,6 +172,7 @@ describe('T2 scenario shapes', () => {
     expect(d(s).dataAvailable).toBe(true);
     expect(d(s).resiliency).toBe('Rebuilding');
     expect(d(s)['hci.dataNodeFailureTolerance']).toBe(0);
+    h.sim.tick(STARTS_AFTER);
     expect(h.events('curator.rebuild.start').map((e) => e.deviceId)).toEqual([
       'node-1.cvm',
       'node-2.cvm',

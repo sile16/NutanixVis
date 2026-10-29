@@ -201,6 +201,9 @@ All of these are scalars.
 | `vm.force-shutdown` | vm | The per-VM path-loss force-shutdown fired. |
 | `vm.crashed` | vm | The VM went down: with its host, or (`whole-array-loss-vm-behavior: crash-and-restart`) no Stargate served its disk for `redirector.initiatorSessionTimeoutS`, so the initiator gave up ("VM shut down unexpectedly"; for example a whole-array loss). |
 | `cvm.network.blackout` | cvm | `cvm.network-flap`: its inter-CVM interface stops answering for a while. |
+| `cvm.network.lossy` / `cvm.network.loss-cleared` | cvm | `cvm.network-loss` at or above `dnd.partialLossPct`: the CVM is half reachable; then its network is clean again. |
+| `dnd.outlier` | cvm | `cvm.network-loss` below `dnd.partialLossPct`: peers score it as an outlier, nothing else changes. |
+| `stargate.hung-op-fail-fast` | cvm | Its Stargate's operations on a half-reachable peer's metadata hung for `cluster.stargateHungOpS`, so it failed fast; it stays down until that peer is Degraded or reachable again. |
 | `dnd.node.degraded` / `dnd.node.cleared` | cvm | Degraded Node Detection marked the node Degraded, or cleared it (auto-resolve or `cvm.mark-fixed`). |
 | `cassandra.node.detached` | cvm | Auto ring-repair detached the node. |
 | `curator.rebuild.start` | — or the CVM that lost data | |

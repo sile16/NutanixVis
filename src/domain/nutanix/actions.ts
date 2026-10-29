@@ -182,6 +182,22 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
     },
     {
       spec: {
+        kind: 'cvm.network-loss',
+        label: 'Lossy CVM network (partial unresponsiveness)',
+        description:
+          'Packet loss on the CVM’s inter-CVM interface; it keeps running and its storage paths stay up. Light loss only makes its peers score it as an outlier. Heavy loss leaves it half reachable: its Stargate drops out when its Zookeeper session expires, but it keeps its metadata role, so its peers’ Stargate operations hang and fail fast in a wave across the cluster until Degraded Node Detection marks it Degraded. 0 % clears it.',
+        appliesTo: (t) => isKind(t, 'cvm') && field(t, 'power') === 'running',
+        params: { pct: { label: 'Loss (%)', choices: [0, 10, 30, 50, 80] } },
+      },
+      apply: (req, ctx) => {
+        const n = Number(req.params?.pct);
+        if (!Number.isFinite(n) || n < 0 || n > 100) throw new ActionError(`bad loss ${String(n)}`);
+        reg.causes.set(req.target, ctx.causeIds);
+        cvm(req.target).requestNetworkLoss(n);
+      },
+    },
+    {
+      spec: {
         kind: 'cvm.mark-fixed',
         label: 'Mark node fixed (clear Degraded)',
         description:

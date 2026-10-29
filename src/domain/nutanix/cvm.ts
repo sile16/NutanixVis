@@ -77,6 +77,12 @@ export class Cvm implements Device<Profile> {
   private outageRec: StargateOutage | null = null;
   /** Stargate dropped out because its ZK session expired during a blackout. */
   private zkDropped = false;
+  /** `cvm.network-loss`: requested loss on its cluster network (percent; 0 clears it). */
+  private lossRequest: number | null = null;
+  /** Stargate dropped out because its ZK session expired over a lossy cluster network. */
+  private lossDropped = false;
+  /** Stargate failed fast on operations hung on a partly unresponsive peer; held down until then. */
+  private hungOpHeld = false;
   private restartTimer: TimerHandle | null = null;
 
   constructor(
@@ -183,6 +189,137 @@ export class Cvm implements Device<Profile> {
     this.flapRequest = seconds;
   }
 
+  /** `cvm.network-loss`: packet loss on the CVM's cluster network (percent; 0 clears it). */
+  requestNetworkLoss(pct: number): void {
+    this.lossRequest = pct;
+  }
+
+  /**
+   * Partial unresponsiveness (SPEC §6.2 "Degraded Node Detection"). Loss below
+   * `dnd.partialLossPct` only makes peers score the CVM as an outlier. Heavier loss leaves it
+   * half reachable: its own Stargate drops out once its Zookeeper session expires (as in a
+   * blackout), but it keeps its metadata role, so its peers' Stargate operations hang until it is
+   * marked Degraded or the loss ends (see `stepHungOps`).
+   */
+  private stepLoss(ctx: Ctx): void {
+    const reg = this.reg;
+    const causeIds = reg.causes.get(this.id) ?? [];
+    const T = ctx.profile.dnd.partialLossPct;
+    const D = ctx.profile.hci.stargateDownDetectS;
+    if (this.lossRequest !== null) {
+      const pct = this.lossRequest;
+      this.lossRequest = null;
+      const prev = reg.netLoss.get(this.id);
+      if (pct <= 0) {
+        if (prev) {
+          reg.netLoss.delete(this.id);
+          ctx.emit({
+            severity: 'info',
+            deviceId: this.id,
+            code: 'cvm.network.loss-cleared',
+            text: `${this.label}: its cluster network is clean again`,
+            causeIds,
+            cite: T.cite,
+            confidence: 'assumption',
+          });
+        }
+        if (this.lossDropped) {
+          this.lossDropped = false;
+          this.scheduleRestart(
+            ctx,
+            `${this.label}: back in touch with its peers; Stargate restarted`,
+          );
+        }
+      } else {
+        reg.netLoss.set(this.id, { pct, since: prev?.since ?? ctx.now });
+        const partial = pct >= T.value;
+        ctx.emit({
+          severity: partial ? 'warn' : 'info',
+          deviceId: this.id,
+          code: partial ? 'cvm.network.lossy' : 'dnd.outlier',
+          text: partial
+            ? `${this.label}: ${pct} % packet loss on its cluster network. It is half reachable: peers' calls to it time out, yet it keeps its metadata role, and Degraded Node Detection starts scoring it`
+            : `${this.label}: ${pct} % packet loss on its cluster network. Peers score it as an outlier; IO is not affected`,
+          causeIds,
+          cite: T.cite,
+          confidence: 'assumption',
+        });
+        if (partial) {
+          const H = ctx.profile.cluster.stargateHungOpS;
+          ctx.timers.set(
+            `${this.id} lossy zk`,
+            D.value,
+            { cite: D.cite, confidence: D.confidence },
+            () => {},
+          );
+          ctx.timers.set(
+            `${this.id} lossy hung ops`,
+            H.value,
+            { cite: H.cite, confidence: H.confidence },
+            () => {},
+          );
+        }
+      }
+    }
+    const l = reg.netLoss.get(this.id);
+    if (
+      l &&
+      reg.partlyUnresponsive(this.id) &&
+      ctx.now - l.since >= D.value &&
+      this.stargateServing()
+    ) {
+      this.noteDown('zk-lost', ctx.now);
+      this.stargate.setProcess(false);
+      this.lossDropped = true;
+      ctx.emit({
+        severity: 'warn',
+        deviceId: this.id,
+        code: 'stargate.zk-session-lost',
+        text: `${this.label}: over its lossy cluster network its Stargate lost its Zookeeper session and dropped out; its sessions are reset and move to other Stargates. Prism alert A1030 "Stargate Temporarily Down"`,
+        causeIds,
+        cite: [...D.cite, 'ntnx-pe-alerts-7.0-cluster'],
+        confidence: 'assumption',
+      });
+    }
+  }
+
+  /**
+   * A peer is partly unresponsive and still holds its metadata role: this Stargate's operations
+   * that touch it hang, and after `cluster.stargateHungOpS` it fails fast (its connections are
+   * reset, its vDisks are free). Its self-monitor restarts it, but its operations hang again, so
+   * it is held down until the peer is marked Degraded or its network is clean again.
+   */
+  private stepHungOps(ctx: Ctx): void {
+    const hang = this.reg.metadataHang(this.id);
+    const H = ctx.profile.cluster.stargateHungOpS;
+    if (hang !== null && ctx.now - hang.since >= H.value && this.stargateServing()) {
+      const peer = this.reg.cvms.get(hang.cvm)?.label ?? hang.cvm;
+      this.hungOpHeld = true;
+      this.stopCause = 'clean-stop';
+      this.noteDown('exit', ctx.now);
+      this.stargate.setHung(false);
+      this.backend.onFail?.(ctx);
+      this.stargate.setProcess(false);
+      ctx.emit({
+        severity: 'error',
+        deviceId: this.id,
+        code: 'stargate.hung-op-fail-fast',
+        text: `${this.label}: Stargate operations on ${peer}'s metadata hung for ${H.value} s, so Stargate failed fast; its connections are reset and its vDisks are free. Its self-monitor restarts it, but its operations hang again until ${peer} is marked Degraded or reachable again. Prism alert A1030 "Stargate Temporarily Down"`,
+        causeIds: this.reg.causes.get(hang.cvm) ?? [],
+        cite: [...H.cite, 'ntnx-pe-alerts-7.0-cvm'],
+        confidence: H.confidence,
+      });
+    } else if (this.hungOpHeld && hang === null) {
+      this.hungOpHeld = false;
+      if (this.running() && !this.stargate.processUp) {
+        this.scheduleRestart(
+          ctx,
+          `${this.label}: its peer's metadata no longer blocks it; Stargate restarted by its self-monitor`,
+        );
+      }
+    }
+  }
+
   /** Start or end a peer-communication blackout (the CVM keeps running). */
   private stepFlap(ctx: Ctx): void {
     const ectx = asEngineContext(ctx);
@@ -249,7 +386,15 @@ export class Cvm implements Device<Profile> {
       { cite: R.cite, confidence: R.confidence },
       () => {
         this.restartTimer = null;
-        if (!this.running() || this.stargate.processUp || this.zkDropped) return;
+        if (
+          !this.running() ||
+          this.stargate.processUp ||
+          this.zkDropped ||
+          this.lossDropped ||
+          this.hungOpHeld
+        ) {
+          return;
+        }
         this.stargate.setProcess(true);
         this.backend.onRecover?.(ctx);
         this.emitStargateUp(ctx, text);
@@ -279,6 +424,10 @@ export class Cvm implements Device<Profile> {
     }
     if (this.stargateCmd !== null) this.applyStargateCmd(ctx);
     if (this.flapRequest !== null || this.flapUntil !== null) this.stepFlap(ctx);
+    if (this.lossRequest !== null || this.reg.netLoss.has(this.id)) this.stepLoss(ctx);
+    if (this.power === 'running' && (this.hungOpHeld || this.reg.netLoss.size > 0)) {
+      this.stepHungOps(ctx);
+    }
     if (this.power === 'running') this.stepHades(ctx);
     this.each((c) => c.preTick?.(ctx));
   }
@@ -307,6 +456,8 @@ export class Cvm implements Device<Profile> {
     this.noteDown('silent', ctx.now);
     this.stargate.setHung(false);
     this.zkDropped = false;
+    this.lossDropped = false;
+    this.hungOpHeld = false;
     if (this.restartTimer) ctx.timers.cancel(this.restartTimer);
     this.restartTimer = null;
     if (this.running()) this.failComponents(ctx);
@@ -412,6 +563,8 @@ export class Cvm implements Device<Profile> {
     this.stargate.setHung(false);
     this.stargate.setProcess(false);
     this.zkDropped = false;
+    this.lossDropped = false;
+    this.hungOpHeld = false;
     if (this.restartTimer) ctx.timers.cancel(this.restartTimer);
     this.restartTimer = null;
     if (this.bootTimer) ctx.timers.cancel(this.bootTimer);

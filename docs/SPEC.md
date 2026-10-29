@@ -241,7 +241,7 @@ type Trace   = { msgId; kind; links: LinkId[]; result: 'delivered'|'dropped'; dr
   - `fail`, `recover`, `power-off` and `reboot`
   - `link-down` / `link-up`, and `set-latency`
   - kind-specific ones: `fa.controller.failover` (planned), `fa.ndu`, `fa.io-stall`, `fa.interface.disable` / `enable` (one FA data IP), `cvm.stop-stargate`, `host.isolate`, `disk.fail`, `switch.fail`, `switch.port.prune-vlan`
-  - timed and grey-failure injections: `link.flap {durationS}` and `fa.interface.flap {durationS}` (the FA port behind one IP loses link, then returns), `link.set-loss {pct}`, `set-latency {ms}`, `cvm.network-flap {durationS}` (the CVM's inter-CVM interface stops answering, then returns), and the operator action `cvm.mark-fixed` (clear a Degraded node, §6.2)
+  - timed and grey-failure injections: `link.flap {durationS}` and `fa.interface.flap {durationS}` (the FA port behind one IP loses link, then returns), `link.set-loss {pct}`, `set-latency {ms}`, `cvm.network-flap {durationS}` (the CVM's inter-CVM interface stops answering, then returns), `cvm.network-loss {pct}` (packet loss on the CVM's inter-CVM interface; 0 clears it), and the operator action `cvm.mark-fixed` (clear a Degraded node, §6.2)
 - **Runtime network-configuration actions.** These can be changed **mid-scenario**, so users can compare bond setups on the same running workload:
   - `vswitch.set-bond-mode` sets Active-Backup, MAC pinning, LACP or no-bond. It applies to every host on that virtual switch, because Nutanix does not support mixed bond modes (AHV Admin Guide).
   - `vswitch.set-uplinks` adds or removes NICs from the bond.
@@ -344,6 +344,12 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 - If the CVM answers again by the end of the window, it is marked **Degraded** (`dnd.node.degraded`): its Cassandra goes to **forwarding mode** (metadata store disabled, `ringState: forwarding`), so it holds no live metadata replica, the cluster's node-failure tolerance drops, and an alert is raised. A CVM still cut off or down at the end is not a degraded-node case; isolation and HA handle it.
 - While a node is Degraded, a second CVM outage can leave metadata key ranges without a Paxos majority, so cluster storage goes down although only one CVM is down (T2-13).
 - It is cleared only after a long healthy observation period (`dnd.autoResolveHealthyS`, `assumption`) or when an operator marks it fixed (`cvm.mark-fixed`).
+- **A half-reachable CVM is worse than a dead one** (`cvm.network-loss {pct}`, `assumption` values; T1-29):
+  - Loss below `dnd.partialLossPct` on its inter-CVM interface only makes its peers score it as an outlier (`dnd.outlier`).
+  - At or above it, the CVM is partly unresponsive. Its own Stargate drops out at its ZK session expiry (`stargate.zk-session-lost`), so its VMs move to other Stargates, as for a dead CVM. But it keeps its metadata role, so every peer Stargate's operations that touch it hang. After `cluster.stargateHungOpS` they fail fast (`stargate.hung-op-fail-fast`) and stay down while it is half reachable.
+  - With no Stargate serving anywhere, every VM crashes at the initiator session timeout; HA cannot restart them (`ha.vm.restart-failed`) until a Stargate serves again.
+  - DND convicts it only after `dnd.partialConvictionS` (longer than the fail-fast plus the initiator timeout), marks it Degraded (metadata store off, leadership given up), the peer Stargates restart and the VMs are powered back on. It stays Degraded until auto-resolve or `cvm.mark-fixed`; marking it fixed while it is still lossy brings the hang back.
+  - A CVM fully cut off (`cvm.network-flap`) instead stays dead to its peers: its leadership expires and the peers serve.
 
 **Cluster status (derived)**
 
@@ -733,6 +739,7 @@ T1 (AHV + FlashArray):
 26. **Whole array lost for minutes**, `whole-array-loss-vm-behavior` crash-and-restart vs stall: every node enters maintenance; VMs crash at the initiator session timeout and AHV powers them back on after the array returns, or they stall in place.
 27. **One Stargate stops, crashes or hangs**: a stop or a process crash resets its connections, so IO resumes after about a second; a hang is noticed only by the initiators' NOPs, the first login to a peer parks until the hung Stargate's ZK session expires, and IO resumes at the next NOP cycle.
 28. **Whole-array blip**: a silent blip shorter than the multipath fast-IO-fail time is a plain stall; one just past it (even with the array back before Hades acts), or a short flap of every data port on both fabrics (the array resets every connection), puts every node in maintenance, restarts every Stargate, and crashes every VM at the initiator session timeout before it is powered back on.
+29. **A half-reachable CVM**: light packet loss on one CVM's inter-CVM interface only makes it an outlier; heavy loss makes its own Stargate drop out (as for a dead CVM) but its peers' Stargates hang on its metadata and fail fast together, so every VM crashes at the initiator session timeout, minutes before Degraded Node Detection marks it Degraded; then the peers restart and the VMs are powered back on.
 
 T2 (HCI AHV):
 

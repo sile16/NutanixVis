@@ -80,6 +80,14 @@ export interface Profile {
     readonly scoringWindowS: Cited<number>;
     /** A Degraded node is cleared automatically after it has been healthy this long. */
     readonly autoResolveHealthyS: Cited<number>;
+    /**
+     * Packet loss on a CVM's cluster network (percent) at or above which it is partly
+     * unresponsive: scored for conviction, and peers' operations on its metadata hang. Below it,
+     * peers only see outlier scores.
+     */
+    readonly partialLossPct: Cited<number>;
+    /** A partly unresponsive CVM is marked Degraded after its peers have scored it this long. */
+    readonly partialConvictionS: Cited<number>;
   };
 
   readonly cluster: {
@@ -91,6 +99,11 @@ export interface Profile {
     readonly cvmBootS: Cited<number>;
     /** A Stargate process that exited (crash, watchdog) is restarted by its self-monitor after this. */
     readonly stargateSelfRestartS: Cited<number>;
+    /**
+     * A Stargate operation hung this long makes Stargate fail fast (exit; the self-monitor
+     * restarts it). A partly unresponsive peer that still holds its metadata role hangs them.
+     */
+    readonly stargateHungOpS: Cited<number>;
     /** A detached Cassandra node is re-added to the ring after it has been stable this long. */
     readonly cassandraRejoinStableS: Cited<number>;
     /** Host power-cycle time for `reboot` (POST + AHV boot), before its CVM starts booting. */

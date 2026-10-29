@@ -58,6 +58,8 @@ export class ClusterDevice implements Device<Profile> {
   private readonly dndHealthySince = new Map<string, number | null>();
   /** CVMs still cut off when their scoring window ended: dead, not scored again until healthy. */
   private readonly dndDead = new Set<string>();
+  /** DND: the current scoring window is a partial-unresponsiveness one (`dnd.partialConvictionS`). */
+  private readonly dndPartial = new Map<string, boolean>();
   private derivedCache: Record<string, ViewField> = {};
 
   constructor(private readonly reg: Registry) {
@@ -324,8 +326,11 @@ export class ClusterDevice implements Device<Profile> {
    * Cassandra goes to forwarding mode (metadata store disabled), so the ring and the cluster's
    * fault tolerance lose it, and an alert is raised. A CVM still cut off or down at the end is
    * treated as dead, not degraded (isolation and HA handle it), and is not scored again until it
-   * is healthy again. Cleared after `autoResolveHealthyS` of health, or when an operator marks it
-   * fixed (`cvm.mark-fixed`).
+   * is healthy again. A CVM left half reachable by heavy loss on its cluster network
+   * (`cvm.network-loss` at or above `dnd.partialLossPct`) is scored for `dnd.partialConvictionS`
+   * and then marked Degraded; until then its peers' Stargates hang on its metadata (see `Cvm`).
+   * Cleared after `autoResolveHealthyS` of health, or when an operator marks it fixed
+   * (`cvm.mark-fixed`).
    */
   private evalDnd(ctx: Ctx): void {
     const reg = this.reg;
@@ -340,6 +345,7 @@ export class ClusterDevice implements Device<Profile> {
       const running = reg.cvmRunning(c);
       const healthy = running && side?.has(c) === true;
       const unresponsive = running && side !== null && reg.partitionOf.has(c) && !side.has(c);
+      const partial = reg.partlyUnresponsive(c);
       if (reg.dndMarkFixed.delete(c) && state === 'degraded') {
         reg.dnd.set(c, 'ok');
         this.emitDnd(
@@ -352,33 +358,38 @@ export class ClusterDevice implements Device<Profile> {
       }
       if (healthy) this.dndDead.delete(c);
       if (state === 'ok') {
-        if (!unresponsive || this.dndDead.has(c)) continue;
+        if (!(unresponsive || partial) || this.dndDead.has(c)) continue;
+        const W = partial && !unresponsive ? D.partialConvictionS : D.scoringWindowS;
         reg.dnd.set(c, 'scoring');
-        this.dndWindowEnd.set(c, ctx.now + D.scoringWindowS.value);
-        this.wake(ctx, `${c} dnd scoring`, ctx.now + D.scoringWindowS.value, D.scoringWindowS);
+        this.dndPartial.set(c, W === D.partialConvictionS);
+        this.dndWindowEnd.set(c, ctx.now + W.value);
+        this.wake(ctx, `${c} dnd scoring`, ctx.now + W.value, W);
         continue;
       }
       if (state === 'scoring') {
         if (ctx.now < (this.dndWindowEnd.get(c) ?? 0)) continue;
-        if (!healthy) {
+        const wasPartial = this.dndPartial.get(c) === true;
+        if (!healthy && !partial) {
           reg.dnd.set(c, 'ok');
           this.dndDead.add(c);
           continue;
         }
         reg.dnd.set(c, 'degraded');
-        this.dndHealthySince.set(c, ctx.now);
+        this.dndHealthySince.set(c, partial ? null : ctx.now);
         this.emitDnd(
           ctx,
           c,
           'dnd.node.degraded',
-          `${c} marked Degraded by Degraded Node Detection: it was unresponsive to its peers within the ${D.scoringWindowS.value} s scoring window. Its Cassandra goes to forwarding mode (metadata store disabled), so the cluster tolerates one node failure fewer; a degraded-node alert is raised`,
+          wasPartial
+            ? `${c} marked Degraded by Degraded Node Detection: its peers scored it consistently degraded for ${D.partialConvictionS.value} s. Its Cassandra goes to forwarding mode (metadata store disabled) and it gives up its leadership roles, so peers stop waiting on it; the cluster tolerates one node failure fewer and a degraded-node alert is raised`
+            : `${c} marked Degraded by Degraded Node Detection: it was unresponsive to its peers within the ${D.scoringWindowS.value} s scoring window. Its Cassandra goes to forwarding mode (metadata store disabled), so the cluster tolerates one node failure fewer; a degraded-node alert is raised`,
           'warn',
         );
         continue;
       }
       // Degraded: cleared only after a long healthy observation period.
       let since = this.dndHealthySince.get(c) ?? null;
-      if (!healthy) since = null;
+      if (!healthy || partial) since = null;
       else since ??= ctx.now;
       this.dndHealthySince.set(c, since);
       if (since === null) continue;
@@ -657,7 +668,7 @@ export class ClusterDevice implements Device<Profile> {
             severity: 'error',
             deviceId: vm.id,
             code: 'ha.vm.restart-failed',
-            text: `${vm.label}: no host can run it now (capacity or array connectivity). Prism alert A1145 "Failure To Restart VMs For HA Event"`,
+            text: `${vm.label}: no host can run it now (capacity, array connectivity, or no Stargate serving). Prism alert A1145 "Failure To Restart VMs For HA Event"`,
             causeIds: home.causeId === null ? [] : [home.causeId],
             cite: ['ntnx-pc-alerts-7.6-guestvm', ...P.restartByS.cite],
             confidence: 'inferred',
@@ -688,6 +699,9 @@ export class ClusterDevice implements Device<Profile> {
     const h = reg.facts.host(host);
     if (!h || h.role === 'storage-only' || !reg.hostAlive(h.id)) return false;
     if (reg.haOf(h.id).state !== 'connected' || reg.heartbeatMissing(h.id)) return false;
+    // A VM's disks need some Stargate to serve them (local or remote, through the redirector):
+    // with none serving anywhere it would only crash again at the initiator session timeout.
+    if (!reg.facts.cvms.some((c) => reg.isStargateUp(c.id))) return false;
     return !(h.cvm !== null && reg.facts.externalStorage && !reg.cvmCapable(h.cvm));
   }
 

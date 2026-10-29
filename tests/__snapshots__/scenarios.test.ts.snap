@@ -1562,6 +1562,67 @@ exports[`scenario acceptance > t1-28-whole-array-blip-short: T1: a silent whole-
 ]
 `;
 
+exports[`scenario acceptance > t1-29-degraded-cvm-heavy-loss: T1: a half-reachable CVM takes every Stargate down before it is marked Degraded 1`] = `
+[
+  "11	action.cvm.network-loss@node-1.cvm",
+  "11	cvm.network.lossy@node-1.cvm",
+  "31	stargate.zk-session-lost@node-1.cvm",
+  "31	redirector.parked@node-1",
+  "31	redirector.redirect@node-1",
+  "41	redirector.redirect@node-1",
+  "71	stargate.hung-op-fail-fast@node-2.cvm",
+  "71	stargate.hung-op-fail-fast@node-3.cvm",
+  "71	stargate.hung-op-fail-fast@node-4.cvm",
+  "71	zk.quorum.lost@cluster",
+  "71	ha.leader.lost@node-1",
+  "91	cluster.services.down@cluster",
+  "120	vm.crashed@node-1.vm-1",
+  "120	vm.crashed@node-1.vm-2",
+  "120	vm.crashed@node-2.vm-1",
+  "120	vm.crashed@node-2.vm-2",
+  "120	vm.crashed@node-3.vm-1",
+  "120	vm.crashed@node-3.vm-2",
+  "120	vm.crashed@node-4.vm-1",
+  "120	vm.crashed@node-4.vm-2",
+  "311	dnd.node.degraded@node-1.cvm",
+  "317	stargate.up@node-2.cvm",
+  "317	stargate.up@node-3.cvm",
+  "317	stargate.up@node-4.cvm",
+  "318	nvme.path.restored@node-2.cvm",
+  "318	nvme.path.restored@node-2.cvm",
+  "318	nvme.path.restored@node-2.cvm",
+  "318	nvme.path.restored@node-2.cvm",
+  "318	nvme.path.restored@node-3.cvm",
+  "318	nvme.path.restored@node-3.cvm",
+  "318	nvme.path.restored@node-3.cvm",
+  "318	nvme.path.restored@node-3.cvm",
+  "318	nvme.path.restored@node-4.cvm",
+  "318	nvme.path.restored@node-4.cvm",
+  "318	nvme.path.restored@node-4.cvm",
+  "318	nvme.path.restored@node-4.cvm",
+  "318	zk.quorum.restored@cluster",
+  "318	zk.leader.elected@node-1.cvm",
+  "318	ha.leader.elected@node-1",
+  "318	redirector.redirect@node-1",
+  "318	cluster.services.up@cluster",
+  "319	ha.vm.restarted@node-1.vm-1",
+  "319	ha.vm.restarted@node-1.vm-2",
+  "319	ha.vm.restarted@node-2.vm-1",
+  "319	ha.vm.restarted@node-2.vm-2",
+  "319	ha.vm.restarted@node-3.vm-1",
+  "319	ha.vm.restarted@node-3.vm-2",
+  "319	ha.vm.restarted@node-4.vm-1",
+  "319	ha.vm.restarted@node-4.vm-2",
+]
+`;
+
+exports[`scenario acceptance > t1-29-degraded-cvm-light-loss: T1: light packet loss on one CVM only makes it an outlier 1`] = `
+[
+  "11	action.cvm.network-loss@node-1.cvm",
+  "11	dnd.outlier@node-1.cvm",
+]
+`;
+
 exports[`scenario acceptance > t1lab-01-disable-one-fa-ip: T1-lab: disable one FlashArray data IP 1`] = `
 [
   "11	action.fa.interface.disable@fa.ct0.eth10.v10",

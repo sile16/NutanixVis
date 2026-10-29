@@ -27,7 +27,7 @@ import { buildTopology, isTopologyId } from '../src/topologies';
 // ── Registry and static validation ───────────────────────────────────────────
 
 /** SPEC §7.2 backlog sizes. */
-const BACKLOG: Readonly<Record<ScenarioFamily, number>> = { t1: 28, t2: 13, t3: 7, t1lab: 4 };
+const BACKLOG: Readonly<Record<ScenarioFamily, number>> = { t1: 29, t2: 13, t3: 7, t1lab: 4 };
 
 const ACTION_KINDS = new Set([
   'fail',
@@ -60,6 +60,7 @@ const ACTION_KINDS = new Set([
   'link.set-loss',
   'fa.interface.flap',
   'cvm.network-flap',
+  'cvm.network-loss',
   'cvm.mark-fixed',
   'power-on',
   'switch.port.allow-vlan',

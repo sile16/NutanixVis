@@ -7,14 +7,14 @@ import { CONFIDENCES, isCited, leaves } from './helpers';
 const EXPECTED_GROUPS: Record<string, number> = {
   ahvHa: 10,
   redirector: 6,
-  cluster: 10,
+  cluster: 11,
   hades: 6,
   hci: 15,
   bond: 4,
   externalStorage: 18,
   flasharray: 10,
   guest: 1,
-  dnd: 3,
+  dnd: 5,
 };
 
 describe.each(Object.values(profiles))('profile $id', (profile) => {

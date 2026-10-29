@@ -27,6 +27,7 @@ import s25 from './25-slow-link';
 import s26 from './26-whole-array-loss-vms';
 import s27 from './27-stargate-failure-modes';
 import s28 from './28-whole-array-blip';
+import s29 from './29-degraded-cvm-cascade';
 
 /** T1 (AHV + FlashArray): SPEC §7.2 items 1–28 (19: flow-control misconfiguration). */
 export const t1Scenarios: readonly ScenarioDef[] = [
@@ -58,4 +59,5 @@ export const t1Scenarios: readonly ScenarioDef[] = [
   s26,
   s27,
   s28,
+  s29,
 ].flat();

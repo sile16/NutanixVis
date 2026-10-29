@@ -12,7 +12,7 @@ Living status page: where the project stands, what is left, which behavior still
   - T1-lab: the single-NIC mirror of the test drive.
   - T2: Nutanix HCI.
   - T3: compute-only plus storage-only, and compute-only plus HCI.
-- **Scenarios:** 83 run as automated tests against the real models. All are `active`, so a behavior change that breaks one fails CI.
+- **Scenarios:** 85 run as automated tests against the real models. All are `active`, so a behavior change that breaks one fails CI.
 - **Tests:**
   - About 1,010 unit, contract, architecture and property tests (Vitest and fast-check).
   - 29 browser tests (Playwright), including the T1 visual baseline.
@@ -28,6 +28,10 @@ Living status page: where the project stands, what is left, which behavior still
 
 ### Recent changes
 
+- **2026-10-29: a half-reachable CVM** (`cvm.network-loss`, T1-29; `assumption` values, SPEC §6.2):
+  - Light packet loss on one CVM's inter-CVM interface only makes its peers score it as an outlier.
+  - Heavy loss drops its own Stargate at its ZK expiry, as for a dead CVM. But it keeps its metadata role, so the peer Stargates' operations hang and fail fast together (`cluster.stargateHungOpS`), and every VM crashes at the initiator session timeout.
+  - Degraded Node Detection marks it Degraded only later (`dnd.partialConvictionS`); then the peers restart and HA powers the VMs back on. HA no longer restarts a VM while no Stargate serves anywhere.
 - **2026-10-29: Stargate failure modes and the VM data path.** The model now shows the sequence and the relative scale of these, with `assumption` values chosen to keep the order (SPEC §6.2 / §7.2):
   - **Who detects a dead Stargate:** the VM's iSCSI initiator, through NOPs. The AHV redirector only answers logins. A reset connection (an orderly stop or a process crash) re-logs in at once; a silent Stargate is found by missed NOPs.
   - **vDisk leadership:** a peer serves a vDisk only after the old Stargate releases it. That is at once after an orderly stop or a crash, but only at its Zookeeper session expiry after a hang, CVM reboot, CVM power-off or CVM isolation, so the first redirect parks until the next NOP cycle.

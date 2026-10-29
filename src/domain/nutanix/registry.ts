@@ -62,6 +62,8 @@ export class Registry implements NutanixClusterView, VmEnv {
   readonly dnd = new Map<string, 'ok' | 'scoring' | 'degraded'>();
   /** CVMs an operator marked fixed (`cvm.mark-fixed`), applied at the next cluster tick. */
   readonly dndMarkFixed = new Set<string>();
+  /** CVM → packet loss on its cluster network (`cvm.network-loss`), and since when it is lossy. */
+  readonly netLoss = new Map<string, { readonly pct: number; readonly since: number }>();
 
   // Acropolis / AHV HA
   leaderHost: string | null;
@@ -186,6 +188,30 @@ export class Registry implements NutanixClusterView, VmEnv {
 
   isDegraded(cvm: string): boolean {
     return this.dnd.get(cvm) === 'degraded';
+  }
+
+  /**
+   * Partly unresponsive (SPEC §6.2 "Degraded Node Detection"): running, with packet loss on its
+   * cluster network at or above `dnd.partialLossPct`. Peers can still half reach it, so it keeps
+   * its metadata role while their calls to it time out.
+   */
+  partlyUnresponsive(cvm: string): boolean {
+    const l = this.netLoss.get(cvm);
+    return !!l && l.pct >= this.profile.dnd.partialLossPct.value && this.cvmRunning(cvm);
+  }
+
+  /**
+   * The earliest partly unresponsive CVM other than `self` that still holds its metadata role
+   * (not yet Degraded), and since when: `self`'s Stargate operations that touch its metadata hang
+   * from then on. Null when none.
+   */
+  metadataHang(self: string): { readonly cvm: string; readonly since: number } | null {
+    let best: { cvm: string; since: number } | null = null;
+    for (const [cvm, l] of this.netLoss) {
+      if (cvm === self || this.isDegraded(cvm) || !this.partlyUnresponsive(cvm)) continue;
+      if (best === null || l.since < best.since) best = { cvm, since: l.since };
+    }
+    return best;
   }
 
   inQuorum(cvm: string): boolean {

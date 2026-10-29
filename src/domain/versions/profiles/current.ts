@@ -120,6 +120,18 @@ export const current: Profile = {
       ['ntnx-community-dnd'],
       'No published figure. A Degraded node is cleared only after a long healthy observation period (here a day) or when an operator marks it fixed.',
     ),
+    partialLossPct: c(
+      40,
+      'assumption',
+      ['ntnx-community-dnd'],
+      "No published figure. Heavy packet loss on a CVM's cluster network leaves it half reachable: it keeps its metadata role while peers' calls to it time out. Lighter loss only makes peers score it as an outlier, with no effect on IO.",
+    ),
+    partialConvictionS: c(
+      300,
+      'assumption',
+      ['ntnx-community-dnd'],
+      'No published figure. Peers must score a half-reachable CVM as degraded consistently over several analysis rounds before it is marked Degraded: minutes, longer than a peer Stargate takes to fail fast on its hung operations, so a degraded node can take the whole cluster down before it is isolated.',
+    ),
   },
 
   cluster: {
@@ -153,6 +165,12 @@ export const current: Profile = {
       'assumption',
       ['ntnx-bible-5b'],
       'Not published. Stargate runs under a self-monitor that restarts its process after it exits (crash, watchdog), without Genesis: seconds, far less than a CVM boot.',
+    ),
+    stargateHungOpS: c(
+      60,
+      'assumption',
+      ['ntnx-bible-5b'],
+      'Not published. Stargate fails fast (exits, and its self-monitor restarts it) when one of its operations has hung about a minute. Operations that touch the metadata of a half-reachable peer hang, so every peer Stargate fails fast at about the same time and none serves until that peer is isolated.',
     ),
     cassandraRejoinStableS: c(
       1800,

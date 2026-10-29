@@ -14,9 +14,9 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | verified | 39 |
 | inferred | 15 |
 | unverified | 1 |
-| assumption | 28 |
+| assumption | 31 |
 | lab-observed | 0 |
-| **Total** | **83** |
+| **Total** | **86** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -39,12 +39,15 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `dnd.enabled` | true | inferred | `ntnx-community-dnd`, `ntnx-cmdref-aos-7.6` | Degraded Node Detection is on by default (Nutanix community); the AOS 7.6 Command Reference lists a disable-degraded-node-monitoring command to turn it off. |
 | `dnd.scoringWindowS` | 60 | assumption | `ntnx-community-dnd` | No published window. Peers score each CVM's responsiveness; a CVM that was unresponsive to them (network flaps, partial blackouts) within this window and answers again is marked Degraded at its end. |
 | `dnd.autoResolveHealthyS` | 86400 | assumption | `ntnx-community-dnd` | No published figure. A Degraded node is cleared only after a long healthy observation period (here a day) or when an operator marks it fixed. |
+| `dnd.partialLossPct` | 40 | assumption | `ntnx-community-dnd` | No published figure. Heavy packet loss on a CVM's cluster network leaves it half reachable: it keeps its metadata role while peers' calls to it time out. Lighter loss only makes peers score it as an outlier, with no effect on IO. |
+| `dnd.partialConvictionS` | 300 | assumption | `ntnx-community-dnd` | No published figure. Peers must score a half-reachable CVM as degraded consistently over several analysis rounds before it is marked Degraded: minutes, longer than a peer Stargate takes to fail fast on its hung operations, so a degraded node can take the whole cluster down before it is isolated. |
 | `cluster.zkMembersFt1` | 3 | verified | `ntnx-kb-1587`, `ntnx-bible-4i` | KB-1587: "Replication Factor of 2 (RF2) has 3 zookeeper servers running". |
 | `cluster.zkMembersFt2` | 5 | verified | `ntnx-kb-1587`, `ntnx-bible-4i` | KB-1587: "Replication Factor of 3 (RF3) has 5 zookeeper servers running"; FT2 needs ≥ 5 nodes (Bible 4i). |
 | `cluster.cassandraRingDetachS` | 1800 | verified | `ntnx-bible-4i`, `ntnx-kb-1256` | A node down for 30 min is removed from the metadata ring; re-added after it is stable. |
 | `cluster.minNodes` | 3 | verified | `ntnx-bible-4i` | FT1 without erasure coding; FT2 needs 5. |
 | `cluster.cvmBootS` | 180 | assumption | `ntnx-cmdref-aos-7.6` | No published figure for CVM power-on to Stargate serving. Upper bound: Genesis --svm_reboot_timeout = 420 s, "Maximum time expected for SVM to reboot/shutdown" (Command Ref 7.6). Hades maintenance exit uses the shorter hades.servicesRestartS. |
 | `cluster.stargateSelfRestartS` | 5 | assumption | `ntnx-bible-5b` | Not published. Stargate runs under a self-monitor that restarts its process after it exits (crash, watchdog), without Genesis: seconds, far less than a CVM boot. |
+| `cluster.stargateHungOpS` | 60 | assumption | `ntnx-bible-5b` | Not published. Stargate fails fast (exits, and its self-monitor restarts it) when one of its operations has hung about a minute. Operations that touch the metadata of a half-reachable peer hang, so every peer Stargate fails fast at about the same time and none serves until that peer is isolated. |
 | `cluster.cassandraRejoinStableS` | 1800 | inferred | `ntnx-kb-1256`, `ntnx-bible-4i` | KB-1256: a detached node is "added back to the ring if the node has been stable for 30 minutes". KB text not yet confirmed on the portal. |
 | `cluster.hostRebootS` | 300 | assumption |  | No published figure; server POST + AHV boot takes minutes. Long enough that HA fences and restarts the VMs (as for a power loss). |
 | `cluster.zkSessionTimeoutS` | 20 | inferred | `ntnx-community-zk-session`, `ntnx-cmdref-aos-7.6` | Not documented. CVM logs show the ZK client negotiating "timeout=20 secs"; Genesis --zk_initial_connection_wait_secs = 20 is "Shorter than session timeout". Delays "cluster services down" and Prism Element loss; IO effects are immediate. |

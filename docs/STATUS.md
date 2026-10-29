@@ -2,7 +2,7 @@
 
 Living status page: where the project stands, what is left, which behavior still needs checking against a real lab, and lessons learned along the way. Update it at the end of each work session.
 
-**Last updated:** 2026-10-28 (behavior mechanisms: stall shapes, flaps, grey failures, DND)
+**Last updated:** 2026-10-29 (redirector/initiator detection, vDisk leadership, Stargate failure modes, initiator timeout)
 
 ## Where things stand
 
@@ -12,9 +12,9 @@ Living status page: where the project stands, what is left, which behavior still
   - T1-lab: the single-NIC mirror of the test drive.
   - T2: Nutanix HCI.
   - T3: compute-only plus storage-only, and compute-only plus HCI.
-- **Scenarios:** 77 run as automated tests against the real models. All are `active`, so a behavior change that breaks one fails CI.
+- **Scenarios:** 83 run as automated tests against the real models. All are `active`, so a behavior change that breaks one fails CI.
 - **Tests:**
-  - About 930 unit, contract, architecture and property tests (Vitest and fast-check).
+  - About 1,010 unit, contract, architecture and property tests (Vitest and fast-check).
   - 29 browser tests (Playwright), including the T1 visual baseline.
   - All green.
 - **Models in place:**
@@ -27,6 +27,17 @@ Living status page: where the project stands, what is left, which behavior still
 - **Behavior data:** every timer and policy lives in `src/domain/versions/profiles/current.ts` as a cited field with a confidence label. Lab results become data changes, not code changes. `docs/research/profile-coverage.md` lists them all.
 
 ### Recent changes
+
+- **2026-10-29: Stargate failure modes and the VM data path.** The model now shows the sequence and the relative scale of these, with `assumption` values chosen to keep the order (SPEC §6.2 / §7.2):
+  - **Who detects a dead Stargate:** the VM's iSCSI initiator, through NOPs. The AHV redirector only answers logins. A reset connection (an orderly stop or a process crash) re-logs in at once; a silent Stargate is found by missed NOPs.
+  - **vDisk leadership:** a peer serves a vDisk only after the old Stargate releases it. That is at once after an orderly stop or a crash, but only at its Zookeeper session expiry after a hang, CVM reboot, CVM power-off or CVM isolation, so the first redirect parks until the next NOP cycle.
+    - Ordering of the guest stall: orderly stop ≈ crash ≪ isolation < hang ≈ reboot ≈ power-off.
+    - New actions `cvm.crash-stargate` and `cvm.hang-stargate` / `cvm.resume-stargate` (T1-27).
+  - **Staggered failback:** after the stability interval, one vDisk per check. A Stargate restart restarts the clock.
+  - **Initiator session timeout:** a VM that no Stargate serves for too long crashes and is powered back on.
+  - **Whole-array loss** reaches it through cluster-wide Hades maintenance. Silent loss of all paths past the fast-IO-fail time, or a target-side reset of every path (a both-fabric port flap, even a short one), fails the service-volume mounts. A short silent blip only stalls (T1-28).
+  - **Long CVM outage:** the host stays schedulable and its VMs are not migrated.
+  - **DND:** a fully unreachable node is treated as dead, not Degraded.
 
 - **2026-10-28: behavior mechanisms.** The model now shows the sequence and rough scale of several behaviors it lacked, with values that are cited profile fields or labeled `assumption`s chosen to keep a sensible order (SPEC §14 #12):
   - A queue-depth-bound guest stalls completely on one silent path loss when its queue depth fits in the dead path's IO queues, even under the queue-depth selector (T1-22).
@@ -60,7 +71,8 @@ Living status page: where the project stands, what is left, which behavior still
 
 ### Waiting on a real lab
 
-- **Lab with paths:** the test drive lab has too few paths for path-failover testing, and a better lab is being found. When it is ready, run `docs/research/lab-validation-plan.md` (L1–L13).
+- **Test drive done:** the single-controller test drive lab has been used for everything it can test; its findings are folded in as mechanisms. Lab numbers stay internal (owner decision, 2026-10-29).
+- **Still needs a fuller lab:** bond failover on real switches, FlashArray controller failover and NDU, the AOS 7.6 SPDK data path, and MTU mismatch. Run the matching rows of `docs/research/lab-validation-plan.md` (L1–L13) when that lab is ready.
 - **Recording results:** mark each value `lab-observed`, with the AOS, AHV and Purity versions and the date, and update the matching scenario expectations.
 
 ## Behavior to double-check
@@ -72,13 +84,13 @@ Research round 2026-10-28: public docs, KBs, Command Reference gflags, SPDK/Linu
 | Q1 | HCI rebuild time after a node failure | Rebuild starts 60 s after the Stargate is declared down (`inferred`, KB titles), 0.5 GiB/s per surviving node (`assumption`, fits Odgers 2018 tests and "1 to 2 hours" all-flash): ≈ 64 min for 4-node T2 at 20 % fill | `hci.rebuildStartDelayS`, `rebuildGiBpsPerNode` | needs an HCI lab |
 | Q2 | Can a guest's whole queue stall on a silently dead NVMe path? | Yes with round-robin at any queue depth, and with the queue-depth selector (default) when the guest's queue depth is at most the dead path's IO queues (full stall ≈ 3 × KATO + CQT ≈ 45 s); deeper queues stall partially. Detection at KATO (traffic-based); in-flight IO held 3 × KATO + CQT (NVMe 2.1 §9.6) unless the target resets the old connection | SPEC §6.4c, `lostPathHoldKatoMultiplier`, `pathSelector` | L5, L12 |
 | Q3 | NVMe IO timeout in the integration | 45 s (`inferred`: must be ≥ 3 × KATO + CQT) | `externalStorage.ioTimeoutS` | L5 |
-| Q4 | ZK session timeout; services with both switches down / array lost | ZK session 20 s (`inferred`, public CVM logs) delays "services down" and Prism Element; quorum effects immediate. T1: a CVM without array connectivity goes to Hades maintenance mode 5–10 s after keep-alive declares its paths lost (`verified` gflag text, `inferred` trigger); its VMs redirect within seconds and resume at once on the remote Stargate (`assumption` handover), and the node leaves maintenance at the next volume check after the paths return. Whole-array loss takes services down; only N−2 nodes enter maintenance; VMs crash after minutes and restart after the array returns (`assumption`, option `whole-array-loss-vm-behavior`). HCI total partition: VMs self-terminate 45 s after first failed IO and restart when quorum returns (`anecdotal`). Stargate hung-op threshold: not public | `cluster.zkSessionTimeoutS`, `hades.*`, `ahvHa.selfTerminateWithoutQuorum` | L1, L9 |
+| Q4 | ZK session timeout; services with both switches down / array lost | ZK session 20 s (`inferred`, public CVM logs) delays "services down" and Prism Element; quorum effects immediate. T1: a CVM without array connectivity goes to Hades maintenance mode 5–10 s after keep-alive declares its paths lost (`verified` gflag text, `inferred` trigger); its VMs redirect within seconds and resume at once on the remote Stargate (`assumption` handover), and the node leaves maintenance at the next volume check after the paths return. Whole-array loss takes services down: every node enters maintenance (silent loss past the fast-IO-fail time, or a target-side reset of every path), no Stargate can serve, and VMs crash at the initiator session timeout and are powered back on after the array returns (`assumption`, option `whole-array-loss-vm-behavior`). HCI total partition: VMs self-terminate 45 s after first failed IO and restart when quorum returns (`anecdotal`). Stargate hung-op threshold: not public | `cluster.zkSessionTimeoutS`, `hades.*`, `ahvHa.selfTerminateWithoutQuorum` | L1, L9 |
 | Q5 | Prism status without quorum | Prism Element unreachable once services are down; Prism Central raises A200000; partial failures name the real alert IDs (A1001, A1006, A1030, A3032, A111009, A1145, A130068) | ClusterView `prismElement`, `prismCentralAlert` | L9 |
 | Q6 | Hung switch with active-backup vs0 | Never detected by active-backup / MAC pinning / no-bond (verified OVS behavior); recovery only by carrier loss. Scenarios T1-20 (all hosts on Switch A: cluster-wide write stall) and T1-21 (`vs0-active-member: alternate`: minority fenced) | `bond.ts`, `vs0-active-member` | bonded lab |
 | Q7 | `network_segment_status --last_task` | Bare command documented (AOS Security Guide); `--last_task` flag still unverified — run `--help` in the lab | `docs/commands.md` | any lab |
 | Q8 | Multipath policy, queues per path | Active-active (`assumption`) + queue-depth selector (`inferred`); 4 IO queues (`inferred`, Hades gflag) | `multipathPolicy`, `pathSelector`, `ioQueuesPerPath` | L12 |
 | Q9 | Reconnect delay | 10 s (Linux default, `assumption`) | `externalStorage.reconnectDelayS` | L5 |
-| Q10 | Redirect pause and failback | 3 s pause (`assumption`); failback after 300 s stable (`unverified`, Odgers 2015 AHV post; Genesis `def_stargate_stable_interval` 30 s is a different path); 2-miss rule is a pre-AHV `assumption` | `redirector.*` | L3 |
+| Q10 | Redirect pause and failback | Detection by the initiator's NOPs (`assumption` interval and count), immediate on a connection reset; a silent Stargate's vDisks wait for its ZK session expiry, then the next NOP cycle; failback after 300 s stable (`unverified`, Odgers 2015 AHV post), one vDisk per check (`assumption`); initiator session timeout then VM crash and power-on (`assumption`) | `redirector.*`, `cluster.stargateSelfRestartS` | L3 |
 | Q11 | CVM boot, host reboot, Cassandra rejoin | 180 s (≤ 420 s `svm_reboot_timeout`), 300 s, rejoin after 30 min stable (`inferred`, KB-1256) | `cluster.cvmBootS`, `hostRebootS`, `cassandraRejoinStableS` | L7 |
 | Q12 | SMART check, replica ack, remote Stargate down | SMART short test 120 s (`assumption`); replica ack 2 s for a live peer; a silently dead remote Stargate takes 20 s to detect (`inferred`), a clean stop ≈ 1 s | `hci.diskSmartCheckS`, `replicaAckTimeoutS`, `stargateDownDetectS` | needs an HCI lab |
 | Q13 | FA controller reboot during upgrade | 300 s (`assumption`); a rebooting controller closes its TCP connections, so its paths drop at once, and in-flight IO waits CQT | `flasharray.controllerRebootS` | L6 |

@@ -17,7 +17,7 @@ import {
   vmsOfNode,
 } from '../helpers';
 import { cvmId, nodeId, T1_LAB } from '../ids';
-import { HADES_DETECT, KATO, P, REDIRECT_PAUSE, VDISK_HANDOVER } from '../timers';
+import { HADES_DETECT, KATO, P, RESET_PAUSE, VDISK_HANDOVER } from '../timers';
 
 const NODE = 1;
 /** A per-VM force-shutdown value for the "with" variant (the default is unset). */
@@ -93,7 +93,7 @@ function variant(withTimeout: boolean): ScenarioDef {
               'VM IO pause bounded by Hades detection, the redirect and the vDisk handover',
               (s) =>
                 vmsOfNode(s, NODE).every(
-                  (v) => v.ioPendingS <= HADES_DETECT + REDIRECT_PAUSE + VDISK_HANDOVER + SLACK,
+                  (v) => v.ioPendingS <= HADES_DETECT + RESET_PAUSE + VDISK_HANDOVER + SLACK,
                 ),
             ),
             // The redirect lands well before the guest's 60 s disk timeout.

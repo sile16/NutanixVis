@@ -30,6 +30,26 @@ import { Stargate } from './stargate';
 
 export type CvmPower = 'off' | 'booting' | 'running';
 
+/**
+ * A Stargate outage as initiators and peer Stargates see it (SPEC §6.2 "iSCSI redirector"):
+ * - `resetAt`: when its iSCSI connections were reset (orderly stop, process exit, CVM reboot,
+ *   ZK session loss on a live CVM). Initiators notice a reset at once; with `null` the Stargate
+ *   went silent (power loss, hang) and only their NOPs notice it.
+ * - `releaseAt`: when its vDisk leadership (in Zeus) is free for a peer Stargate. An orderly stop
+ *   or a process exit releases it at once; a silent Stargate or a rebooting CVM keeps it until its
+ *   Zookeeper session expires (`hci.stargateDownDetectS`). With `strict`, peers see the release
+ *   only after that tick (a ZK session lost and connections reset at the same moment).
+ */
+export interface StargateOutage {
+  readonly since: number;
+  readonly resetAt: number | null;
+  readonly releaseAt: number;
+  readonly strict: boolean;
+}
+
+/** How a Stargate stopped serving (see `StargateOutage`). */
+type DownHow = 'orderly' | 'exit' | 'reboot' | 'silent' | 'hang' | 'zk-lost';
+
 export class Cvm implements Device<Profile> {
   readonly kind = 'cvm';
   readonly id: string;
@@ -46,12 +66,18 @@ export class Cvm implements Device<Profile> {
   private engineUp = true;
   private bootTimer: TimerHandle | null = null;
   private rebootRequested = false;
-  private stargateCmd: 'stop' | 'start' | null = null;
+  private stargateCmd: 'stop' | 'start' | 'crash' | 'hang' | 'resume' | null = null;
   private hadesWake: TimerHandle | null = null;
   private stopCause: 'clean-stop' | 'silent' = 'silent';
   /** `cvm.network-flap`: requested blackout length, and when the current one ends. */
   private flapRequest: number | null = null;
   private flapUntil: number | null = null;
+  private flapSince: number | null = null;
+  /** The current Stargate outage (null while it serves). */
+  private outageRec: StargateOutage | null = null;
+  /** Stargate dropped out because its ZK session expired during a blackout. */
+  private zkDropped = false;
+  private restartTimer: TimerHandle | null = null;
 
   constructor(
     readonly facts: CvmFacts,
@@ -84,16 +110,54 @@ export class Cvm implements Device<Profile> {
   }
 
   stargateServing(): boolean {
-    return this.running() && this.stargate.processUp;
+    return this.running() && this.stargate.serving;
   }
 
   /**
-   * Why Stargate is not serving: `clean-stop` when it was stopped in an orderly way (CVM reboot,
-   * `cvm.stop-stargate`, Hades maintenance), `silent` when it died with its CVM or host (power
-   * loss, failure); null while it serves. Peers see a clean stop at once (sessions closed).
+   * Why Stargate is not serving: `clean-stop` when it was stopped in an orderly way
+   * (`cvm.stop-stargate`, Hades maintenance, a process exit on a live CVM), `silent` when peers
+   * learn of it only from its Zookeeper session expiring (power loss, hang, CVM reboot); null
+   * while it serves.
    */
   stargateDownCause(): 'clean-stop' | 'silent' | null {
-    return this.stargateServing() ? null : this.stopCause;
+    if (this.stargateServing()) return null;
+    return this.stargate.hung ? 'silent' : this.stopCause;
+  }
+
+  /**
+   * Cut off by a network blackout for less than the ZK session timeout: it still holds its
+   * Zookeeper session, so its Stargate keeps serving the vDisks it hosts.
+   */
+  zkSessionHeld(now: number): boolean {
+    const D = this.reg.profile.hci.stargateDownDetectS.value;
+    return this.flapUntil !== null && this.flapSince !== null && now - this.flapSince < D;
+  }
+
+  /** The current Stargate outage as initiators and peers see it (null while it serves). */
+  outage(): StargateOutage | null {
+    if (this.stargateServing()) return null;
+    return this.outageRec ?? { since: 0, resetAt: 0, releaseAt: 0, strict: false };
+  }
+
+  /**
+   * Record how Stargate stopped serving. Called just before (or as) it stops; an outage already
+   * in progress keeps its start and takes the earlier release and any new connection reset.
+   */
+  private noteDown(how: DownHow, now: number): void {
+    const D = this.reg.profile.hci.stargateDownDetectS.value;
+    const reset = how === 'silent' || how === 'hang' ? null : now;
+    const releaseAt = how === 'orderly' || how === 'exit' || how === 'zk-lost' ? now : now + D;
+    const prev = this.stargateServing() ? null : this.outageRec;
+    if (prev === null) {
+      this.outageRec = { since: now, resetAt: reset, releaseAt, strict: how === 'zk-lost' };
+      return;
+    }
+    this.outageRec = {
+      since: prev.since,
+      resetAt: reset ?? prev.resetAt,
+      releaseAt: Math.min(prev.releaseAt, releaseAt),
+      strict: prev.strict && releaseAt >= prev.releaseAt,
+    };
   }
 
   relinquish(vdisk: string): void {
@@ -104,7 +168,13 @@ export class Cvm implements Device<Profile> {
     this.rebootRequested = true;
   }
 
-  requestStargate(cmd: 'stop' | 'start'): void {
+  /**
+   * `stop` / `start`: orderly. `crash`: the process exits; its self-monitor restarts it after
+   * `cluster.stargateSelfRestartS`. `hang`: the process stays alive but stops answering (no IO,
+   * no NOPs, connections stay open). `resume`: a hung process runs again; its watchdog fires, so it
+   * exits and is restarted like a crash.
+   */
+  requestStargate(cmd: 'stop' | 'start' | 'crash' | 'hang' | 'resume'): void {
     this.stargateCmd = cmd;
   }
 
@@ -119,6 +189,7 @@ export class Cvm implements Device<Profile> {
     const ep = this.facts.dataEndpoint;
     if (this.flapRequest !== null && this.power !== 'off') {
       this.flapUntil = ctx.now + this.flapRequest;
+      this.flapSince ??= ctx.now;
       this.flapRequest = null;
       ectx.endpoints.setUp(ep, false, this.reg.causes.get(this.id) ?? []);
       ctx.emit({
@@ -131,10 +202,59 @@ export class Cvm implements Device<Profile> {
         confidence: 'assumption',
       });
     }
+    // A blackout as long as the ZK session timeout: the Stargate loses its Zookeeper session and
+    // drops out (its process exits and keeps restarting while it cannot reach Zeus). Its local
+    // sessions are reset at that moment; until then it kept serving them (SPEC §6.2).
+    const D = ctx.profile.hci.stargateDownDetectS;
+    if (
+      this.flapUntil !== null &&
+      this.flapSince !== null &&
+      ctx.now - this.flapSince >= D.value &&
+      this.stargateServing()
+    ) {
+      this.noteDown('zk-lost', ctx.now);
+      this.stargate.setProcess(false);
+      this.zkDropped = true;
+      ctx.emit({
+        severity: 'warn',
+        deviceId: this.id,
+        code: 'stargate.zk-session-lost',
+        text: `${this.label}: cut off from its peers for ${ctx.now - this.flapSince} s, its Stargate lost its Zookeeper session and dropped out; its sessions are reset and move to other Stargates. Prism alert A1030 "Stargate Temporarily Down"`,
+        causeIds: this.reg.causes.get(this.id) ?? [],
+        cite: [...D.cite, 'ntnx-pe-alerts-7.0-cluster'],
+        confidence: 'assumption',
+      });
+    }
     if (this.flapUntil !== null && ctx.now >= this.flapUntil) {
       this.flapUntil = null;
+      this.flapSince = null;
       if (this.power !== 'off') ectx.endpoints.setUp(ep, true);
+      if (this.zkDropped) {
+        this.zkDropped = false;
+        this.scheduleRestart(
+          ctx,
+          `${this.label}: back in touch with its peers; Stargate restarted`,
+        );
+      }
     }
+  }
+
+  /** The self-monitor restarts an exited Stargate process (`cluster.stargateSelfRestartS`). */
+  private scheduleRestart(ctx: Ctx, text: string): void {
+    const R = ctx.profile.cluster.stargateSelfRestartS;
+    if (this.restartTimer) ctx.timers.cancel(this.restartTimer);
+    this.restartTimer = ctx.timers.set(
+      `${this.id} stargate restart`,
+      R.value,
+      { cite: R.cite, confidence: R.confidence },
+      () => {
+        this.restartTimer = null;
+        if (!this.running() || this.stargate.processUp || this.zkDropped) return;
+        this.stargate.setProcess(true);
+        this.backend.onRecover?.(ctx);
+        this.emitStargateUp(ctx, text);
+      },
+    );
   }
 
   // ── Hooks ───────────────────────────────────────────────────────────────
@@ -143,12 +263,16 @@ export class Cvm implements Device<Profile> {
     const hostUp = this.reg.hostAlive(this.hostId);
     if (!hostUp && this.power !== 'off') {
       this.stopCause = 'silent';
+      this.noteDown('silent', ctx.now);
       this.goDown(ctx, true);
     } else if (hostUp && this.engineUp && this.power === 'off') this.boot(ctx);
     if (this.rebootRequested) {
       this.rebootRequested = false;
       if (this.power !== 'off') {
-        this.stopCause = 'clean-stop';
+        // The OS stops its processes, so connections are reset at once, but Stargate's vDisk
+        // leadership is released only when its Zookeeper session expires (SPEC §6.2).
+        this.stopCause = 'silent';
+        this.noteDown('reboot', ctx.now);
         this.goDown(ctx, false);
         this.boot(ctx);
       }
@@ -180,6 +304,11 @@ export class Cvm implements Device<Profile> {
   onFail(ctx: Ctx): void {
     this.engineUp = false;
     this.stopCause = 'silent';
+    this.noteDown('silent', ctx.now);
+    this.stargate.setHung(false);
+    this.zkDropped = false;
+    if (this.restartTimer) ctx.timers.cancel(this.restartTimer);
+    this.restartTimer = null;
     if (this.running()) this.failComponents(ctx);
     else if (this.power === 'running') this.backend.onFail?.(ctx);
     this.power = 'off';
@@ -205,7 +334,9 @@ export class Cvm implements Device<Profile> {
     // the next quorum evaluation on (it is not in any partition yet).
     const judged = this.reg.partitionOf.has(this.id);
     const stargate = !this.stargateServing()
-      ? 'down'
+      ? this.running() && this.stargate.hung
+        ? 'hung'
+        : 'down'
       : !judged || this.reg.inQuorum(this.id)
         ? 'up'
         : 'unhealthy';
@@ -278,7 +409,11 @@ export class Cvm implements Device<Profile> {
   private goDown(ctx: Ctx, withHost: boolean): void {
     if (this.running()) this.failComponents(ctx);
     else if (this.power === 'running') this.backend.onFail?.(ctx);
+    this.stargate.setHung(false);
     this.stargate.setProcess(false);
+    this.zkDropped = false;
+    if (this.restartTimer) ctx.timers.cancel(this.restartTimer);
+    this.restartTimer = null;
     if (this.bootTimer) ctx.timers.cancel(this.bootTimer);
     this.bootTimer = null;
     if (this.hadesWake) ctx.timers.cancel(this.hadesWake);
@@ -322,30 +457,11 @@ export class Cvm implements Device<Profile> {
   /** Hades: service volumes lost past the threshold → maintenance mode, services stop. */
   private enterMaintenance(ctx: Ctx): void {
     const H = ctx.profile.hades;
-    // Maintenance takes the node out of the cluster: admitted only while the nodes already out
-    // (down or in maintenance) stay within the N−2 / N−3 tolerance (`assumption`). A refused
-    // node keeps retrying at every monitor check.
-    const out = this.reg.facts.cvms.filter((c) => c.id !== this.id && !this.reg.cvmRunning(c.id));
-    const tolerance = this.reg.externalTolerance();
-    if (out.length + 1 > tolerance) {
-      if (!this.hades.refusedAnnounced) {
-        this.hades.refusedAnnounced = true;
-        ctx.emit({
-          severity: 'error',
-          deviceId: this.id,
-          code: 'hades.maintenance.refused',
-          text: `${this.label}: service volumes unreachable, but the node cannot enter maintenance mode: ${out.length} node(s) are already out and the cluster tolerates ${tolerance}. Hades keeps retrying every ${H.volumeMonitorIntervalS.value} s; its Stargate stays up and IO retries in place`,
-          causeIds: this.reg.causes.get(this.id) ?? [],
-          cite: [
-            ...ctx.profile.externalStorage.nodeFailureTolerance.cite,
-            ...H.externalStorageErrorThresholdS.cite,
-          ],
-          confidence: 'assumption',
-        });
-      }
-      return;
-    }
+    // Each node decides on its own service volumes: there is no cluster-wide admission limit, so
+    // a whole-array loss puts every node in maintenance and no Stargate is left to serve
+    // (`assumption`, SPEC §6.4 "T1 full array loss").
     this.stopCause = 'clean-stop';
+    this.noteDown('orderly', ctx.now);
     this.failComponents(ctx);
     this.stargate.setProcess(false);
     // The CVM's NVMe initiator keeps trying to reach the array (its controllers reconnect).
@@ -427,8 +543,11 @@ export class Cvm implements Device<Profile> {
     const cmd = this.stargateCmd;
     this.stargateCmd = null;
     if (!this.running()) return;
+    const causeIds = this.reg.causes.get(this.id) ?? [];
     if (cmd === 'stop' && this.stargate.processUp) {
       this.stopCause = 'clean-stop';
+      this.noteDown('orderly', ctx.now);
+      this.stargate.setHung(false);
       this.backend.onFail?.(ctx);
       this.stargate.setProcess(false);
       ctx.emit({
@@ -436,7 +555,7 @@ export class Cvm implements Device<Profile> {
         deviceId: this.id,
         code: 'stargate.down',
         text: `${this.label}: Stargate stopped. Prism alert A1030 "Stargate Temporarily Down"`,
-        causeIds: this.reg.causes.get(this.id) ?? [],
+        causeIds,
         cite: ['ntnx-pe-alerts-7.0-cvm'],
       });
     } else if (cmd === 'start' && !this.stargate.processUp) {
@@ -444,10 +563,50 @@ export class Cvm implements Device<Profile> {
       this.stargate.setProcess(true);
       this.backend.onRecover?.(ctx);
       this.emitStargateUp(ctx, `${this.label}: Stargate started`);
+    } else if (cmd === 'crash' && this.stargate.processUp) {
+      this.exitProcess(ctx, causeIds, 'crashed');
+    } else if (cmd === 'hang' && this.stargateServing()) {
+      this.stopCause = 'silent';
+      this.noteDown('hang', ctx.now);
+      this.stargate.setHung(true);
+      const D = ctx.profile.hci.stargateDownDetectS;
+      ctx.emit({
+        severity: 'warn',
+        deviceId: this.id,
+        code: 'stargate.hung',
+        text: `${this.label}: Stargate hangs: its process is alive but answers neither IO nor NOPs, and its connections stay open. Initiators notice only when their NOPs go unanswered; peers may take its vDisks only once its Zookeeper session expires (about ${D.value} s)`,
+        causeIds,
+        cite: [...D.cite, ...ctx.profile.redirector.nopIntervalS.cite],
+        confidence: 'assumption',
+      });
+    } else if (cmd === 'resume' && this.stargate.hung) {
+      // Its watchdog fires as soon as it runs again: the process exits and is restarted.
+      this.exitProcess(ctx, causeIds, 'resumed; its watchdog fired, so it exited');
     }
   }
 
+  /** The Stargate process exits on a live CVM (crash, watchdog): its self-monitor restarts it. */
+  private exitProcess(ctx: Ctx, causeIds: readonly string[], why: string): void {
+    const R = ctx.profile.cluster.stargateSelfRestartS;
+    this.stopCause = 'clean-stop';
+    this.noteDown('exit', ctx.now);
+    this.stargate.setHung(false);
+    this.backend.onFail?.(ctx);
+    this.stargate.setProcess(false);
+    ctx.emit({
+      severity: 'warn',
+      deviceId: this.id,
+      code: 'stargate.crashed',
+      text: `${this.label}: the Stargate process ${why}. The CVM resets its connections, so initiators log in elsewhere at once and its vDisks are free for peers; its self-monitor restarts it in about ${R.value} s. Prism alert A1030 "Stargate Temporarily Down"`,
+      causeIds,
+      cite: [...R.cite, 'ntnx-pe-alerts-7.0-cvm'],
+      confidence: R.confidence,
+    });
+    this.scheduleRestart(ctx, `${this.label}: Stargate restarted by its self-monitor`);
+  }
+
   private emitStargateUp(ctx: Ctx, text: string): void {
+    this.outageRec = null;
     ctx.emit({
       severity: 'info',
       deviceId: this.id,

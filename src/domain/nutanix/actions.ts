@@ -120,18 +120,58 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
         kind: 'cvm.start-stargate',
         label: 'Start Stargate',
         appliesTo: (t) =>
-          isKind(t, 'cvm') && field(t, 'power') === 'running' && field(t, 'stargate') !== 'up',
+          isKind(t, 'cvm') && field(t, 'power') === 'running' && field(t, 'stargate') === 'down',
       },
       apply: (req) => cvm(req.target).requestStargate('start'),
     },
     {
       spec: {
-        kind: 'cvm.network-flap',
-        label: 'Flap CVM network (peer blackout)',
+        kind: 'cvm.crash-stargate',
+        label: 'Crash Stargate',
         description:
-          'The CVM’s inter-CVM interface stops answering for a short time, then returns: a flapping or partly unresponsive node. Degraded Node Detection may mark it Degraded.',
+          'The Stargate process exits on a running CVM: its connections are reset, so VMs log in elsewhere at once; its self-monitor restarts it within seconds.',
+        appliesTo: (t) =>
+          isKind(t, 'cvm') && field(t, 'power') === 'running' && field(t, 'stargate') !== 'down',
+      },
+      apply: (req, ctx) => {
+        reg.causes.set(req.target, ctx.causeIds);
+        cvm(req.target).requestStargate('crash');
+      },
+    },
+    {
+      spec: {
+        kind: 'cvm.hang-stargate',
+        label: 'Hang Stargate',
+        description:
+          'The Stargate process stays alive but stops answering IO and NOPs, with its connections open: initiators notice only by their NOPs, and peers take its vDisks only once its Zookeeper session expires.',
+        appliesTo: (t) =>
+          isKind(t, 'cvm') &&
+          field(t, 'power') === 'running' &&
+          (field(t, 'stargate') === 'up' || field(t, 'stargate') === 'unhealthy'),
+      },
+      apply: (req, ctx) => {
+        reg.causes.set(req.target, ctx.causeIds);
+        cvm(req.target).requestStargate('hang');
+      },
+    },
+    {
+      spec: {
+        kind: 'cvm.resume-stargate',
+        label: 'Resume hung Stargate',
+        description:
+          'The hung process runs again; its watchdog fires, so it exits and its self-monitor restarts it.',
+        appliesTo: (t) => isKind(t, 'cvm') && field(t, 'stargate') === 'hung',
+      },
+      apply: (req) => cvm(req.target).requestStargate('resume'),
+    },
+    {
+      spec: {
+        kind: 'cvm.network-flap',
+        label: 'Flap / isolate CVM network (peer blackout)',
+        description:
+          'The CVM’s inter-CVM interface stops answering, then returns; its host-internal link and storage paths stay up. A short flap leaves a partly unresponsive node that Degraded Node Detection may mark Degraded. A blackout as long as the Zookeeper session timeout makes its Stargate drop out, so its VMs’ IO moves to other Stargates; a node that stays unreachable is treated as dead, not Degraded.',
         appliesTo: (t) => isKind(t, 'cvm') && field(t, 'power') === 'running',
-        params: { durationS: { label: 'Blackout (s)', choices: [5, 10, 15] } },
+        params: { durationS: { label: 'Blackout (s)', choices: [5, 10, 15, 60, 120] } },
       },
       apply: (req, ctx) => {
         const n = Number(req.params?.durationS);

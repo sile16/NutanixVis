@@ -14,11 +14,16 @@
  *
  * Model (`inferred`): the kernel path uses the same CVM storage vNICs and FA ports as Stargate's
  * SPDK initiator, so the backend's `health() === 'unavailable'` (every path declared lost by
- * keep-alive) is the proxy for "the service volumes are unreachable". Maintenance therefore
- * follows path-loss detection by the next monitor check and the 5 s threshold. Maintenance takes
- * the node out of the cluster, which is admitted only within the cluster's node-failure tolerance
- * (N−2 / N−3, `assumption`); a refused node keeps retrying at every check. In maintenance the
- * CVM's services (Stargate, ZK member, Cassandra, Acropolis) stop, which the rest of the model
+ * keep-alive) is the proxy for "every path to the service volumes is gone".
+ * - Once that has lasted `hades.mountFailAfterS` (the multipath fast-IO-fail time, `assumption`),
+ *   multipath fails the service-volume IO instead of queueing it: the mounts go bad and **stay
+ *   bad** even if the array returns, until Hades remounts them. A shorter loss is a plain stall.
+ * - Hades acts on the bad mounts at its next monitor check plus the 5 s threshold, so a
+ *   whole-array blip just past the fast-IO-fail time still puts every node in maintenance.
+ * - Each node decides on its own volumes: there is no cluster-wide admission limit. A
+ *   single-fabric loss never triggers it (the other fabric keeps the mounts healthy).
+ *
+ * In maintenance the CVM's services (Stargate, ZK member, Cassandra, Acropolis) stop, which the rest of the model
  * treats exactly like a CVM that is down: the redirector moves the host's VM IO to a Stargate
  * that still reaches the array within seconds, and seats and leaders move. The backend keeps
  * reconnecting meanwhile. The first monitor check that finds the mounts healthy again takes the
@@ -44,8 +49,10 @@ export class Hades {
   state: HadesState = 'ok';
   /** First monitor check that saw the current error. */
   private errorSince: number | null = null;
-  /** `hades.maintenance.refused` reported for the current episode. */
-  refusedAnnounced = false;
+  /** First tick every path was gone (null while some path is live). */
+  private lostSince: number | null = null;
+  /** The mounts failed (paths gone past `mountFailAfterS`); they stay bad until a remount. */
+  private mountsBad = false;
   private lastCheckAt = Number.NEGATIVE_INFINITY;
   enteredAt: number | null = null;
 
@@ -63,13 +70,18 @@ export class Hades {
     const H = ctx.profile.hades;
     const now = ctx.now;
     if (this.state === 'ok') {
-      if (!monitored || this.backend.health() !== 'unavailable') this.refusedAnnounced = false;
       if (!monitored) {
         this.errorSince = null;
+        this.lostSince = null;
+        this.mountsBad = false;
         return null;
       }
+      if (this.backend.health() === 'unavailable') {
+        this.lostSince ??= now;
+        if (now - this.lostSince >= H.mountFailAfterS.value) this.mountsBad = true;
+      } else this.lostSince = null;
       if (!this.checkDue(ctx)) return null;
-      if (this.backend.health() !== 'unavailable') {
+      if (!this.mountsBad) {
         this.errorSince = null;
         return null;
       }
@@ -97,6 +109,10 @@ export class Hades {
     if (this.state === 'ok' && this.errorSince !== null) {
       return Math.max(this.errorSince + H.externalStorageErrorThresholdS.value, nextCheck);
     }
+    if (this.state === 'ok' && this.mountsBad) return nextCheck;
+    if (this.state === 'ok' && this.lostSince !== null) {
+      return Math.max(this.lostSince + H.mountFailAfterS.value, nextCheck);
+    }
     // Only while the check's answer would change something: a lost backend (ok) or a healthy
     // one (maintenance). Otherwise the backend's own reconnect timers wake the engine.
     const unavailable = this.backend.health() === 'unavailable';
@@ -111,15 +127,19 @@ export class Hades {
     this.errorSince = null;
   }
 
+  /** The mounts were remounted (healthy at a check): leave maintenance, services restart. */
   beginRestart(): void {
     this.state = 'restarting';
+    this.mountsBad = false;
+    this.lostSince = null;
   }
 
   /** Services are back (restart done) or the CVM was power-cycled: start monitoring afresh. */
   reset(): void {
     this.state = 'ok';
     this.errorSince = null;
-    this.refusedAnnounced = false;
+    this.lostSince = null;
+    this.mountsBad = false;
     this.lastCheckAt = Number.NEGATIVE_INFINITY;
     this.enteredAt = null;
   }

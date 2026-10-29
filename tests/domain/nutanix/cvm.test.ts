@@ -70,7 +70,7 @@ describe('delegation to the storage backend', () => {
 });
 
 describe('Stargate', () => {
-  it('reports why it is down: clean stop (reboot, stop-stargate) or silent (power loss)', () => {
+  it('reports why it is down: clean stop (stop, crash) or silent (reboot, power loss, hang)', () => {
     const h = harness('t2-hci-ahv');
     h.run(5);
     expect(h.cluster.stargateDownCause?.('node-1.cvm')).toBeNull();
@@ -79,8 +79,17 @@ describe('Stargate', () => {
     h.act('power-off', 'node-3');
     h.run(1);
     expect(h.cluster.stargateDownCause?.('node-1.cvm')).toBe('clean-stop');
-    expect(h.cluster.stargateDownCause?.('node-2.cvm')).toBe('clean-stop');
+    // A reboot keeps its vDisk leadership until its Zookeeper session expires.
+    expect(h.cluster.stargateDownCause?.('node-2.cvm')).toBe('silent');
     expect(h.cluster.stargateDownCause?.('node-3.cvm')).toBe('silent');
+    h.act('cvm.crash-stargate', 'node-4.cvm');
+    h.run(1);
+    expect(h.cluster.stargateDownCause?.('node-4.cvm')).toBe('clean-stop');
+    h.run(P.cluster.stargateSelfRestartS.value);
+    expect(h.cluster.stargateDownCause?.('node-4.cvm')).toBeNull();
+    h.act('cvm.hang-stargate', 'node-4.cvm');
+    h.run(1);
+    expect(h.cluster.stargateDownCause?.('node-4.cvm')).toBe('silent');
   });
 
   it('owns vDisks through backend.acquire and releases them when ownership moves', () => {

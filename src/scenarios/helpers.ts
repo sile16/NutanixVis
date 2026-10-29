@@ -191,7 +191,7 @@ export const isStalled = (v: VmView): boolean => v.state === 'io-stalled' || v.s
 
 // cvm ──────────────────────────────────────────────────────────────────────────
 
-export const STARGATE_STATES = ['up', 'down', 'unhealthy'] as const;
+export const STARGATE_STATES = ['up', 'down', 'unhealthy', 'hung'] as const;
 export const PATH_STATES = ['live', 'lost', 'removed'] as const;
 export type PathState = (typeof PATH_STATES)[number];
 export const RING_STATES = ['normal', 'down', 'detached', 'forwarding'] as const;

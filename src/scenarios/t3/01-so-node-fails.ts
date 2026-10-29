@@ -18,7 +18,7 @@ import {
   vms,
 } from '../helpers';
 import { cvmId, nodeId, T3_CO_SO } from '../ids';
-import { NODE_REBUILD_START, P, REDIRECT_PAUSE, SILENT_NODE_PAUSE, STARGATE_DOWN } from '../timers';
+import { NODE_REBUILD_START, P, SILENT_NODE_PAUSE, SILENT_PAUSE, STARGATE_DOWN } from '../timers';
 
 const SO = 4;
 const END = by(P.ahvHa.restartByS) + 30;
@@ -36,7 +36,7 @@ export default defineScenario({
     at(T0, 'some CO VMs are served by the Stargate on node 4', (s) =>
       vms(s).some((v) => v.ownerCvm === cvmId(SO)),
     ),
-    atCtx(by(REDIRECT_PAUSE), 'those VMs are redirected to another Stargate', (s, ctx) => {
+    atCtx(by(SILENT_PAUSE), 'those VMs are redirected to another Stargate', (s, ctx) => {
       const affected = vms(snapshotAt(ctx, T0)).filter((v) => v.ownerCvm === cvmId(SO));
       return affected.every((a) => {
         const now = vms(s).find((v) => v.id === a.id);
@@ -55,7 +55,7 @@ export default defineScenario({
     neverSeen(END, 'ha.vm.restarted'),
     ...baseInvariants(),
   ],
-  narrative: `Storage-only node 4 fails. It runs no VMs, so there is nothing for AHV HA to restart. Compute-only VMs whose Stargate was on node 4 have their iSCSI sessions redirected to another storage node after a short pause. Writes that need a replica on node 4 stall until the cluster declares its Stargate down (Zookeeper session expiry, ${STARGATE_DOWN} s), and Curator starts rebuilding node 4's replicas ${P.hci.rebuildStartDelayS} s after that.`,
+  narrative: `Storage-only node 4 fails. It runs no VMs, so there is nothing for AHV HA to restart. Compute-only VMs whose Stargate was on node 4 notice it by their initiators' NOPs and log in to another storage node, which serves them once node 4's Zookeeper session has expired. Writes that need a replica on node 4 stall until the cluster declares its Stargate down (Zookeeper session expiry, ${STARGATE_DOWN} s), and Curator starts rebuilding node 4's replicas ${P.hci.rebuildStartDelayS} s after that.`,
   cite: [
     'ntnx-ahv-admin-11.2',
     'ntnx-bible-4i',

@@ -13,9 +13,10 @@ export type MultipathPolicy = 'active-active' | 'active-passive';
  */
 export type PathSelector = 'queue-depth' | 'round-robin';
 /**
- * What VMs do when the whole array is lost (SPEC §6.4 "T1 full array loss"): `stall` keeps IO
- * retrying in place until the array returns; `crash-and-restart` lets a VM whose IO has stalled
- * past `guest.ioStallCrashS` crash (QEMU exits), and AHV HA restarts it once the array is back.
+ * What a VM does when no Stargate can serve it for long, e.g. a whole-array loss (SPEC §6.4 "T1
+ * full array loss"): `crash-and-restart` lets the AHV initiator give up after
+ * `redirector.initiatorSessionTimeoutS` (the VM crashes; AHV powers it back on once a Stargate can
+ * serve); `stall` keeps IO retrying in place until storage returns.
  */
 export type WholeArrayLossVmBehavior = 'stall' | 'crash-and-restart';
 
@@ -47,13 +48,26 @@ export interface Profile {
     readonly selfTerminateWithoutQuorum: Cited<boolean>;
   };
 
-  /** AHV iSCSI redirector / Autopath. */
+  /**
+   * AHV iSCSI redirector / Autopath and the VM's iSCSI initiator (SPEC §6.2 "iSCSI redirector").
+   * The redirector only answers logins; a silent Stargate is detected by the initiator's NOPs.
+   */
   readonly redirector: {
+    /** The initiator NOPs its Stargate session this often. */
     readonly nopIntervalS: Cited<number>;
+    /** Unanswered initiator NOPs before it drops the session and logs in again. */
     readonly missesToUnhealthy: Cited<number>;
-    readonly missWindowS: Cited<number>;
+    /** Local Stargate stable this long before sessions return to it (failback). */
     readonly failbackStableS: Cited<number>;
+    /** Failback moves one vDisk session per check, this far apart. */
+    readonly failbackStepS: Cited<number>;
+    /** IO pause while the initiator logs in to the Stargate it was sent to. */
     readonly redirectStallS: Cited<number>;
+    /**
+     * No Stargate serving a session this long → the initiator gives up and the VM crashes
+     * (with `whole-array-loss-vm-behavior: crash-and-restart`).
+     */
+    readonly initiatorSessionTimeoutS: Cited<number>;
   };
 
   /**
@@ -75,6 +89,8 @@ export interface Profile {
     readonly minNodes: Cited<number>;
     /** CVM power-on to Stargate up. */
     readonly cvmBootS: Cited<number>;
+    /** A Stargate process that exited (crash, watchdog) is restarted by its self-monitor after this. */
+    readonly stargateSelfRestartS: Cited<number>;
     /** A detached Cassandra node is re-added to the ring after it has been stable this long. */
     readonly cassandraRejoinStableS: Cited<number>;
     /** Host power-cycle time for `reboot` (POST + AHV boot), before its CVM starts booting. */
@@ -99,6 +115,11 @@ export interface Profile {
     /** Losing the service volumes puts the node in maintenance mode (CVM services stop). */
     readonly maintenanceOnStorageError: Cited<boolean>;
     readonly volumeMonitorIntervalS: Cited<number>;
+    /**
+     * Every path to the service volumes gone this long → multipath fails their IO and the mounts
+     * go bad, staying bad (until Hades remounts them) even if the array returns.
+     */
+    readonly mountFailAfterS: Cited<number>;
     /** An external-storage error lasting this long is critical: the node enters maintenance. */
     readonly externalStorageErrorThresholdS: Cited<number>;
     /**
@@ -242,11 +263,6 @@ export interface Profile {
 
   readonly guest: {
     readonly linuxScsiTimeoutS: Cited<number>;
-    /**
-     * With `whole-array-loss-vm-behavior: crash-and-restart`: a VM whose IO has been stalled this
-     * long by a whole-array loss crashes (QEMU exits, "VM shut down unexpectedly").
-     */
-    readonly ioStallCrashS: Cited<number>;
   };
 }
 

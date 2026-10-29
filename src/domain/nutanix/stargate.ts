@@ -4,12 +4,15 @@
  * NOPs, and owns vDisks via `backend.acquire` (T1: the NVMe Persistent Reservation, Bible 8c).
  *
  * - IO from a host AHV HA has fenced is refused (Bible 5b: "Stargates block IO from that host").
- * - Without ZK quorum the Stargate is `unhealthy`: it still answers NOPs (so the redirector does
- *   not move), but refuses writes, which need quorum-backed metadata (`inferred`; this is also
- *   what makes VM writes fail on an isolated host, Bible 5b / SPEC §6.4a "Host network
- *   isolation"). HCI: reads are refused too, because resolving an extent needs a Cassandra
- *   lookup and no key range has a Paxos majority outside the quorum side (`inferred`, Bible
- *   4g/4i). T1 keeps serving reads (metadata is the array's).
+ * - Without ZK quorum the Stargate is `unhealthy`: it still answers NOPs (so initiators do not
+ *   move), but refuses writes, which need quorum-backed metadata (`inferred`; this is also what
+ *   makes VM writes fail on an isolated host, Bible 5b / SPEC §6.4a "Host network isolation").
+ *   HCI: reads are refused too, because resolving an extent needs a Cassandra lookup and no key
+ *   range has a Paxos majority outside the quorum side (`inferred`, Bible 4g/4i). T1 keeps
+ *   serving reads (metadata is the array's).
+ * - A CVM cut off by a network blackout still holds its Zookeeper session until it expires, so
+ *   meanwhile it serves IO as before; at the expiry its Stargate drops out (see `Cvm`).
+ * - A hung process (`cvm.hang-stargate`) answers neither IO nor NOPs but keeps its connections.
  * - Replies dropped on the wire are retransmitted (TCP) while the Stargate is serving.
  * - T1 vDisk handover: taking over a vDisk whose owner CVM went into Hades maintenance takes
  *   `externalStorage.vdiskHandoverS` (ownership and NVMe reservation, `assumption`). The session
@@ -60,14 +63,30 @@ export class Stargate implements CvmComponent {
     private readonly reg: Registry,
   ) {}
 
+  /** A hung process: alive (connections open) but answering neither IO nor NOPs. */
+  private hungFlag = false;
+
   get processUp(): boolean {
     return this.process === 'up';
   }
 
-  /** Serving IO (process up). `unhealthy` is reported separately (no quorum). */
+  get hung(): boolean {
+    return this.hungFlag;
+  }
+
+  /** Process up and not hung. `unhealthy` is reported separately (no quorum). */
+  get serving(): boolean {
+    return this.process === 'up' && !this.hungFlag;
+  }
+
   setProcess(up: boolean): void {
     this.process = up ? 'up' : 'down';
     if (!up) this.clear();
+  }
+
+  /** `cvm.hang-stargate`: stop answering, keep connections (and the state it holds). */
+  setHung(on: boolean): void {
+    this.hungFlag = on;
   }
 
   ownedVdisks(): number {
@@ -85,7 +104,7 @@ export class Stargate implements CvmComponent {
       if (this.process === 'up') this.backend.release(v, ctx);
     }
     this.toRelease = new Set();
-    if (this.process === 'up') this.finishHandovers(ctx);
+    if (this.serving) this.finishHandovers(ctx);
   }
 
   /** A vDisk whose current owner CVM is in Hades maintenance (T1): taking it over takes time. */
@@ -129,7 +148,7 @@ export class Stargate implements CvmComponent {
   }
 
   emit(ctx: Ctx): void {
-    if (this.process !== 'up') {
+    if (!this.serving) {
       this.resend = [];
       return;
     }
@@ -141,7 +160,7 @@ export class Stargate implements CvmComponent {
   onMessage(msg: Message, ctx: Ctx): boolean {
     if (msg.kind === MSG.nop) {
       const p = msg.payload as PingPayload;
-      if (p.t === 'req' && this.process === 'up') {
+      if (p.t === 'req' && this.serving) {
         const reply: PingPayload = { t: 'resp', from: this.cvm };
         ctx.send({
           kind: MSG.nop,
@@ -156,7 +175,7 @@ export class Stargate implements CvmComponent {
     }
     if (!isIoKind(msg.kind)) return false;
     const p = msg.payload as IoPayload;
-    if (p.t !== 'req' || this.process !== 'up') return true;
+    if (p.t !== 'req' || !this.serving) return true;
     const io = p.io;
     const entry: Inflight = {
       req: io,
@@ -170,7 +189,7 @@ export class Stargate implements CvmComponent {
       return true;
     }
     const needsQuorum = io.op === 'write' || !this.reg.facts.externalStorage;
-    if (needsQuorum && !this.reg.inQuorum(this.cvm)) {
+    if (needsQuorum && !this.reg.inQuorum(this.cvm) && !this.reg.zkSessionHeld(this.cvm)) {
       this.reply(entry, { status: 'retry', reason: 'no Zookeeper quorum' }, ctx);
       return true;
     }
@@ -209,7 +228,7 @@ export class Stargate implements CvmComponent {
   /** Answer every completion the backend has (called after delivery and in tick). */
   pump(ctx: Ctx): void {
     const done = this.backend.drain();
-    if (this.process !== 'up') return;
+    if (!this.serving) return;
     for (const c of done) {
       const e = this.inflight.get(c.req.id);
       if (!e) continue;
@@ -229,7 +248,7 @@ export class Stargate implements CvmComponent {
         if (ctx.now - s.at <= 1) keep.push(s);
         continue;
       }
-      if (tr.result === 'dropped' && this.process === 'up') this.resend.push(s.draft);
+      if (tr.result === 'dropped' && this.serving) this.resend.push(s.draft);
     }
     this.sentReplies = keep;
   }

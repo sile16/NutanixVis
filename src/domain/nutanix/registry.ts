@@ -11,7 +11,7 @@ import type { DeviceId, EndpointId } from '../../engine/types';
 import type { ClusterView, Ctx, IoRequest, StorageBackend } from '../contracts';
 import type { Profile } from '../versions/profile';
 import type { IoTarget, StorageUse, Vm, VmEnv } from '../workload/vm';
-import type { Cvm } from './cvm';
+import type { Cvm, StargateOutage } from './cvm';
 import type { Facts } from './facts';
 import type { AhvHost } from './host';
 
@@ -323,14 +323,45 @@ export class Registry implements NutanixClusterView, VmEnv {
     return cvm !== undefined && this.backends.get(cvm)?.health() === 'unavailable';
   }
 
-  /** T1: no CVM reaches the array and the topology lets stalled VMs crash (SPEC §6.4). */
-  crashOnArrayLoss(): boolean {
-    if (!this.facts.externalStorage) return false;
+  /**
+   * The AHV initiator's session timeout (SPEC §6.2 "iSCSI redirector"), or null when VMs keep
+   * retrying in place (`whole-array-loss-vm-behavior: stall`).
+   */
+  initiatorTimeoutS(): number | null {
     const mode =
       this.facts.wholeArrayLossVmBehavior ??
       this.profile.externalStorage.wholeArrayLossVmBehavior.value;
-    if (mode !== 'crash-and-restart') return false;
-    return this.facts.cvms.every((c) => this.backends.get(c.id)?.health() === 'unavailable');
+    return mode === 'crash-and-restart'
+      ? this.profile.redirector.initiatorSessionTimeoutS.value
+      : null;
+  }
+
+  unservedS(host: string, vdisk: string): number {
+    return this.hosts.get(host)?.redirector.unservedS(vdisk, this.now) ?? 0;
+  }
+
+  // ── Stargate outages and vDisk leadership (redirector) ──────────────────
+
+  /** The CVM is cut off by a network blackout but still holds its ZK session (see `Cvm`). */
+  zkSessionHeld(cvm: DeviceId): boolean {
+    return this.cvms.get(cvm)?.zkSessionHeld(this.now) ?? false;
+  }
+
+  stargateOutage(cvm: DeviceId): StargateOutage | null {
+    return this.cvms.get(cvm)?.outage() ?? null;
+  }
+
+  /**
+   * `peer` may serve `vdisk`: its leader in Zeus (the owner CVM) is serving it, or has released
+   * it (an orderly stop or process exit at once, otherwise when its Zookeeper session expired).
+   * Model shortcut: read from the owner's outage record, not from Zeus messages.
+   */
+  leadershipFree(vdisk: string, peer: DeviceId, now: number): boolean {
+    const owner = this.owner.get(vdisk);
+    if (owner === undefined || owner === peer) return true;
+    const o = this.stargateOutage(owner);
+    if (o === null) return true;
+    return o.strict ? now > o.releaseAt : now >= o.releaseAt;
   }
 
   hostOfNic(nic: string): string | undefined {

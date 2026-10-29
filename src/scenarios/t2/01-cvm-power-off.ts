@@ -19,24 +19,22 @@ import {
 } from '../helpers';
 import { cvmId, nodeId, T2 } from '../ids';
 import {
+  failbackDoneS,
   NODE_REBUILD_START,
   P,
   REDIRECT_DETECT,
-  REDIRECT_PAUSE,
   SILENT_NODE_PAUSE,
+  SILENT_PAUSE,
   STARGATE_DOWN,
 } from '../timers';
 
 const CVM = cvmId(1);
 const POWER_ON_AT = T0 + 120;
 /**
- * Failback needs the CVM to boot (`cluster.cvmBootS`), then its Stargate to answer NOPs for
- * `failbackStableS`, then the re-login stall (`redirectStallS`) before local IO flows again.
+ * Failback needs the CVM to boot (`cluster.cvmBootS`), then its Stargate to answer for
+ * `failbackStableS`, then one vDisk per `failbackStepS` with a re-login pause each.
  */
-const END = by(
-  P.cluster.cvmBootS + P.redirector.failbackStableS + P.redirector.redirectStallS,
-  POWER_ON_AT,
-);
+const END = by(P.cluster.cvmBootS + failbackDoneS(4), POWER_ON_AT);
 
 export default defineScenario({
   id: 't2-01-cvm-power-off-autopath',
@@ -49,10 +47,12 @@ export default defineScenario({
   ],
   expect: [
     allRunningAt(T0, 'steady state: all VMs running'),
-    atCtx(by(REDIRECT_DETECT), 'redirector marks the local Stargate unhealthy', (_s, ctx) =>
-      eventSeen(ctx, 'redirector.unhealthy', { device: nodeId(1) }),
+    atCtx(
+      by(REDIRECT_DETECT),
+      "the initiators' NOPs to the silent local Stargate go unanswered",
+      (_s, ctx) => eventSeen(ctx, 'redirector.unhealthy', { device: nodeId(1) }),
     ),
-    at(by(REDIRECT_PAUSE), 'node 1 VMs keep running, served by a remote Stargate', (s) =>
+    at(by(SILENT_PAUSE), 'node 1 VMs keep running, served by a remote Stargate', (s) =>
       vmsOfNode(s, 1).every(
         (v) => isRunning(v) && v.host === nodeId(1) && v.ownerCvm !== null && v.ownerCvm !== CVM,
       ),
@@ -98,7 +98,7 @@ export default defineScenario({
     neverSeen(END, 'ha.vm.restarted'),
     ...baseInvariants(),
   ],
-  narrative: `CVM 1 is powered off while node 1 keeps running its VMs. The host's iSCSI redirector misses two NOPs, marks the local Stargate unhealthy, and QEMU's iSCSI login is redirected to a healthy remote Stargate after a short pause. Writes that need a replica on CVM 1 stall until the cluster declares its Stargate down (Zookeeper session expiry, ${STARGATE_DOWN} s), and Curator starts rebuilding the lost replicas ${P.hci.rebuildStartDelayS} s after that. When CVM 1 is back and its Stargate has been stable for ${P.redirector.failbackStableS} s, the VMs fail back to local IO.`,
+  narrative: `CVM 1 is powered off while node 1 keeps running its VMs; its initiators notice only when their NOPs go unanswered, then log in to a remote Stargate through the host's redirector. That Stargate may serve CVM 1's vDisks, and writes needing a replica on CVM 1 may complete, only once CVM 1's Zookeeper session expires (${STARGATE_DOWN} s), so the first logins park and IO resumes at the next NOP cycle after it. Curator starts rebuilding the lost replicas ${P.hci.rebuildStartDelayS} s after the expiry, and once CVM 1 has been back and stable for ${P.redirector.failbackStableS} s the VMs fail back one vDisk at a time.`,
   cite: [
     'ntnx-ahv-admin-11.2',
     'ntnx-bible-5b',

@@ -51,10 +51,15 @@ Data locality [4]:
 The failure matrix says: no HA event, no failed IO, and latency may rise [2].
 
 **AHV**
-- The initiator (Frodo, or QEMU) talks to an iSCSI redirector at `127.0.0.1:3261`, which health-checks the local Stargate with iSCSI NOPs. The Bible says only "regularly"; the 1 s cadence is inferred from the Bible's log sample.
-- When NOPs fail, the redirector marks the local Stargate unhealthy, and QEMU's retried login is redirected to a healthy remote Stargate.
-- **Failback:** once the local Stargate recovers, the remote one quiesces and kills its sessions, and QEMU logs in locally again [5].
-- How long IO pauses during redirect is **UNVERIFIED**. No published AHV number exists, so the profile assumes 3 s (`redirector.redirectStallS`, lab L3).
+- The initiator (Frodo, or QEMU) talks to an iSCSI redirector at `127.0.0.1:3261`, which health-checks Stargates with iSCSI NOPs ("regularly", per the Bible) and redirects the initiator's login to one that answers.
+- When NOPs fail, the local Stargate is treated as unhealthy, and QEMU's retried login is redirected to a healthy remote Stargate.
+- **Failback:** once the local Stargate recovers, the remote one quiesces and kills its sessions, and QEMU logs in locally again [5]. Failback is therefore driven from the Stargate side.
+- **Model (`assumption`, SPEC §6.2 "Autopath on AHV").**
+  - The redirector only answers logins.
+  - A reset connection (an orderly stop or a process exit) is noticed at once. A silent Stargate is noticed by the initiator's own NOPs (`redirector.nopIntervalS` × `missesToUnhealthy`, seconds).
+  - A peer may serve a vDisk only once its owner's leadership is released: at once after an orderly stop, otherwise when the owner's ZK session expires. Earlier logins park until the next NOP cycle.
+  - Failback returns one vDisk per `failbackStepS`.
+  - The IO pause after a usable login (`redirectStallS`, about a second) is **UNVERIFIED**: no published AHV number exists (lab L3).
 
 
 **Shared rules** [9]. The blog is archived; the text was re-checked on 2026-10-27. It describes the hypervisor-agnostic Autopath of 2014, before AHV.

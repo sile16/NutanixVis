@@ -37,7 +37,8 @@ function setup(opts: { forceShutdownS?: number } = {}) {
     ownerCvm: () => 'node-1.cvm',
     storageUse: () => ({ paths: ['a~b'], uplinks: ['node-1.eth1'] }),
     storageLost: () => st.lost,
-    crashOnArrayLoss: () => false,
+    initiatorTimeoutS: () => null,
+    unservedS: () => 0,
     hostOfNic: () => undefined,
   };
   vm = new Vm(

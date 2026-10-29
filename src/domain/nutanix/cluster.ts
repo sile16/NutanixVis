@@ -56,6 +56,8 @@ export class ClusterDevice implements Device<Profile> {
   /** DND per CVM: end of its scoring window, and since when a Degraded node has been healthy. */
   private readonly dndWindowEnd = new Map<string, number>();
   private readonly dndHealthySince = new Map<string, number | null>();
+  /** CVMs still cut off when their scoring window ended: dead, not scored again until healthy. */
+  private readonly dndDead = new Set<string>();
   private derivedCache: Record<string, ViewField> = {};
 
   constructor(private readonly reg: Registry) {
@@ -320,9 +322,10 @@ export class ClusterDevice implements Device<Profile> {
    * responsiveness. A running CVM the quorum side cannot reach starts a scoring window; if at its
    * end the CVM answers again (it flapped or was partly unresponsive), it is marked Degraded: its
    * Cassandra goes to forwarding mode (metadata store disabled), so the ring and the cluster's
-   * fault tolerance lose it, and an alert is raised. A CVM still cut off or down at the end is not
-   * a degraded-node case (isolation and HA handle it). Cleared after `autoResolveHealthyS` of
-   * health, or when an operator marks it fixed (`cvm.mark-fixed`).
+   * fault tolerance lose it, and an alert is raised. A CVM still cut off or down at the end is
+   * treated as dead, not degraded (isolation and HA handle it), and is not scored again until it
+   * is healthy again. Cleared after `autoResolveHealthyS` of health, or when an operator marks it
+   * fixed (`cvm.mark-fixed`).
    */
   private evalDnd(ctx: Ctx): void {
     const reg = this.reg;
@@ -347,8 +350,9 @@ export class ClusterDevice implements Device<Profile> {
         );
         continue;
       }
+      if (healthy) this.dndDead.delete(c);
       if (state === 'ok') {
-        if (!unresponsive) continue;
+        if (!unresponsive || this.dndDead.has(c)) continue;
         reg.dnd.set(c, 'scoring');
         this.dndWindowEnd.set(c, ctx.now + D.scoringWindowS.value);
         this.wake(ctx, `${c} dnd scoring`, ctx.now + D.scoringWindowS.value, D.scoringWindowS);
@@ -358,6 +362,7 @@ export class ClusterDevice implements Device<Profile> {
         if (ctx.now < (this.dndWindowEnd.get(c) ?? 0)) continue;
         if (!healthy) {
           reg.dnd.set(c, 'ok');
+          this.dndDead.add(c);
           continue;
         }
         reg.dnd.set(c, 'degraded');

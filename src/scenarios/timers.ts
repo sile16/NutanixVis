@@ -55,20 +55,40 @@ export const PATH_LOSS_RULE = `${P.externalStorage.lostPathHoldKatoMultiplier} �
  * step 2c; SPEC §6.4c).
  */
 export const CLOSED_PATH_WORST = CQT;
-/** Redirector detection: NOP misses needed to mark a Stargate unhealthy, in seconds. */
+/**
+ * Initiator detection of a silent Stargate: `missesToUnhealthy` unanswered NOPs, `nopIntervalS`
+ * apart (SPEC §6.2 "iSCSI redirector"). One NOP cycle of a parked session takes as long.
+ */
 export const REDIRECT_DETECT = P.redirector.missesToUnhealthy * P.redirector.nopIntervalS;
-/** Detection plus the (assumed) IO stall while QEMU re-logs in to the new Stargate. */
-export const REDIRECT_PAUSE = REDIRECT_DETECT + P.redirector.redirectStallS;
+/** IO pause when a Stargate's connections are reset (orderly stop, process exit): the re-login. */
+export const RESET_PAUSE = P.redirector.redirectStallS;
 
 /**
  * A silent Stargate (node power loss, hang, isolation) is declared down when its Zookeeper
- * session expires; until then, writes that need a replica on it stall (SPEC §6.3).
+ * session expires; until then, writes that need a replica on it stall (SPEC §6.3), and peers
+ * may not take its vDisks (their leadership is still its).
  */
 export const STARGATE_DOWN = P.hci.stargateDownDetectS;
 /** Curator rebuild start after a node loss: Stargate-down detection, then the start delay. */
 export const NODE_REBUILD_START = STARGATE_DOWN + P.hci.rebuildStartDelayS;
+/**
+ * Worst VM IO pause when its Stargate goes silent or its CVM reboots: the vDisk leadership is
+ * released at the ZK session expiry, then a parked session gets IO at its next NOP cycle, plus the
+ * re-login. A redirect that comes earlier only parks.
+ */
+export const SILENT_PAUSE = STARGATE_DOWN + REDIRECT_DETECT + P.redirector.redirectStallS;
+/** No IO pause shorter than this for a silent Stargate: its leadership holds until ZK expiry. */
+export const SILENT_PAUSE_MIN = STARGATE_DOWN;
 /** Worst VM IO pause when a node's Stargate goes silent: the redirect or the replica-write stall. */
-export const SILENT_NODE_PAUSE = Math.max(REDIRECT_PAUSE, STARGATE_DOWN);
+export const SILENT_NODE_PAUSE = Math.max(SILENT_PAUSE, STARGATE_DOWN);
+/**
+ * Failback of a host's sessions after the local Stargate is back: `failbackStableS`, then one vDisk
+ * per `failbackStepS` (`vdisks` of them), each with the re-login pause.
+ */
+export function failbackDoneS(vdisks: number): number {
+  const R = P.redirector;
+  return R.failbackStableS + Math.max(0, vdisks - 1) * R.failbackStepS + R.redirectStallS;
+}
 
 /**
  * Curator copy time for one lost CVM node (SPEC §6.3 "Curator rebuild", Bible 4i): its share of
@@ -88,14 +108,20 @@ export function nodeRebuildS(
   return { lostGiB, seconds: lostGiB / (P.hci.rebuildGiBpsPerNode * survivors) };
 }
 /**
- * T1 Hades: worst case from a silent loss of every array path to maintenance mode. Paths are lost
- * after KATO (keep-alive); the volume monitor (every `volumeMonitorIntervalS`) then needs the
- * error to last `externalStorageErrorThresholdS`.
+ * T1: a loss of every array path at T0 makes the service-volume mounts fail (and stay bad) at
+ * `MOUNT_FAIL`: paths are lost after KATO (keep-alive), then multipath fails the IO after its
+ * fast-IO-fail time (`hades.mountFailAfterS`). A shorter loss is a plain stall.
+ */
+export const MOUNT_FAIL = KATO + P.hades.mountFailAfterS;
+/**
+ * T1 Hades: worst case from a silent loss of every array path to maintenance mode: the mounts
+ * fail, the volume monitor (every `volumeMonitorIntervalS`) sees it, and the error must last
+ * `externalStorageErrorThresholdS`.
  */
 export const HADES_DETECT =
-  KATO + P.hades.volumeMonitorIntervalS + P.hades.externalStorageErrorThresholdS;
-/** Earliest maintenance after the loss: path-loss detection plus the 5 s threshold. */
-export const HADES_EARLIEST = KATO + P.hades.externalStorageErrorThresholdS;
+  MOUNT_FAIL + P.hades.volumeMonitorIntervalS + P.hades.externalStorageErrorThresholdS;
+/** Earliest maintenance after the loss: the mounts fail, plus the 5 s threshold. */
+export const HADES_EARLIEST = MOUNT_FAIL + P.hades.externalStorageErrorThresholdS;
 /** T1: a remote Stargate takes over a vDisk whose owner CVM went into Hades maintenance. */
 export const VDISK_HANDOVER = P.externalStorage.vdiskHandoverS;
 /**

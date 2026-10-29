@@ -178,8 +178,13 @@ export class HciStore {
     for (const n of this.nodeIds) {
       let detectS: number | undefined;
       if (!c.isCvmUp(n)) detectS = H.stargateDownDetectS.value;
-      else if (!c.isStargateUp(n)) detectS = H.stargateStopDetectS.value;
-      else if (c.zkQuorum() && c.inQuorum?.(n) === false) detectS = H.stargateDownDetectS.value;
+      // A hung Stargate keeps its ZK session until it expires (silent); a stopped one closes it.
+      else if (!c.isStargateUp(n)) {
+        detectS =
+          c.stargateDownCause?.(n) === 'silent'
+            ? H.stargateDownDetectS.value
+            : H.stargateStopDetectS.value;
+      } else if (c.zkQuorum() && c.inQuorum?.(n) === false) detectS = H.stargateDownDetectS.value;
       if (detectS === undefined) this.suspects.delete(n);
       else if (!this.suspects.has(n)) this.suspects.set(n, { since: now, detectS });
     }

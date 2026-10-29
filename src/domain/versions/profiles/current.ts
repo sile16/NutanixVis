@@ -64,34 +64,40 @@ export const current: Profile = {
 
   redirector: {
     nopIntervalS: c(
-      1,
-      'inferred',
+      5,
+      'assumption',
       ['ntnx-bible-5b'],
-      'Not published. The Bible says the redirector "regularly" NOPs Stargates; the ~1 s cadence is inferred from the Bible\'s redirector log sample.',
+      "Not published. The VM's iSCSI initiator (Frodo / QEMU) NOPs the Stargate its session is logged in to; the redirector only answers logins. A silent Stargate (power loss, hang, isolation) is noticed by these NOPs alone, so detection takes a few NOP intervals: seconds, not one.",
     ),
     missesToUnhealthy: c(
       2,
       'assumption',
       ['ntnx-blog-cvm-failure', 'ntnx-bible-5b'],
-      'Hypervisor-agnostic Autopath rule (2014): "fails to respond two or more times in a 30-second period". The AHV redirector\'s miss count is not published; lab L3.',
-    ),
-    missWindowS: c(
-      30,
-      'assumption',
-      ['ntnx-blog-cvm-failure', 'ntnx-bible-5b'],
-      'Window for the two-miss rule (hypervisor-agnostic Autopath rule, 2014); AHV value not published.',
+      'Unanswered initiator NOPs before the session is dropped and logged in again through the redirector (Autopath rule: "fails to respond two or more times"). A reset connection (Stargate stopped, or its process exited on a live CVM) is noticed at once, without waiting for NOPs.',
     ),
     failbackStableS: c(
       300,
       'unverified',
       ['odgers-ahv-io-failover-2015', 'ntnx-bible-5b'],
-      'AHV: IO returns to the local Stargate "once the local stargate is back online (and stable for 300 seconds)" (Josh Odgers, 2015). Failback is much slower than the failover. The Genesis --def_stargate_stable_interval (30 s) is a different path: when Genesis treats a Stargate as stable for HA, not the redirector\'s failback.',
+      'AHV: IO returns to the local Stargate "once the local stargate is back online (and stable for 300 seconds)" (Josh Odgers, 2015). Failback is much slower than the failover, and a Stargate restart starts the stable period again. The Genesis --def_stargate_stable_interval (30 s) is a different path: when Genesis treats a Stargate as stable for HA, not the failback.',
     ),
-    redirectStallS: c(
-      3,
+    failbackStepS: c(
+      10,
       'assumption',
       ['ntnx-bible-5b'],
-      'No published AHV figure. Extra IO pause while the initiator (Frodo/QEMU) re-logs in to the remote Stargate after the redirect decision; lab L3.',
+      'Not published. Failback is driven from the Stargate side and returns sessions one vDisk at a time, a check apart, each with a brief IO pause, rather than all at once.',
+    ),
+    redirectStallS: c(
+      1,
+      'assumption',
+      ['ntnx-bible-5b', 'ntnx-kb-io-freeze-cvm-down'],
+      'No published AHV figure. IO pause while the initiator logs in to the Stargate the redirector chose, once that Stargate may serve the vDisk: about a second (the KB puts an orderly Stargate stop at "~1 second or potentially less").',
+    ),
+    initiatorSessionTimeoutS: c(
+      50,
+      'assumption',
+      ['ntnx-bible-5b', 'ntnx-ahv-admin-11.2'],
+      'Not published. When no Stargate has served a VM\'s session this long (every Stargate down, or no redirector to log in through), the AHV initiator gives up, the VM\'s process exits ("VM shut down unexpectedly") and AHV powers it back on once a Stargate can serve. Longer than any single-CVM failover, so those only stall.',
     ),
   },
 
@@ -142,6 +148,12 @@ export const current: Profile = {
       ['ntnx-cmdref-aos-7.6'],
       'No published figure for CVM power-on to Stargate serving. Upper bound: Genesis --svm_reboot_timeout = 420 s, "Maximum time expected for SVM to reboot/shutdown" (Command Ref 7.6). Hades maintenance exit uses the shorter hades.servicesRestartS.',
     ),
+    stargateSelfRestartS: c(
+      5,
+      'assumption',
+      ['ntnx-bible-5b'],
+      'Not published. Stargate runs under a self-monitor that restarts its process after it exits (crash, watchdog), without Genesis: seconds, far less than a CVM boot.',
+    ),
     cassandraRejoinStableS: c(
       1800,
       'inferred',
@@ -180,6 +192,12 @@ export const current: Profile = {
       'verified',
       ['ntnx-cmdref-aos-7.6'],
       '--external_storage_volume_monitor_interval_secs: "Interval in seconds to monitor the health of the external storage volume mounts."',
+    ),
+    mountFailAfterS: c(
+      10,
+      'assumption',
+      ['everpure-linux-dm-multipath', 'everpure-nutanix-nci-cfg'],
+      'Not published for the service volumes. Linux multipath queues IO while paths are gone only up to its fast-IO-fail time (fast_io_fail_tmo 10 in the Linux multipath recommendations); after that the IO fails, the service-volume mounts go bad and stay bad until Hades remounts them, even if the array is back. A shorter loss of every path is a plain stall; a longer one puts the node in maintenance at the next volume check.',
     ),
     externalStorageErrorThresholdS: c(
       5,
@@ -437,7 +455,7 @@ export const current: Profile = {
       'crash-and-restart',
       'assumption',
       ['ntnx-ncp-everpure-deploy-7.6', 'ntnx-bible-5b'],
-      "The deployment guide says IO retries until the array responds, which bounds nothing on the guest side. Once a VM's IO has been stalled past guest.ioStallCrashS it crashes (QEMU exits), and AHV HA restarts it after the array returns. Topology option whole-array-loss-vm-behavior: stall keeps the retry-in-place picture.",
+      'The deployment guide says IO retries until the array responds, which bounds nothing on the guest side. A whole-array loss puts every node in Hades maintenance, so no Stargate serves; once that has lasted redirector.initiatorSessionTimeoutS the VMs crash (QEMU exits), and AHV powers them back on after the array and the cluster services return. Topology option whole-array-loss-vm-behavior: stall keeps the retry-in-place picture.',
     ),
   },
 
@@ -495,12 +513,6 @@ export const current: Profile = {
       'verified',
       ['ntnx-ahv-admin-11.2'],
       'Recommended Linux guest SCSI device timeout.',
-    ),
-    ioStallCrashS: c(
-      180,
-      'assumption',
-      ['ntnx-ahv-admin-11.2'],
-      'No published figure. How long a VM survives a whole-array IO stall before it crashes (QEMU exits, "VM shut down unexpectedly"): minutes, well past the guest disk timeout.',
     ),
   },
 };

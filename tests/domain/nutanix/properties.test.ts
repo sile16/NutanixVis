@@ -18,7 +18,15 @@ interface Step {
 }
 
 const HOST_KINDS = ['power-off', 'power-on', 'host.isolate', 'host.unisolate', 'reboot'];
-const CVM_KINDS = ['fail', 'recover', 'cvm.stop-stargate', 'cvm.start-stargate'];
+const CVM_KINDS = [
+  'fail',
+  'recover',
+  'cvm.stop-stargate',
+  'cvm.start-stargate',
+  'cvm.crash-stargate',
+  'cvm.hang-stargate',
+  'cvm.resume-stargate',
+];
 
 function stepArb(hosts: readonly string[], cvms: readonly string[]): fc.Arbitrary<Step> {
   return fc.oneof(

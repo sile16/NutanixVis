@@ -49,10 +49,12 @@ export interface VmEnv {
   /** The serving CVM has lost all array paths (T1); always false where not applicable. */
   storageLost(vdisk: string): boolean;
   /**
-   * T1 whole-array loss with `whole-array-loss-vm-behavior: crash-and-restart`: no CVM reaches
-   * the array, so a VM stalled past `guest.ioStallCrashS` crashes. Always false elsewhere.
+   * The AHV initiator's session timeout: a VM whose session has had no serving Stargate this long
+   * crashes. Null: VMs keep retrying in place (`whole-array-loss-vm-behavior: stall`).
    */
-  crashOnArrayLoss(): boolean;
+  initiatorTimeoutS(): number | null;
+  /** Seconds since a Stargate last served the host's session for `vdisk` (0 while served). */
+  unservedS(host: string, vdisk: string): number;
   hostOfNic(nic: string): string | undefined;
 }
 
@@ -313,33 +315,34 @@ export class Vm implements Device<Profile> {
       this.selfTerminate(ctx);
       return;
     }
-    if (this.checkArrayLossCrash(ctx)) return;
+    if (this.checkInitiatorTimeout(ctx, host)) return;
     this.checkForceShutdown(ctx);
   }
 
   /**
-   * Whole-array loss (`whole-array-loss-vm-behavior: crash-and-restart`, `assumption`): once the
-   * oldest outstanding IO has waited `guest.ioStallCrashS`, the guest / QEMU gives up and the VM
-   * goes down ("VM shut down unexpectedly"). AHV HA restarts it once the array, and with it the
-   * cluster services, are back.
+   * The AHV initiator's session timeout (`redirector.initiatorSessionTimeoutS`, `assumption`):
+   * once a vDisk session has had no Stargate serving it that long (every Stargate down, as in a
+   * whole-array loss; no redirector to log in through), the initiator gives up, the VM's process
+   * exits ("VM shut down unexpectedly") and AHV powers it back on at the next HA cycle once a
+   * host whose CVM can serve is available. A host AHV HA has lost restarts on its own timeline.
    */
-  private checkArrayLossCrash(ctx: Ctx): boolean {
-    if (this.lifecycle !== 'running' || this.pending.size === 0) return false;
-    if (!this.env.crashOnArrayLoss()) return false;
-    const limit = ctx.profile.guest.ioStallCrashS;
-    let oldest = ctx.now;
-    for (const p of this.pending.values()) oldest = Math.min(oldest, p.req.issuedAt);
-    const stalled = ctx.now - oldest;
-    if (stalled < limit.value) return false;
-    this.kill('crashed', 'ha', ctx.now);
+  private checkInitiatorTimeout(ctx: Ctx, host: string): boolean {
+    if (this.lifecycle !== 'running') return false;
+    const limit = this.env.initiatorTimeoutS();
+    if (limit === null) return false;
+    let worst = 0;
+    for (const v of this.vdisks) worst = Math.max(worst, this.env.unservedS(host, v));
+    if (worst < limit) return false;
+    const T = ctx.profile.redirector.initiatorSessionTimeoutS;
+    this.kill('crashed', this.env.hostCutOff(host) ? 'ha' : 'next-cycle', ctx.now);
     ctx.emit({
       severity: 'error',
       deviceId: this.id,
       code: 'vm.crashed',
-      text: `${this.label} shut down unexpectedly: QEMU exited after its IO stalled ${stalled} s with the whole array unreachable; AHV HA restarts it once the array and cluster services are back`,
+      text: `${this.label} shut down unexpectedly: no Stargate served its disk for ${worst} s, so the AHV initiator gave up and its process exited; AHV powers it back on once a Stargate can serve`,
       causeIds: [],
-      cite: limit.cite,
-      confidence: limit.confidence,
+      cite: T.cite,
+      confidence: T.confidence,
     });
     return true;
   }

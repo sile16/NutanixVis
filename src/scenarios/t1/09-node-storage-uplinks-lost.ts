@@ -24,6 +24,7 @@ import {
 } from '../helpers';
 import { cvmId, nodeId, T1 } from '../ids';
 import {
+  failbackDoneS,
   HADES_DETECT,
   HADES_EARLIEST,
   HADES_EXIT,
@@ -31,7 +32,7 @@ import {
   KATO,
   P,
   REDIRECT_DETECT,
-  REDIRECT_PAUSE,
+  RESET_PAUSE,
   VDISK_HANDOVER,
 } from '../timers';
 
@@ -60,22 +61,15 @@ const pathsLost = atCtx(
  * stalls; keep-alive declares them lost after KATO; Hades sees the mounts fail at its next check
  * and puts node 1 in maintenance mode once the error has lasted the 5 s threshold (HADES_DETECT,
  * never before HADES_EARLIEST); its Stargate stops and the redirector moves the VMs' sessions to
- * a CVM that still reaches the array within REDIRECT_DETECT; the remote Stargate takes the vDisks
+ * a CVM that still reaches the array at once (the stop resets their connections); the remote Stargate takes the vDisks
  * over about at once (VDISK_HANDOVER) and IO resumes, well inside the guest's 60 s disk timeout.
  * After the uplinks return the controllers reconnect, the next volume check takes the node out of
  * maintenance (HADES_EXIT, seconds, not the 300 s re-map), the services restart, and only after
- * the redirector's 300 s stable window do the sessions fail back.
+ * the 300 s stable window do the sessions fail back, one vDisk at a time.
  */
 function hades(): ScenarioDef {
-  const END =
-    by(
-      HADES_RECOVER +
-        P.redirector.failbackStableS +
-        P.redirector.redirectStallS +
-        P.redirector.nopIntervalS,
-      RESTORE_AT,
-    ) + 5;
-  const IO_PAUSE = HADES_DETECT + REDIRECT_PAUSE + VDISK_HANDOVER;
+  const END = by(HADES_RECOVER + failbackDoneS(4) + P.redirector.nopIntervalS, RESTORE_AT) + 5;
+  const IO_PAUSE = HADES_DETECT + RESET_PAUSE + VDISK_HANDOVER;
   return defineScenario({
     id: 't1-09-node-storage-uplinks-lost',
     title: 'T1: a node loses both storage uplinks but keeps vs0 (Hades maintenance mode)',

@@ -15,18 +15,15 @@ import {
   vmsOfNode,
 } from '../helpers';
 import { cvmId, nodeId, T1 } from '../ids';
-import { P, REDIRECT_DETECT, REDIRECT_PAUSE } from '../timers';
+import { failbackDoneS, P, REDIRECT_DETECT, SILENT_PAUSE, SILENT_PAUSE_MIN } from '../timers';
 
 const CVM = cvmId(1);
 const RECOVER_AT = T0 + 90;
 /**
- * Failback needs the CVM to boot (`cluster.cvmBootS`), then its Stargate to answer NOPs for
- * `failbackStableS`, then the re-login stall (`redirectStallS`) before local IO flows again.
+ * Failback needs the CVM to boot (`cluster.cvmBootS`), then its Stargate to answer for
+ * `failbackStableS`, then one vDisk per `failbackStepS` with a re-login pause each.
  */
-const END = by(
-  P.cluster.cvmBootS + P.redirector.failbackStableS + P.redirector.redirectStallS,
-  RECOVER_AT,
-);
+const END = by(P.cluster.cvmBootS + failbackDoneS(4), RECOVER_AT);
 
 export default defineScenario({
   id: 't1-08-cvm-fails',
@@ -39,16 +36,26 @@ export default defineScenario({
   ],
   expect: [
     ...t1Steady(),
-    atCtx(by(REDIRECT_DETECT), 'redirector marks the local Stargate unhealthy', (_s, ctx) =>
-      eventSeen(ctx, 'redirector.unhealthy', { device: nodeId(1) }),
+    atCtx(
+      by(REDIRECT_DETECT),
+      "the initiators' NOPs to the silent local Stargate go unanswered",
+      (_s, ctx) => eventSeen(ctx, 'redirector.unhealthy', { device: nodeId(1) }),
     ),
-    at(by(REDIRECT_PAUSE), 'node 1 VMs run on a remote Stargate, still on node 1', (s) =>
+    atCtx(
+      by(REDIRECT_DETECT),
+      'the first login to a peer parks: CVM 1 still holds its vDisks until its ZK session expires',
+      (_s, ctx) => eventSeen(ctx, 'redirector.parked', { device: nodeId(1) }),
+    ),
+    at(T0 + SILENT_PAUSE_MIN - 1, 'node 1 VM IO is still stalled before the ZK expiry', (s) =>
+      vmsOfNode(s, 1).every((v) => !isRunning(v)),
+    ),
+    at(by(SILENT_PAUSE), 'node 1 VMs run on a remote Stargate, still on node 1', (s) =>
       vmsOfNode(s, 1).every(
         (v) => isRunning(v) && v.host === nodeId(1) && v.ownerCvm !== null && v.ownerCvm !== CVM,
       ),
     ),
-    alwaysFrom(T0, 'node 1 VM IO pause bounded by detection plus redirect stall', (s) =>
-      vmsOfNode(s, 1).every((v) => v.ioPendingS <= REDIRECT_PAUSE + SLACK),
+    alwaysFrom(T0, 'node 1 VM IO pause bounded by ZK expiry plus one NOP cycle', (s) =>
+      vmsOfNode(s, 1).every((v) => v.ioPendingS <= SILENT_PAUSE + SLACK),
     ),
     atCtx(
       END,
@@ -68,7 +75,7 @@ export default defineScenario({
     ...baseInvariants(),
   ],
   narrative:
-    "CVM 1 fails but node 1 keeps running its VMs. The host's iSCSI redirector misses its NOPs, marks the local Stargate unhealthy, and the VMs' IO logs in to a remote Stargate, which takes the vDisk lock and NVMe reservation. There is no HA event and no rebuild, because the array owns the data. Failback is much slower than the failover: the sessions return only once CVM 1 has been stable for 300 s.",
+    "CVM 1 fails but node 1 keeps running its VMs; their iSCSI initiators notice the silent Stargate only when their NOPs go unanswered, and log in to a remote Stargate through the host's redirector. That Stargate may not serve CVM 1's vDisks until CVM 1's Zookeeper session expires, so the first logins park and IO resumes at the next NOP cycle after it, with no HA event and no rebuild because the array owns the data. Failback is much slower than the failover: once CVM 1 has been stable for 300 s, the sessions return one vDisk at a time.",
   cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-5b', 'ntnx-bible-8c', 'ntnx-blog-cvm-failure'],
   status: 'active',
 });

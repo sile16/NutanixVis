@@ -42,4 +42,17 @@ describe('action applicability and MLAG pairing (UI bug-hunt findings)', () => {
     sim.tick(2);
     expect(kinds(sim, 'node-1.cvm')).toContain('cvm.start-stargate');
   });
+
+  it('Hang / resume / crash Stargate are offered only in the matching state', () => {
+    const { sim } = loadSimulation({ topologyId: 't2-hci-ahv' });
+    sim.tick(2);
+    expect(kinds(sim, 'node-1.cvm')).toContain('cvm.hang-stargate');
+    expect(kinds(sim, 'node-1.cvm')).toContain('cvm.crash-stargate');
+    expect(kinds(sim, 'node-1.cvm')).not.toContain('cvm.resume-stargate');
+    sim.applyAction({ kind: 'cvm.hang-stargate', target: 'node-1.cvm' });
+    sim.tick(1);
+    expect(kinds(sim, 'node-1.cvm')).toContain('cvm.resume-stargate');
+    expect(kinds(sim, 'node-1.cvm')).not.toContain('cvm.hang-stargate');
+    expect(kinds(sim, 'node-1.cvm')).not.toContain('cvm.start-stargate');
+  });
 });

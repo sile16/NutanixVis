@@ -40,7 +40,7 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | Key | Type | Meaning |
 |---|---|---|
 | `state` | `up` \| `down` | The CVM itself, powered on or not. |
-| `stargate` | `up` \| `down` \| `unhealthy` | The Stargate process. `unhealthy`: running but failing (for example, ZK or metadata unavailable). |
+| `stargate` | `up` \| `down` \| `unhealthy` \| `hung` | The Stargate process. `unhealthy`: running but failing (for example, ZK or metadata unavailable). `hung`: alive but answering neither IO nor NOPs (`cvm.hang-stargate`). |
 | `nvmePathsUp` | number \| null | T1: count of `live` paths. `null` outside T1. |
 | `nvmePathsTotal` | number \| null | T1: count of configured paths, live or not. |
 | `nvmePaths` | JSON Record<pathId, `live` \| `lost` \| `removed`> | T1: per-path state. `lost`: keep-alive expired, the target reset the connection, or an IO timeout reset the path; reconnecting every `reconnectDelayS`. `removed`: the controller was deleted after `controllerLossTimeoutS`. |
@@ -184,10 +184,14 @@ All of these are scalars.
 | `fa.ndu.start` / `fa.ndu.complete` | `fa` | |
 | `mgmt.task.failed` / `mgmt.task.succeeded` | the VM (or object) the task was for | An array-management task finished. |
 | `stargate.up` | cvm | Stargate became healthy, for example after the CVM booted. |
+| `stargate.crashed` | cvm | The Stargate process exited on a running CVM (`cvm.crash-stargate`, or a hung one resumed and its watchdog fired); its self-monitor restarts it after `cluster.stargateSelfRestartS`. |
+| `stargate.hung` | cvm | `cvm.hang-stargate`: the process stays alive but answers neither IO nor NOPs; its connections stay open. |
+| `stargate.zk-session-lost` | cvm | A CVM cut off from its peers for the ZK session timeout: its Stargate dropped out (its sessions are reset and move elsewhere) until the network returns. |
 | `stargate.vdisk.handover` / `stargate.vdisk.taken-over` | the CVM taking over | T1: a remote Stargate starts / completes taking over a vDisk whose owner CVM is in Hades maintenance (`vdiskHandoverS`, about immediate); its IO waits in between. |
-| `redirector.unhealthy` | host | The local (or current) Stargate missed its NOPs. |
-| `redirector.redirect` | host | iSCSI sessions moved to another Stargate. |
-| `redirector.failback` | host | Sessions returned to the local Stargate. |
+| `redirector.unhealthy` | host | A silent Stargate: the initiators' NOPs to it went unanswered `missesToUnhealthy` times. A reset connection (stop, crash) is noticed at once and raises no `unhealthy`. |
+| `redirector.redirect` | host | iSCSI sessions logged in (again) to another Stargate through the redirector. |
+| `redirector.parked` | host | A session logged in to a peer that may not serve the vDisk yet: its leadership is still the silent Stargate's until that Stargate's ZK session expires. The initiator tries again at its next NOP cycle. |
+| `redirector.failback` | host | One vDisk's session returned to the local Stargate (one per `failbackStepS`, after `failbackStableS`). |
 | `ha.host.disconnected` | host | The text names alert A1006. |
 | `ha.host.fenced` | host | |
 | `ha.leader.elected` | the new leader host | Acropolis leader election. |
@@ -195,7 +199,7 @@ All of these are scalars.
 | `ha.vm.restarted` | vm | HA restarted it, on the host in `vm.host`. |
 | `vm.io.guest-timeout` | vm | An IO stayed pending longer than the guest disk timeout. |
 | `vm.force-shutdown` | vm | The per-VM path-loss force-shutdown fired. |
-| `vm.crashed` | vm | The VM went down: with its host, or (T1, `whole-array-loss-vm-behavior: crash-and-restart`) its IO stalled past `guest.ioStallCrashS` with the whole array unreachable ("VM shut down unexpectedly"). |
+| `vm.crashed` | vm | The VM went down: with its host, or (`whole-array-loss-vm-behavior: crash-and-restart`) no Stargate served its disk for `redirector.initiatorSessionTimeoutS`, so the initiator gave up ("VM shut down unexpectedly"; for example a whole-array loss). |
 | `cvm.network.blackout` | cvm | `cvm.network-flap`: its inter-CVM interface stops answering for a while. |
 | `dnd.node.degraded` / `dnd.node.cleared` | cvm | Degraded Node Detection marked the node Degraded, or cleared it (auto-resolve or `cvm.mark-fixed`). |
 | `cassandra.node.detached` | cvm | Auto ring-repair detached the node. |
@@ -203,7 +207,6 @@ All of these are scalars.
 | `disk.offline` | disk | |
 | `cluster.services.down` / `cluster.services.up` | — | Quorum or metadata missing for the ZK session timeout (text names A3032 / A200000); back up. |
 | `hades.maintenance.enter` | cvm | T1: the CVM lost its service volumes; Hades put the node in maintenance mode (alerts A3032, A1030). |
-| `hades.maintenance.refused` | cvm | T1: the node should enter maintenance, but the nodes already out use up the cluster's N−2 / N−3 tolerance; Hades keeps retrying. |
 | `hades.maintenance.exit` | cvm | T1: a volume check found the service-volume mounts healthy again; the node leaves maintenance and its services restart (then `stargate.up`). |
 | `zk.seat.migrated` | the CVM receiving the seat | T1: a lost active node's ZK/Cassandra service volumes were mounted here after `serviceVolumeMigrationDelayS`. |
 | `zk.not-active` | the first seat that is not live | A ZK seat is down or off the quorum side (alert A111009). Raised only while a quorum side exists. |

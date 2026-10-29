@@ -195,7 +195,7 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
     }
   });
 
-  it('with no fabric anywhere there is no majority: no fence, no restart, VMs stall then resume', () => {
+  it('with no fabric anywhere there is no majority: no fence; VMs crash at the initiator timeout and return after', () => {
     const h = harness('t1-ahv-flasharray');
     h.run(10);
     h.act('fail', 'sw-a');
@@ -207,7 +207,8 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
     expect(h.firstAt('ha.host.fenced')).toBeNull();
     expect(h.firstAt('ha.vm.restarted')).toBeNull();
     expect(h.firstAt('ha.vm.self-terminated')).toBeNull();
-    for (const v of vmIds(h)) expect(vmState(h, v)).toBe('io-stalled');
+    // Every node in maintenance: no Stargate serves, so the initiators give up (SPEC §6.2).
+    for (const v of vmIds(h)) expect(vmState(h, v)).toBe('crashed');
     // Every CVM lost its service volumes: Hades put every node in maintenance mode.
     const entered = h.firstAt('hades.maintenance.enter', 'node-1.cvm');
     expect(entered).not.toBeNull();
@@ -223,10 +224,10 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
     expect(exit ?? 0).toBeLessThanOrEqual(back + HADES.volumeMonitorIntervalS.value);
     expect(h.firstAt('stargate.up', 'node-1.cvm', back)).toBe((exit ?? 0) + RESTART);
     expect(h.d('clusterServices')).toBe('up');
-    for (const v of vmIds(h)) {
-      expect(vmState(h, v)).toBe('running');
-      expect(vmHost(h, v)).toBe(v.split('.')[0]);
-    }
+    // An Acropolis leader acts again and powers the crashed VMs back on.
+    h.run(2 * HA.heartbeatIntervalS.value + 5);
+    for (const v of vmIds(h)) expect(vmState(h, v)).toBe('running');
+    expect(h.firstAt('ha.vm.restarted', undefined, back)).not.toBeNull();
   });
 
   it('Hades: a CVM without its service volumes enters maintenance; its VMs move to a remote Stargate', () => {
@@ -234,15 +235,20 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
     h.run(10);
     const b = h.backends.get('node-1.cvm');
     if (b) b.state = 'unavailable';
-    // The volume check sees the mounts fail, then the error must last the threshold (SPEC §6.2
-    // "Hades service volumes").
-    const limit = HADES.volumeMonitorIntervalS.value + HADES.externalStorageErrorThresholdS.value;
+    // The mounts fail once every path has been gone the fast-IO-fail time; the volume check sees
+    // it, then the error must last the threshold (SPEC §6.2 "Hades service volumes").
+    const limit =
+      HADES.mountFailAfterS.value +
+      HADES.volumeMonitorIntervalS.value +
+      HADES.externalStorageErrorThresholdS.value;
     const entered = h.until(
       () => h.firstAt('hades.maintenance.enter', 'node-1.cvm') !== null,
       limit,
     );
     expect(entered).not.toBeNull();
-    expect(entered ?? 0).toBeGreaterThanOrEqual(T + HADES.externalStorageErrorThresholdS.value);
+    expect(entered ?? 0).toBeGreaterThanOrEqual(
+      T + HADES.mountFailAfterS.value + HADES.externalStorageErrorThresholdS.value,
+    );
     expect(h.f('node-1.cvm', 'hades')).toBe('maintenance');
     expect(h.f('node-1.cvm', 'stargate')).toBe('down');
     // Redirected within seconds; the remote Stargate takes the vDisk over at once.

@@ -117,8 +117,8 @@ export const t1Options = {
   // no more slots than a dead path has IO queues stalls completely on a silent path loss, even
   // under the queue-depth selector (SPEC §6.4c item 3).
   guestQueueDepth: option('guest-queue-depth', 'Guest queue depth per vDisk', [32, 8, 4, 1], 32),
-  // Whole-array loss (SPEC §6.4 "T1 full array loss"): crash-and-restart lets VMs whose IO has
-  // stalled past guest.ioStallCrashS crash and AHV HA restart them once the array is back
+  // Whole-array loss (SPEC §6.4 "T1 full array loss"): crash-and-restart lets VMs no Stargate
+  // has served for redirector.initiatorSessionTimeoutS crash, and AHV powers them back on once the array is back
   // (profile default, `assumption`); stall keeps IO retrying in place (DEPLOY-GUIDE wording).
   wholeArrayLossVmBehavior: option(
     'whole-array-loss-vm-behavior',

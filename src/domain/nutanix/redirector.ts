@@ -1,14 +1,25 @@
 /**
- * AHV iSCSI redirector (Bible 5b; AHV Admin Guide 11.2 "Storage Overview"). QEMU's iSCSI portal
- * is the redirector on the host; each vDisk session is redirected to a healthy Stargate,
- * preferring the local one.
+ * AHV iSCSI redirector and the VM's iSCSI initiator (Bible 5b; AHV Admin Guide 11.2 "Storage
+ * Overview"; SPEC §6.2 "iSCSI redirector"). The VM's initiator logs in to the redirector on its
+ * host, which only answers logins: it sends each vDisk session to a Stargate that answers, the
+ * preferred (local) one first. Compute-only hosts have no local Stargate: their preferred one is
+ * assigned round-robin (`assumption`, SPEC §14 #5).
  *
- * Health: the redirector NOPs the Stargates it uses every `redirector.nopIntervalS`. A Stargate
- * that misses `missesToUnhealthy` NOPs within `missWindowS` is unhealthy and its sessions move to
- * a healthy remote Stargate after a `redirectStallS` re-login stall. Sessions fail back once the
- * preferred Stargate has answered continuously for `failbackStableS` (Nutanix blog "controller
- * failure"; Bible 5b). Compute-only hosts have no local Stargate: their preferred Stargate is
- * assigned round-robin (`assumption`), with the same timers (SPEC §14 #5).
+ * - **Portal probes.** The redirector checks a portal answers before sending a login to it. The
+ *   model probes every candidate each second (`PROBE_S`), so a login sees current reachability.
+ * - **Detection is the initiator's.** A reset connection (Stargate stopped, its process exited on
+ *   a live CVM, the CVM rebooting) is noticed at once and the session logs in again. A silent
+ *   Stargate (power loss, hang) is noticed only by the initiator's NOPs: `missesToUnhealthy`
+ *   unanswered NOPs `nopIntervalS` apart.
+ * - **vDisk leadership.** A peer Stargate may serve a vDisk only once its leader (the owner CVM)
+ *   has released it (`Registry.leadershipFree`): at once after an orderly stop or a process exit,
+ *   otherwise when that Stargate's Zookeeper session expires. Until then the new session parks:
+ *   logged in but not served, and the initiator tries again at its next NOP cycle.
+ * - **Failback** is driven from the Stargate side: once the preferred Stargate has answered for
+ *   `failbackStableS`, sessions return to it one vDisk per `failbackStepS`, each with a brief
+ *   pause. A restart starts the stable period again.
+ * - **Initiator timeout.** `unservedS` is how long a session has had no Stargate serving it; the
+ *   VM crashes past `initiatorSessionTimeoutS` (see `Vm`).
  */
 
 import { asEngineContext } from '../../engine/context';
@@ -18,33 +29,44 @@ import type { HostFacts } from './facts';
 import { type IoReqPayload, MSG, type PingPayload, PORT, portFor } from './messages';
 import type { Registry } from './registry';
 
-interface StargateHealth {
-  /** Times of missed NOPs inside the window. */
-  misses: number[];
-  /** First tick of the current run of answered NOPs; null after a miss. */
+/** Portal probe cadence (model plumbing: the redirector checks a portal before each login). */
+const PROBE_S = 1;
+
+interface PortalHealth {
+  /** First tick of the current run of answered probes; null after a miss. */
   upSince: number | null;
-  /** Tick the last NOP was sent (null: never probed). */
+  /** Last tick a probe was answered (null: never). */
+  lastAnswerAt: number | null;
   sentAt: number | null;
   answered: boolean;
-  /** `redirector.unhealthy` already reported for the current outage. */
-  reported: boolean;
 }
 
 interface Session {
   target: string | null;
-  /** IO may flow from this tick (re-login stall after a redirect / failback). */
+  /** IO may flow from this tick (re-login pause); Infinity while parked. */
   readyAt: number;
   /** Bumped on every (re-)login: outstanding IO is re-issued on the new session. */
   epoch: number;
+  loggedInAt: number;
+  /** Next initiator NOP check, and unanswered NOPs in a row. */
+  nopAt: number;
+  misses: number;
+  /** Logged in to a peer that may not serve the vDisk yet (leadership not released). */
+  parked: boolean;
+  /** Last tick a Stargate was serving this session. */
+  servedAt: number;
 }
 
 export class Redirector {
-  private readonly health = new Map<string, StargateHealth>();
+  private readonly health = new Map<string, PortalHealth>();
   private readonly sessions = new Map<string, Session>();
-  private lastNopAt = Number.NEGATIVE_INFINITY;
+  private lastProbeAt = Number.NEGATIVE_INFINITY;
   private probeAll = false;
+  private lastFailbackAt = Number.NEGATIVE_INFINITY;
   private epochs = 0;
   private readonly cvmOrder: readonly string[];
+  /** Outages already reported (`redirector.unhealthy` / `redirector.parked`), by Stargate. */
+  private readonly reported = new Map<string, string>();
 
   constructor(
     private readonly host: HostFacts,
@@ -57,14 +79,15 @@ export class Redirector {
   sessionsView(): Record<string, string> {
     const out: Record<string, string> = {};
     for (const [v, s] of [...this.sessions].sort(([a], [b]) => (a < b ? -1 : 1))) {
-      out[v] = s.target ?? 'none';
+      out[v] = s.target === null ? 'none' : s.parked ? `${s.target} (parked)` : s.target;
     }
     return out;
   }
 
+  /** Stargates this host's probes find not answering. */
   unhealthyView(): string[] {
     return [...this.health]
-      .filter(([, h]) => this.unhealthy(h))
+      .filter(([, h]) => h.sentAt !== null && h.upSince === null)
       .map(([c]) => c)
       .sort();
   }
@@ -76,6 +99,12 @@ export class Redirector {
     if (s.target === null) return { status: 'no-path' };
     if (this.reg.now < s.readyAt) return { status: 'held' };
     return { status: 'ready', cvm: s.target, session: s.epoch };
+  }
+
+  /** Seconds the session for `vdisk` has had no Stargate serving it. */
+  unservedS(vdisk: string, now: number): number {
+    const s = this.sessions.get(vdisk);
+    return s === undefined ? 0 : Math.max(0, now - s.servedAt);
   }
 
   sendIo(io: IoRequest, ctx: Ctx): string | null {
@@ -109,9 +138,8 @@ export class Redirector {
   // ── Hooks (called by the host device while it is alive) ─────────────────
 
   emit(ctx: Ctx): void {
-    const R = ctx.profile.redirector;
-    if (ctx.now - this.lastNopAt < R.nopIntervalS.value) return;
-    this.lastNopAt = ctx.now;
+    if (ctx.now - this.lastProbeAt < PROBE_S) return;
+    this.lastProbeAt = ctx.now;
     const probe = new Set<string>();
     if (this.host.cvm !== null) probe.add(this.host.cvm);
     for (const [vdisk, s] of this.sessions) {
@@ -152,82 +180,55 @@ export class Redirector {
     const now = ctx.now;
     for (const h of this.health.values()) {
       if (h.sentAt !== now) continue;
-      if (h.answered) h.upSince ??= now;
-      else {
-        h.misses.push(now);
-        h.upSince = null;
-      }
-    }
-    for (const h of this.health.values()) {
-      h.misses = h.misses.filter((t) => t > now - R.missWindowS.value);
-      if (!this.unhealthy(h)) h.reported = false;
+      if (h.answered) {
+        h.upSince ??= now;
+        h.lastAnswerAt = now;
+      } else h.upSince = null;
     }
 
     const redirected = new Map<string, number>();
-    const failedBack: string[] = [];
-    for (const [vdisk, s] of [...this.sessions].sort(([a], [b]) => (a < b ? -1 : 1))) {
-      const pref = this.reg.preferredCvm(this.host.id, vdisk);
-      if (s.target !== null) {
-        const h = this.healthOf(s.target);
-        // Move away while it is failing; a session logged in fresh after an outage stays on a
-        // Stargate that answers again, even with older misses still in the window.
-        if (this.unhealthy(h) && h.upSince === null) {
-          this.reportUnhealthy(s.target, h, ctx);
-          const next = this.pick(vdisk, s.target, now);
-          this.relogin(s, next, now + R.redirectStallS.value);
-          if (next !== null) redirected.set(next, (redirected.get(next) ?? 0) + 1);
-          continue;
-        }
-        if (pref !== null && s.target !== pref && this.stable(pref, now) && this.usable(pref)) {
-          this.relogin(s, pref, now + R.redirectStallS.value);
-          failedBack.push(vdisk);
-        }
+    for (const [vdisk, s] of this.sorted()) {
+      if (s.target !== null && !this.dropped(vdisk, s, ctx)) {
+        this.noteServed(s, now);
         continue;
       }
-      // No target (every Stargate was failing): a fresh login, so any Stargate that answers its
-      // NOPs again will do, the preferred one first. The failback hold only guards moving a
-      // working session (`inferred`).
-      const next = this.pickFresh(vdisk);
-      if (next !== null) {
-        this.relogin(s, next, now + R.redirectStallS.value);
-        if (next !== pref) redirected.set(next, (redirected.get(next) ?? 0) + 1);
+      // A parked session may log in to the same peer again; a failed target is avoided.
+      const from = s.target;
+      const avoid = from !== null && !s.parked ? from : null;
+      const next = this.pickLogin(vdisk, avoid);
+      this.login(vdisk, s, next, now, ctx, from);
+      if (next !== null && next !== this.reg.preferredCvm(this.host.id, vdisk)) {
+        redirected.set(next, (redirected.get(next) ?? 0) + 1);
       }
+      this.noteServed(s, now);
     }
-    // Local Stargate health is reported even without a session on it (inspector / explain).
-    if (this.host.cvm !== null) {
-      const h = this.healthOf(this.host.cvm);
-      if (this.unhealthy(h)) this.reportUnhealthy(this.host.cvm, h, ctx);
-    }
+    this.failback(ctx);
 
     for (const [to, n] of [...redirected].sort(([a], [b]) => (a < b ? -1 : 1))) {
       ctx.emit({
         severity: 'warn',
         deviceId: this.host.id,
         code: 'redirector.redirect',
-        text: `${this.host.label}: ${n} iSCSI session(s) redirected to ${to}`,
+        text: `${this.host.label}: ${n} iSCSI session(s) logged in to ${to} through the redirector`,
         causeIds: [],
         cite: R.missesToUnhealthy.cite,
         confidence: R.missesToUnhealthy.confidence,
       });
     }
-    if (failedBack.length > 0) {
-      ctx.emit({
-        severity: 'info',
-        deviceId: this.host.id,
-        code: 'redirector.failback',
-        text: `${this.host.label}: ${failedBack.length} iSCSI session(s) failed back after ${R.failbackStableS.value} s stable`,
-        causeIds: [],
-        cite: R.failbackStableS.cite,
-        confidence: R.failbackStableS.confidence,
-      });
+    // Forget reported outages once the Stargate serves again.
+    for (const cvm of [...this.reported.keys()]) {
+      if (this.reg.stargateOutage(cvm) === null) this.reported.delete(cvm);
     }
-
-    // Probe every Stargate while any session lacks a healthy target or its target is missing
-    // NOPs, so a redirect can pick a Stargate that is known to answer.
+    // Probe every portal while a session needs a new target, so a login finds one that answers.
     this.probeAll = [...this.sessions.values()].some(
-      (s) => s.target === null || (this.health.get(s.target)?.misses.length ?? 0) > 0,
+      (s) =>
+        s.target === null ||
+        s.parked ||
+        s.misses > 0 ||
+        this.healthOf(s.target).upSince === null ||
+        this.reg.stargateOutage(s.target) !== null,
     );
-    if (this.host.cvm !== null && (this.health.get(this.host.cvm)?.misses.length ?? 0) > 0) {
+    if (this.host.cvm !== null && this.healthOf(this.host.cvm).upSince === null) {
       this.probeAll = true;
     }
   }
@@ -236,112 +237,212 @@ export class Redirector {
   reset(): void {
     this.health.clear();
     this.sessions.clear();
-    this.lastNopAt = Number.NEGATIVE_INFINITY;
+    this.reported.clear();
+    this.lastProbeAt = Number.NEGATIVE_INFINITY;
+    this.lastFailbackAt = Number.NEGATIVE_INFINITY;
     this.probeAll = false;
   }
 
   // ── Internals ───────────────────────────────────────────────────────────
 
+  private sorted(): [string, Session][] {
+    return [...this.sessions].sort(([a], [b]) => (a < b ? -1 : 1));
+  }
+
   private session(vdisk: string): Session {
     let s = this.sessions.get(vdisk);
     if (!s) {
+      const now = this.reg.now;
       const pref = this.reg.preferredCvm(this.host.id, vdisk);
-      const ok =
-        pref !== null && !this.unhealthy(this.healthOf(pref)) && this.reg.isStargateUp(pref);
+      const target = pref !== null && this.usable(pref) ? pref : this.pickLogin(vdisk, null);
       s = {
-        target: ok ? pref : this.pick(vdisk, null, this.reg.now),
+        target,
         readyAt: 0,
         epoch: ++this.epochs,
+        loggedInAt: now,
+        nopAt: now + this.reg.profile.redirector.nopIntervalS.value,
+        misses: 0,
+        parked: false,
+        servedAt: now,
       };
       this.sessions.set(vdisk, s);
     }
     return s;
   }
 
-  private relogin(s: Session, target: string | null, readyAt: number): void {
-    s.target = target;
-    s.readyAt = readyAt;
-    s.epoch = ++this.epochs;
+  /**
+   * The session must log in again: its connection was reset, or its initiator's NOPs went
+   * unanswered `missesToUnhealthy` times (a parked session's NOPs are never answered).
+   */
+  private dropped(vdisk: string, s: Session, ctx: Ctx): boolean {
+    const R = ctx.profile.redirector;
+    const target = s.target;
+    if (target === null) return true;
+    const o = this.reg.stargateOutage(target);
+    if (o !== null && o.resetAt !== null && o.resetAt >= s.loggedInAt) {
+      this.report(target, 'reset', ctx, `connection reset by ${target}; logging in again`);
+      return true;
+    }
+    if (ctx.now < s.nopAt) return false;
+    s.nopAt = ctx.now + R.nopIntervalS.value;
+    const h = this.healthOf(target);
+    const answered =
+      !s.parked && h.lastAnswerAt !== null && h.lastAnswerAt > ctx.now - R.nopIntervalS.value;
+    s.misses = answered ? 0 : s.misses + 1;
+    if (s.misses < R.missesToUnhealthy.value) return false;
+    if (!s.parked) {
+      this.report(
+        target,
+        'unhealthy',
+        ctx,
+        `the initiator's NOPs to Stargate on ${target} went unanswered ${s.misses} times, ${R.nopIntervalS.value} s apart; logging in again (${vdisk})`,
+      );
+    }
+    return true;
   }
 
-  private healthOf(cvm: string): StargateHealth {
+  /** Log the session in to `next`; it parks if `next` may not serve the vDisk yet. */
+  private login(
+    vdisk: string,
+    s: Session,
+    next: string | null,
+    now: number,
+    ctx: Ctx,
+    from: string | null,
+  ): void {
+    const R = ctx.profile.redirector;
+    s.target = next;
+    s.epoch = ++this.epochs;
+    s.loggedInAt = now;
+    s.nopAt = now + R.nopIntervalS.value;
+    s.misses = 0;
+    if (next === null) {
+      s.parked = false;
+      s.readyAt = now;
+      return;
+    }
+    s.parked = !this.reg.leadershipFree(vdisk, next, now);
+    s.readyAt = s.parked ? Number.POSITIVE_INFINITY : now + R.redirectStallS.value;
+    const owner = this.reg.owner.get(vdisk) ?? from;
+    if (s.parked && owner !== undefined && owner !== null) {
+      this.report(
+        owner,
+        'parked',
+        ctx,
+        `${next} may not serve ${owner}'s vDisks until that Stargate's Zookeeper session expires; logged-in sessions wait and the initiator tries again at its next NOP cycle`,
+        ctx.profile.hci.stargateDownDetectS,
+      );
+    }
+  }
+
+  /** A Stargate serves the session this tick (for the initiator timeout). */
+  private noteServed(s: Session, now: number): void {
+    if (s.target === null || s.parked || now < s.readyAt) return;
+    if (!this.reg.isStargateUp(s.target)) return;
+    if (this.healthOf(s.target).upSince === null) return;
+    s.servedAt = now;
+  }
+
+  /** Stargate-driven failback: one vDisk per `failbackStepS` once the preferred one is stable. */
+  private failback(ctx: Ctx): void {
+    const R = ctx.profile.redirector;
+    if (ctx.now - this.lastFailbackAt < R.failbackStepS.value) return;
+    for (const [vdisk, s] of this.sorted()) {
+      const pref = this.reg.preferredCvm(this.host.id, vdisk);
+      if (pref === null || s.target === null || s.target === pref || s.parked) continue;
+      if (!this.stable(pref, ctx.now) || !this.usable(pref)) continue;
+      // The serving Stargate hands the vDisk back (it releases it first): no park.
+      s.target = pref;
+      s.epoch = ++this.epochs;
+      s.loggedInAt = ctx.now;
+      s.nopAt = ctx.now + R.nopIntervalS.value;
+      s.misses = 0;
+      s.readyAt = ctx.now + R.redirectStallS.value;
+      this.lastFailbackAt = ctx.now;
+      ctx.emit({
+        severity: 'info',
+        deviceId: this.host.id,
+        code: 'redirector.failback',
+        text: `${this.host.label}: ${vdisk} failed back to ${pref} after it was stable ${R.failbackStableS.value} s (one vDisk per ${R.failbackStepS.value} s)`,
+        causeIds: [],
+        cite: R.failbackStableS.cite,
+        confidence: R.failbackStableS.confidence,
+      });
+      return;
+    }
+  }
+
+  private report(
+    cvm: string,
+    kind: 'reset' | 'unhealthy' | 'parked',
+    ctx: Ctx,
+    text: string,
+    cited = ctx.profile.redirector.missesToUnhealthy,
+  ): void {
+    const key = `${kind}`;
+    const seen = this.reported.get(cvm) ?? '';
+    if (seen.split(',').includes(key)) return;
+    this.reported.set(cvm, seen === '' ? key : `${seen},${key}`);
+    if (kind === 'reset') return;
+    ctx.emit({
+      severity: 'warn',
+      deviceId: this.host.id,
+      code: kind === 'parked' ? 'redirector.parked' : 'redirector.unhealthy',
+      text: `${this.host.label}: ${text}`,
+      causeIds: [],
+      cite: cited.cite,
+      confidence: cited.confidence,
+    });
+  }
+
+  private healthOf(cvm: string): PortalHealth {
     let h = this.health.get(cvm);
     if (!h) {
-      // Never probed: assume healthy until NOPs say otherwise.
-      h = { misses: [], upSince: 0, sentAt: null, answered: false, reported: false };
+      // Never probed: assume answering until probes say otherwise.
+      h = { upSince: 0, lastAnswerAt: 0, sentAt: null, answered: false };
       this.health.set(cvm, h);
     }
     return h;
   }
 
-  private unhealthy(h: StargateHealth): boolean {
-    return h.misses.length >= this.reg.profile.redirector.missesToUnhealthy.value;
-  }
-
-  private healthy(cvm: string): boolean {
-    const h = this.healthOf(cvm);
-    return h.upSince !== null && !this.unhealthy(h);
-  }
-
   /**
-   * A login target: answering our NOPs, and listed as a live Stargate in Zeus (not down, not on
+   * A login target: its portal answers probes and it is a live Stargate in Zeus (not down, not on
    * a fenced host). Model shortcut: the Zeus view is read from the registry.
    */
   private usable(cvm: string): boolean {
-    return this.healthy(cvm) && this.reg.isStargateUp(cvm) && this.endpoints(cvm) !== null;
+    return (
+      this.healthOf(cvm).upSince !== null &&
+      this.reg.isStargateUp(cvm) &&
+      this.endpoints(cvm) !== null
+    );
   }
 
   private stable(cvm: string, now: number): boolean {
     const h = this.healthOf(cvm);
     const R = this.reg.profile.redirector;
-    return this.healthy(cvm) && h.upSince !== null && now - h.upSince >= R.failbackStableS.value;
+    return h.upSince !== null && now - h.upSince >= R.failbackStableS.value;
   }
 
   /**
-   * Next Stargate for a session: the preferred one if it is stable, else the first healthy CVM
-   * after the preferred one in ring order (deterministic spread).
+   * Login target: the preferred Stargate if it is stable (a working session moves back only on
+   * failback), else the first usable CVM after the preferred one in ring order (deterministic
+   * spread). A session that lost its target may log in to the preferred one as soon as it answers.
    */
-  private pick(vdisk: string, avoid: string | null, now: number): string | null {
+  private pickLogin(vdisk: string, from: string | null): string | null {
+    const now = this.reg.now;
     const pref = this.reg.preferredCvm(this.host.id, vdisk);
-    if (pref !== null && pref !== avoid && this.stable(pref, now) && this.usable(pref)) return pref;
+    if (pref !== null && pref !== from && this.usable(pref)) {
+      if (from === null || this.stable(pref, now)) return pref;
+    }
     const start = pref === null ? 0 : Math.max(0, this.cvmOrder.indexOf(pref));
     const n = this.cvmOrder.length;
     for (let i = 1; i <= n; i++) {
       const c = this.cvmOrder[(start + i) % n];
-      if (c === undefined || c === avoid || c === pref) continue;
+      if (c === undefined || c === from || c === pref) continue;
       if (this.usable(c)) return c;
     }
+    if (pref !== null && pref !== from && this.usable(pref)) return pref;
     return null;
-  }
-
-  /** Login target for a session without one: a live Stargate that answered its latest NOP. */
-  private pickFresh(vdisk: string): string | null {
-    const answering = (c: string) =>
-      this.healthOf(c).upSince !== null && this.reg.isStargateUp(c) && this.endpoints(c) !== null;
-    const pref = this.reg.preferredCvm(this.host.id, vdisk);
-    if (pref !== null && answering(pref)) return pref;
-    const start = pref === null ? 0 : Math.max(0, this.cvmOrder.indexOf(pref));
-    const n = this.cvmOrder.length;
-    for (let i = 1; i <= n; i++) {
-      const c = this.cvmOrder[(start + i) % n];
-      if (c !== undefined && c !== pref && answering(c)) return c;
-    }
-    return null;
-  }
-
-  private reportUnhealthy(cvm: string, h: StargateHealth, ctx: Ctx): void {
-    if (h.reported) return;
-    h.reported = true;
-    const R = ctx.profile.redirector;
-    ctx.emit({
-      severity: 'warn',
-      deviceId: this.host.id,
-      code: 'redirector.unhealthy',
-      text: `${this.host.label}: Stargate on ${cvm} missed ${R.missesToUnhealthy.value} NOPs within ${R.missWindowS.value} s`,
-      causeIds: [],
-      cite: R.missesToUnhealthy.cite,
-      confidence: R.missesToUnhealthy.confidence,
-    });
   }
 
   /** Local Stargate over virbr0; remote ones from the host mgmt IP to the CVM's mgmt IP. */

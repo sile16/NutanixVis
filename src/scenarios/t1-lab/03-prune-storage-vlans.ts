@@ -32,7 +32,7 @@ function variant(withTimeout: boolean): ScenarioDef {
     // `path-loss-force-shutdown-s` is a proposed option (per-VM schema field, applied to all VMs).
     // The force-shutdown variant switches Hades maintenance off: with it on, the node enters
     // maintenance within HADES_DETECT and its VMs move before any per-VM timeout could fire, so
-    // the per-VM path-loss handling (DEPLOY-GUIDE) is only visible without it (lab L1/L2).
+    // the per-VM path-loss handling (DEPLOY-GUIDE) is only visible without it.
     ...(withTimeout
       ? {
           options: {
@@ -96,6 +96,8 @@ function variant(withTimeout: boolean): ScenarioDef {
                   (v) => v.ioPendingS <= HADES_DETECT + REDIRECT_PAUSE + VDISK_HANDOVER + SLACK,
                 ),
             ),
+            // The redirect lands well before the guest's 60 s disk timeout.
+            neverSeen(END, 'vm.io.guest-timeout'),
             neverSeen(END, 'vm.force-shutdown'),
             neverSeen(END, 'ha.vm.restarted'),
           ]),
@@ -103,7 +105,7 @@ function variant(withTimeout: boolean): ScenarioDef {
     ],
     narrative: withTimeout
       ? "Both storage VLANs are pruned from node 1's switch port, so its CVM loses every array path while management stays up. The VMs on node 1 have a force-shutdown timeout set, so once it expires they are shut down and restarted on a node that still reaches the array."
-      : "Both storage VLANs are pruned from node 1's switch port, so its CVM loses every array path while management stays up and the cluster still sees a healthy host. The CVM has also lost its Zookeeper and Cassandra service volumes, so Hades puts the node in maintenance mode and its Stargate stops. The redirector moves the VMs' sessions to a CVM that still reaches the array, and once that Stargate has taken the vDisks over they keep running in place with no HA event.",
+      : "Both storage VLANs are pruned from node 1's switch port, so its CVM loses every array path while management stays up and the cluster still sees a healthy host. The CVM has also lost its Zookeeper and Cassandra service volumes, so seconds after keep-alive declares the paths lost Hades puts the node in maintenance mode and its Stargate stops. The redirector moves the VMs' sessions to a CVM that still reaches the array, which takes the vDisks over at once, so they keep running in place with no guest timeout and no HA event.",
     cite: ['ntnx-ncp-everpure-deploy-7.6', 'nvme-base-spec', 'ntnx-cmdref-aos-7.6'],
     status: 'active',
   });

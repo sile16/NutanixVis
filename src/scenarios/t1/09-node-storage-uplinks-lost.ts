@@ -26,6 +26,7 @@ import { cvmId, nodeId, T1 } from '../ids';
 import {
   HADES_DETECT,
   HADES_EARLIEST,
+  HADES_EXIT,
   HADES_RECOVER,
   KATO,
   P,
@@ -55,23 +56,26 @@ const pathsLost = atCtx(
 
 /**
  * Default (`hades-maintenance-on-storage-error: on`, `inferred`). CVM 1's service volumes are
- * on the array too. The kernel initiator queues the volume check's IO until the NVMe IO timeout
- * abandons it, so Hades puts node 1 in maintenance mode HADES_DETECT after the loss (never before
- * HADES_EARLIEST); its Stargate stops and the redirector moves the VMs' sessions to a CVM that
- * still reaches the array within REDIRECT_DETECT. The remote Stargate must then take the vDisks
- * over (VDISK_HANDOVER, `assumption`) before IO flows again. Recovery waits for the next periodic
- * re-map after the uplinks return, then the services restart (HADES_RECOVER from maintenance),
- * then the sessions fail back after `failbackStableS` plus the re-login stall.
+ * on the array too. Sequence (fast → slow, SPEC §14 #12): the paths fail silently and the guest
+ * stalls; keep-alive declares them lost after KATO; Hades sees the mounts fail at its next check
+ * and puts node 1 in maintenance mode once the error has lasted the 5 s threshold (HADES_DETECT,
+ * never before HADES_EARLIEST); its Stargate stops and the redirector moves the VMs' sessions to
+ * a CVM that still reaches the array within REDIRECT_DETECT; the remote Stargate takes the vDisks
+ * over about at once (VDISK_HANDOVER) and IO resumes, well inside the guest's 60 s disk timeout.
+ * After the uplinks return the controllers reconnect, the next volume check takes the node out of
+ * maintenance (HADES_EXIT, seconds, not the 300 s re-map), the services restart, and only after
+ * the redirector's 300 s stable window do the sessions fail back.
  */
 function hades(): ScenarioDef {
   const END =
     by(
-      HADES_DETECT +
-        HADES_RECOVER +
+      HADES_RECOVER +
         P.redirector.failbackStableS +
         P.redirector.redirectStallS +
         P.redirector.nopIntervalS,
+      RESTORE_AT,
     ) + 5;
+  const IO_PAUSE = HADES_DETECT + REDIRECT_PAUSE + VDISK_HANDOVER;
   return defineScenario({
     id: 't1-09-node-storage-uplinks-lost',
     title: 'T1: a node loses both storage uplinks but keeps vs0 (Hades maintenance mode)',
@@ -88,7 +92,7 @@ function hades(): ScenarioDef {
       pathsLost,
       atCtx(
         by(HADES_DETECT),
-        'Hades puts node 1 in maintenance mode, only after the check IO is abandoned',
+        'Hades puts node 1 in maintenance mode: path-loss detection plus the 5 s threshold',
         (_s, ctx) => {
           const t = firstEventAt(ctx, 'hades.maintenance.enter', { device: CVM });
           return t !== null && t >= T0 + HADES_EARLIEST;
@@ -96,34 +100,20 @@ function hades(): ScenarioDef {
       ),
       atCtx(
         by(HADES_DETECT + REDIRECT_DETECT),
-        'the redirect follows at once; the remote Stargate starts the vDisk handover',
+        'the redirect follows within seconds of maintenance',
         (_s, ctx) => {
           const enter = firstEventAt(ctx, 'hades.maintenance.enter', { device: CVM });
           const redirect = firstEventAt(ctx, 'redirector.redirect', { device: nodeId(1) });
-          return (
-            enter !== null &&
-            redirect !== null &&
-            redirect - enter <= REDIRECT_DETECT + SLACK &&
-            eventSeen(ctx, 'stargate.vdisk.handover')
-          );
+          return enter !== null && redirect !== null && redirect - enter <= REDIRECT_DETECT + SLACK;
         },
       ),
-      at(
-        by(HADES_DETECT + REDIRECT_PAUSE),
-        'redirected, but node 1 VMs still wait for the handover',
-        (s) => vmsOfNode(s, 1).every((v) => isStalled(v) && v.ownerCvm === CVM),
-      ),
-      at(
-        by(HADES_DETECT + REDIRECT_PAUSE + VDISK_HANDOVER),
-        'after the handover node 1 VMs run on a remote Stargate',
-        (s) =>
-          vmsOfNode(s, 1).every(
-            (v) =>
-              isRunning(v) && v.host === nodeId(1) && v.ownerCvm !== null && v.ownerCvm !== CVM,
-          ),
+      at(by(IO_PAUSE), 'node 1 VMs run on a remote Stargate: IO resumed at once', (s) =>
+        vmsOfNode(s, 1).every(
+          (v) => isRunning(v) && v.host === nodeId(1) && v.ownerCvm !== null && v.ownerCvm !== CVM,
+        ),
       ),
       atCtx(
-        by(HADES_DETECT + REDIRECT_PAUSE + VDISK_HANDOVER),
+        by(IO_PAUSE),
         'order: paths lost, maintenance, redirect, handover, IO served remotely',
         (_s, ctx) =>
           eventsInOrder(ctx, [
@@ -134,25 +124,37 @@ function hades(): ScenarioDef {
             { code: 'stargate.vdisk.taken-over' },
           ]),
       ),
-      alwaysFrom(T0, 'node 1 VM IO pause bounded by Hades, the redirect and the handover', (s) =>
-        vmsOfNode(s, 1).every(
-          (v) => v.ioPendingS <= HADES_DETECT + REDIRECT_PAUSE + VDISK_HANDOVER + SLACK,
-        ),
+      alwaysFrom(T0, 'node 1 VM IO pause bounded by Hades detection and the redirect', (s) =>
+        vmsOfNode(s, 1).every((v) => v.ioPendingS <= IO_PAUSE + SLACK),
       ),
+      // The redirect lands well before the guest's 60 s SCSI timeout.
+      neverSeen(END, 'vm.io.guest-timeout'),
       hostConnected,
       otherVmsRun,
       atCtx(
         END,
-        'services restart only at the periodic re-map after the uplinks return',
+        'node 1 leaves maintenance at the volume check after the paths return, then services restart',
         (_s, ctx) => {
-          const entered = firstEventAt(ctx, 'hades.maintenance.enter', { device: CVM });
-          const remapped = firstEventAt(ctx, 'hades.volumes.remapped', { device: CVM });
+          const exit = firstEventAt(ctx, 'hades.maintenance.exit', { device: CVM });
           const up = firstEventAt(ctx, 'stargate.up', { device: CVM, from: RESTORE_AT });
           return (
-            entered !== null &&
-            remapped === entered + P.hades.mapNvmfVolumesIntervalS &&
-            up === remapped + P.cluster.cvmBootS
+            exit !== null &&
+            exit > RESTORE_AT &&
+            exit <= by(HADES_EXIT, RESTORE_AT) &&
+            up === exit + P.hades.servicesRestartS
           );
+        },
+      ),
+      atCtx(
+        END,
+        'failback waits the 300 s stable window: far slower than the failover',
+        (_s, ctx) => {
+          const enter = firstEventAt(ctx, 'hades.maintenance.enter', { device: CVM });
+          const redirect = firstEventAt(ctx, 'redirector.redirect', { device: nodeId(1) });
+          const up = firstEventAt(ctx, 'stargate.up', { device: CVM, from: RESTORE_AT });
+          const back = firstEventAt(ctx, 'redirector.failback', { device: nodeId(1) });
+          if (enter === null || redirect === null || up === null || back === null) return false;
+          return back - up >= P.redirector.failbackStableS && back - up > 10 * (redirect - enter);
         },
       ),
       at(
@@ -167,7 +169,7 @@ function hades(): ScenarioDef {
       ...baseInvariants(),
     ],
     narrative:
-      "Node 1 loses both vs1 uplinks but keeps management on vs0, so the cluster still sees the host as healthy. Its CVM loses every NVMe path, including the ones to its own Zookeeper and Cassandra service volumes; once the volume check's IO is abandoned at the NVMe IO timeout, Hades puts the node in maintenance mode and its Stargate stops. The redirector moves the VMs' sessions to a CVM that still reaches the array within seconds, but their IO resumes only after that Stargate has taken over the vDisks (ownership and NVMe reservation), with no HA event. After the uplinks return, the next periodic re-map brings the services back and, much later, the sessions fail back.",
+      "Node 1 loses both vs1 uplinks but keeps management on vs0, so the cluster still sees the host as healthy. Its CVM's NVMe paths fail silently and the VMs' IO stalls; keep-alive declares every path lost, including the ones to its own Zookeeper and Cassandra service volumes, so 5 s later Hades puts the node in maintenance mode and stops its Stargate. Within seconds the redirector moves the VMs' sessions to a CVM that still reaches the array, which takes the vDisks over at once: IO resumes well inside the guest disk timeout, with no HA event. After the uplinks return the controllers reconnect, the next volume check takes the node out of maintenance and its services restart; the sessions fail back only after the redirector's 300 s stable window.",
     cite: ['ntnx-cmdref-aos-7.6', 'ntnx-bible-8c', 'ntnx-bible-5b', 'everpure-nutanix-nci-cfg'],
     status: 'active',
   });

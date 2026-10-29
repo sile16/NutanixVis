@@ -13,7 +13,7 @@
  * - Replies dropped on the wire are retransmitted (TCP) while the Stargate is serving.
  * - T1 vDisk handover: taking over a vDisk whose owner CVM went into Hades maintenance takes
  *   `externalStorage.vdiskHandoverS` (ownership and NVMe reservation, `assumption`). The session
- *   is redirected at once, but its IO waits here until the handover completes.
+ *   is redirected first; its IO waits here until the handover completes (about immediate).
  */
 
 import { asEngineContext } from '../../engine/context';

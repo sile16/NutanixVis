@@ -140,7 +140,7 @@ export const current: Profile = {
       180,
       'assumption',
       ['ntnx-cmdref-aos-7.6'],
-      'No published figure for CVM power-on to Stargate serving. Upper bound: Genesis --svm_reboot_timeout = 420 s, "Maximum time expected for SVM to reboot/shutdown" (Command Ref 7.6). Also used for the service restart after a Hades re-map. Replace from lab testing.',
+      'No published figure for CVM power-on to Stargate serving. Upper bound: Genesis --svm_reboot_timeout = 420 s, "Maximum time expected for SVM to reboot/shutdown" (Command Ref 7.6). Hades maintenance exit uses the shorter hades.servicesRestartS.',
     ),
     cassandraRejoinStableS: c(
       1800,
@@ -173,7 +173,7 @@ export const current: Profile = {
       true,
       'inferred',
       ['ntnx-cmdref-aos-7.6', 'ntnx-bible-8c', 'everpure-nutanix-nci-cfg'],
-      'Service volumes are reached through the CVM kernel NVMe/TCP + dm-multipath ("Linux native multipathing"). A CVM that loses them goes into maintenance mode, so its Stargate stops and the redirector moves its VMs. Topology option hades-maintenance-on-storage-error overrides; lab L1.',
+      'Service volumes are reached through the CVM kernel NVMe/TCP + dm-multipath ("Linux native multipathing"). A CVM that loses them goes into maintenance mode, so its Stargate stops and the redirector moves its VMs. Topology option hades-maintenance-on-storage-error overrides.',
     ),
     volumeMonitorIntervalS: c(
       5,
@@ -191,7 +191,13 @@ export const current: Profile = {
       300,
       'verified',
       ['ntnx-cmdref-aos-7.6'],
-      '--external_storage_map_nvmf_volumes_interval_secs: "Interval in seconds to connect all NVMf storage volumes to the CVM."',
+      '--external_storage_map_nvmf_volumes_interval_secs: "Interval in seconds to connect all NVMf storage volumes to the CVM." It re-connects volumes that are not connected; controllers that reconnected on their own do not wait for it, and a node leaves maintenance at the next volume check that finds its mounts healthy.',
+    ),
+    servicesRestartS: c(
+      60,
+      'assumption',
+      ['ntnx-cmdref-aos-7.6'],
+      'No published figure. After Hades takes the node out of maintenance the CVM services (Stargate, Zookeeper, Cassandra) start again: on the order of a minute, shorter than a full CVM boot (cluster.cvmBootS). The redirector then fails back only after its 300 s stable window.',
     ),
   },
 
@@ -422,10 +428,10 @@ export const current: Profile = {
       'The NVMe 2.1 §9.6 wait gives the controller time to notice the loss and quiesce. A TCP reset from a target that has already torn the association down (its port lost link, or KATO passed without traffic) shows it no longer holds the commands, so they are retried at once.',
     ),
     vdiskHandoverS: c(
-      60,
+      1,
       'assumption',
       ['ntnx-bible-8c', 'ntnx-bible-5b'],
-      'No published figure. The remote Stargate must take over the vDisk (ownership and NVMe reservation, Bible 8c) from a CVM that went into Hades maintenance before IO flows there. Chosen clearly longer than the redirect and shorter than an AHV HA restart.',
+      'No published figure. Once the redirector has moved the session, the remote Stargate takes the vDisk over (ownership and NVMe reservation, Bible 8c) from the CVM in Hades maintenance and serves its IO: about immediate on a healthy cluster. A long delay comes only from a redirect target that is itself unhealthy or degraded, which this field does not model.',
     ),
     wholeArrayLossVmBehavior: c(
       'crash-and-restart',

@@ -89,21 +89,22 @@ export function nodeRebuildS(
 }
 /**
  * T1 Hades: worst case from a silent loss of every array path to maintenance mode. Paths are lost
- * after KATO; the kernel initiator queues the mount check's IO until the NVMe IO timeout abandons
- * it; the volume monitor (every `volumeMonitorIntervalS`) then needs the error to last
- * `externalStorageErrorThresholdS`.
+ * after KATO (keep-alive); the volume monitor (every `volumeMonitorIntervalS`) then needs the
+ * error to last `externalStorageErrorThresholdS`.
  */
 export const HADES_DETECT =
-  KATO +
-  P.externalStorage.ioTimeoutS +
-  P.hades.volumeMonitorIntervalS +
-  P.hades.externalStorageErrorThresholdS;
-/** Earliest maintenance after the loss: path-loss detection plus the abandoned check IO. */
-export const HADES_EARLIEST = KATO + P.externalStorage.ioTimeoutS;
+  KATO + P.hades.volumeMonitorIntervalS + P.hades.externalStorageErrorThresholdS;
+/** Earliest maintenance after the loss: path-loss detection plus the 5 s threshold. */
+export const HADES_EARLIEST = KATO + P.hades.externalStorageErrorThresholdS;
 /** T1: a remote Stargate takes over a vDisk whose owner CVM went into Hades maintenance. */
 export const VDISK_HANDOVER = P.externalStorage.vdiskHandoverS;
-/** Hades maintenance → services serving again: the next re-map, then the restart settling. */
-export const HADES_RECOVER = P.hades.mapNvmfVolumesIntervalS + P.cluster.cvmBootS;
+/**
+ * Hades maintenance exit after the paths return: the controllers reconnect (`reconnectDelayS`),
+ * the next volume check finds the mounts healthy and the node leaves maintenance.
+ */
+export const HADES_EXIT = P.externalStorage.reconnectDelayS + P.hades.volumeMonitorIntervalS;
+/** Paths back → services serving again: maintenance exit, then the services restart. */
+export const HADES_RECOVER = HADES_EXIT + P.hades.servicesRestartS;
 
 /** T1 simultaneous node failures tolerated (N−2 below 5 nodes, N−3 at 5+; DEPLOY-GUIDE). */
 export function t1Tolerance(nodes: number): number {

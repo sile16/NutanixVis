@@ -106,7 +106,7 @@ export const t1Options = {
   ),
   // Hades (profile `hades.maintenanceOnStorageError`, `inferred`): a CVM that loses its
   // service volumes goes into maintenance mode, so the redirector moves its VMs to a CVM that
-  // still reaches the array. `off` keeps IO retrying in place (DEPLOY-GUIDE default) for lab L1.
+  // still reaches the array. `off` keeps IO retrying in place (DEPLOY-GUIDE default).
   hadesMaintenance: option(
     'hades-maintenance-on-storage-error',
     'Hades maintenance mode on service-volume loss (inferred)',

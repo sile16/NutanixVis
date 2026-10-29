@@ -6,8 +6,8 @@
  *
  * T1: while running, Hades (`./hades.ts`) may put the node in maintenance mode when the CVM has
  * lost its service volumes. Its services then stop (`running()` is false, as for a CVM that is
- * down) while the storage backend keeps reconnecting; after a successful re-map the services
- * restart with `cluster.cvmBootS` settling.
+ * down) while the storage backend keeps reconnecting; once a volume check finds the mounts
+ * healthy again the node leaves maintenance and the services restart (`hades.servicesRestartS`).
  */
 
 import { asEngineContext } from '../../engine/context';
@@ -253,7 +253,7 @@ export class Cvm implements Device<Profile> {
 
   /**
    * Components that run: all of them while running, except the backend if Stargate stopped. In
-   * Hades maintenance only the backend runs (it keeps reconnecting: the re-map proxy).
+   * Hades maintenance only the backend runs (it keeps reconnecting, the volume check's proxy).
    */
   private active(): readonly CvmComponent[] {
     if (this.power !== 'running') return [];
@@ -315,7 +315,7 @@ export class Cvm implements Device<Profile> {
   private stepHades(ctx: Ctx): void {
     const step = this.hades.step(ctx, this.hades.state !== 'ok' || this.stargate.processUp);
     if (step === 'enter-maintenance') this.enterMaintenance(ctx);
-    else if (step === 'remapped') this.restartServices(ctx);
+    else if (step === 'volumes-healthy') this.exitMaintenance(ctx);
     this.wakeHades(ctx);
   }
 
@@ -348,9 +348,9 @@ export class Cvm implements Device<Profile> {
     this.stopCause = 'clean-stop';
     this.failComponents(ctx);
     this.stargate.setProcess(false);
-    // The CVM's NVMe initiator keeps trying to reach the array (Hades re-maps periodically).
+    // The CVM's NVMe initiator keeps trying to reach the array (its controllers reconnect).
     this.backend.onRecover?.(ctx);
-    this.hades.enterMaintenance(ctx.now, ctx);
+    this.hades.enterMaintenance(ctx.now);
     const cite: KnownCitationId[] = [
       'ntnx-cmdref-aos-7.6',
       'ntnx-bible-8c',
@@ -360,32 +360,36 @@ export class Cvm implements Device<Profile> {
       severity: 'error',
       deviceId: this.id,
       code: 'hades.maintenance.enter',
-      text: `${this.label}: service-volume IO abandoned after the ${ctx.profile.externalStorage.ioTimeoutS.value} s NVMe IO timeout and the error lasted ${H.externalStorageErrorThresholdS.value} s; Hades puts the node in maintenance mode and its services (Stargate, Zookeeper, Cassandra) stop. Prism alerts A3032 "Cluster services are down" and A1030 "Stargate Temporarily Down"`,
+      text: `${this.label}: service volumes unreachable (every NVMe path lost) for ${H.externalStorageErrorThresholdS.value} s; Hades puts the node in maintenance mode and its services (Stargate, Zookeeper, Cassandra) stop. Prism alerts A3032 "Cluster services are down" and A1030 "Stargate Temporarily Down"`,
       causeIds: this.reg.causes.get(this.id) ?? [],
       cite,
       confidence: H.maintenanceOnStorageError.confidence,
     });
   }
 
-  /** A periodic re-map found the service volumes: services restart (`cvmBootS` settling). */
-  private restartServices(ctx: Ctx): void {
-    const B = ctx.profile.cluster.cvmBootS;
-    const H = ctx.profile.hades.mapNvmfVolumesIntervalS;
+  /**
+   * A volume check found the service-volume mounts healthy again: Hades takes the node out of
+   * maintenance and the services restart (`hades.servicesRestartS`). The redirector fails back
+   * only after its stable window.
+   */
+  private exitMaintenance(ctx: Ctx): void {
+    const R = ctx.profile.hades.servicesRestartS;
+    const H = ctx.profile.hades.volumeMonitorIntervalS;
     this.hades.beginRestart();
     ctx.emit({
       severity: 'info',
       deviceId: this.id,
-      code: 'hades.volumes.remapped',
-      text: `${this.label}: Hades re-mapped the NVMf service volumes (every ${H.value} s); CVM services restarting`,
+      code: 'hades.maintenance.exit',
+      text: `${this.label}: the service-volume mounts are healthy again at Hades' ${H.value} s volume check; the node leaves maintenance mode and its services restart (about ${R.value} s)`,
       causeIds: [],
-      cite: [...H.cite],
-      confidence: H.confidence,
+      cite: [...new Set([...H.cite, ...R.cite])],
+      confidence: R.confidence,
     });
     if (this.bootTimer) ctx.timers.cancel(this.bootTimer);
     this.bootTimer = ctx.timers.set(
       `${this.id} services restart`,
-      B.value,
-      { cite: B.cite, confidence: B.confidence },
+      R.value,
+      { cite: R.cite, confidence: R.confidence },
       () => {
         this.bootTimer = null;
         this.hades.reset();
@@ -395,7 +399,7 @@ export class Cvm implements Device<Profile> {
         for (const c of this.components) if (c !== this.backend) c.onRecover?.(ctx);
         this.emitStargateUp(
           ctx,
-          `${this.label}: services restarted after the re-map; Stargate is serving`,
+          `${this.label}: services restarted after maintenance mode; Stargate is serving`,
         );
       },
     );
@@ -408,7 +412,7 @@ export class Cvm implements Device<Profile> {
     if (this.hadesWake) ctx.timers.cancel(this.hadesWake);
     this.hadesWake = null;
     if (at === null || at <= ctx.now) return;
-    const H = ctx.profile.hades.mapNvmfVolumesIntervalS;
+    const H = ctx.profile.hades.volumeMonitorIntervalS;
     this.hadesWake = ctx.timers.set(
       `${this.id} hades`,
       at - ctx.now,

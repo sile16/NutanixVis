@@ -8,7 +8,7 @@ const EXPECTED_GROUPS: Record<string, number> = {
   ahvHa: 10,
   redirector: 5,
   cluster: 9,
-  hades: 4,
+  hades: 5,
   hci: 15,
   bond: 4,
   externalStorage: 18,

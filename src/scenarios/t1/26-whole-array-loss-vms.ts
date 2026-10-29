@@ -23,7 +23,7 @@ import { HADES_DETECT, HADES_RECOVER, P, t1Tolerance } from '../timers';
 const RESTORE_AT = T0 + 300;
 const CRASH = P.guest.ioStallCrashS;
 const SLOTS = t1Tolerance(T1.nodes.length);
-const END = by(HADES_DETECT + HADES_RECOVER) + 60;
+const END = by(HADES_RECOVER + P.ahvHa.restartByS, RESTORE_AT) + 30;
 
 /**
  * Whole-array loss for longer than a guest can wait (SPEC §6.4 "T1 full array loss", §14).

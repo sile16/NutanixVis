@@ -51,7 +51,7 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `zkPartition` | string \| null | Stable id of its network partition (for example, the lowest CVM id reachable). The "unique quorum side" invariant groups by this. |
 | `ringState` | `normal` \| `down` \| `detached` \| `forwarding` | Cassandra ring membership. `detached`: auto-removed after `cassandraRingDetachS`. `forwarding`: Degraded Node Detection disabled its metadata store (it holds no live replica). |
 | `dndState` | `ok` \| `scoring` \| `degraded` | Degraded Node Detection (SPEC §6.2). `scoring`: its peers found it unresponsive and the `dnd.scoringWindowS` window is running. `degraded`: marked Degraded until `dnd.autoResolveHealthyS` of health or `cvm.mark-fixed`. |
-| `hades` | `ok` \| `maintenance` \| `restarting` | T1 Hades state (SPEC §6.2). `maintenance`: the CVM's service-volume check IO was abandoned at `externalStorage.ioTimeoutS` and the error lasted `hades.externalStorageErrorThresholdS`, so its services are stopped (`stargate` is `down`). `restarting`: a re-map found the volumes and the services are settling (`cluster.cvmBootS`). Always `ok` outside T1, or with `hades-maintenance-on-storage-error: off`. |
+| `hades` | `ok` \| `maintenance` \| `restarting` | T1 Hades state (SPEC §6.2). `maintenance`: every path to the CVM's service volumes was lost and the error lasted `hades.externalStorageErrorThresholdS`, so its services are stopped (`stargate` is `down`). `restarting`: a volume check found the mounts healthy again, the node left maintenance and the services are restarting (`hades.servicesRestartS`). Always `ok` outside T1, or with `hades-maintenance-on-storage-error: off`. |
 
 ### `cvm-interface` (schema fields, echoed into the view)
 
@@ -184,7 +184,7 @@ All of these are scalars.
 | `fa.ndu.start` / `fa.ndu.complete` | `fa` | |
 | `mgmt.task.failed` / `mgmt.task.succeeded` | the VM (or object) the task was for | An array-management task finished. |
 | `stargate.up` | cvm | Stargate became healthy, for example after the CVM booted. |
-| `stargate.vdisk.handover` / `stargate.vdisk.taken-over` | the CVM taking over | T1: a remote Stargate starts / completes taking over a vDisk whose owner CVM is in Hades maintenance (`vdiskHandoverS`); its IO waits in between. |
+| `stargate.vdisk.handover` / `stargate.vdisk.taken-over` | the CVM taking over | T1: a remote Stargate starts / completes taking over a vDisk whose owner CVM is in Hades maintenance (`vdiskHandoverS`, about immediate); its IO waits in between. |
 | `redirector.unhealthy` | host | The local (or current) Stargate missed its NOPs. |
 | `redirector.redirect` | host | iSCSI sessions moved to another Stargate. |
 | `redirector.failback` | host | Sessions returned to the local Stargate. |
@@ -204,7 +204,7 @@ All of these are scalars.
 | `cluster.services.down` / `cluster.services.up` | — | Quorum or metadata missing for the ZK session timeout (text names A3032 / A200000); back up. |
 | `hades.maintenance.enter` | cvm | T1: the CVM lost its service volumes; Hades put the node in maintenance mode (alerts A3032, A1030). |
 | `hades.maintenance.refused` | cvm | T1: the node should enter maintenance, but the nodes already out use up the cluster's N−2 / N−3 tolerance; Hades keeps retrying. |
-| `hades.volumes.remapped` | cvm | T1: a periodic re-map found the service volumes; the services restart (then `stargate.up`). |
+| `hades.maintenance.exit` | cvm | T1: a volume check found the service-volume mounts healthy again; the node leaves maintenance and its services restart (then `stargate.up`). |
 | `zk.seat.migrated` | the CVM receiving the seat | T1: a lost active node's ZK/Cassandra service volumes were mounted here after `serviceVolumeMigrationDelayS`. |
 | `zk.not-active` | the first seat that is not live | A ZK seat is down or off the quorum side (alert A111009). Raised only while a quorum side exists. |
 | `cluster.cvm.unreachable` | cvm | A running CVM is outside the quorum side (alert A1001). |

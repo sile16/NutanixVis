@@ -11,7 +11,7 @@ import { harness, instances, vmHost, vmIds, vmState } from './harness';
 const HA = P.ahvHa;
 const HADES = P.hades;
 const ZK = P.cluster.zkSessionTimeoutS.value;
-const BOOT = P.cluster.cvmBootS.value;
+const RESTART = P.hades.servicesRestartS.value;
 const MIGRATE = P.cluster.serviceVolumeMigrationDelayS.value;
 /** Actions queued at t=10 apply at T=11. */
 const T = 11;
@@ -213,12 +213,15 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
     expect(entered).not.toBeNull();
     h.act('recover', 'sw-a');
     h.act('recover', 'sw-b');
+    const back = h.s().simTime;
     for (const b of h.backends.values()) b.state = 'ok';
-    // Services return at the next periodic re-map plus the restart settling.
-    const remap = (entered ?? 0) + HADES.mapNvmfVolumesIntervalS.value;
-    h.run(remap + BOOT + 5 - h.s().simTime);
-    expect(h.firstAt('hades.volumes.remapped', 'node-1.cvm')).toBe(remap);
-    expect(h.firstAt('stargate.up', 'node-1.cvm', remap)).toBe(remap + BOOT);
+    // The next volume check takes the node out of maintenance (not the 300 s re-map), then the
+    // services restart.
+    h.run(HADES.volumeMonitorIntervalS.value + RESTART + 5);
+    const exit = h.firstAt('hades.maintenance.exit', 'node-1.cvm');
+    expect(exit).not.toBeNull();
+    expect(exit ?? 0).toBeLessThanOrEqual(back + HADES.volumeMonitorIntervalS.value);
+    expect(h.firstAt('stargate.up', 'node-1.cvm', back)).toBe((exit ?? 0) + RESTART);
     expect(h.d('clusterServices')).toBe('up');
     for (const v of vmIds(h)) {
       expect(vmState(h, v)).toBe('running');
@@ -231,39 +234,40 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
     h.run(10);
     const b = h.backends.get('node-1.cvm');
     if (b) b.state = 'unavailable';
-    // The mount check's IO is abandoned at the NVMe IO timeout, then the error must last the
-    // threshold (SPEC §6.2 "Hades service volumes").
-    const ioTimeout = P.externalStorage.ioTimeoutS.value;
-    const limit =
-      ioTimeout + HADES.volumeMonitorIntervalS.value + HADES.externalStorageErrorThresholdS.value;
+    // The volume check sees the mounts fail, then the error must last the threshold (SPEC §6.2
+    // "Hades service volumes").
+    const limit = HADES.volumeMonitorIntervalS.value + HADES.externalStorageErrorThresholdS.value;
     const entered = h.until(
       () => h.firstAt('hades.maintenance.enter', 'node-1.cvm') !== null,
       limit,
     );
     expect(entered).not.toBeNull();
-    expect(entered ?? 0).toBeGreaterThanOrEqual(
-      T + ioTimeout + HADES.externalStorageErrorThresholdS.value,
-    );
+    expect(entered ?? 0).toBeGreaterThanOrEqual(T + HADES.externalStorageErrorThresholdS.value);
     expect(h.f('node-1.cvm', 'hades')).toBe('maintenance');
     expect(h.f('node-1.cvm', 'stargate')).toBe('down');
-    // Redirected at once, but IO waits for the remote Stargate's vDisk handover.
-    h.run(10);
-    expect(vmState(h, 'node-1.vm-1')).toBe('io-stalled');
-    h.run(P.externalStorage.vdiskHandoverS.value);
+    // Redirected within seconds; the remote Stargate takes the vDisk over at once.
+    h.run(10 + P.externalStorage.vdiskHandoverS.value);
     expect(vmState(h, 'node-1.vm-1')).toBe('running');
     expect(vmHost(h, 'node-1.vm-1')).toBe('node-1');
     expect(h.f('node-1.vm-1', 'ownerCvm')).not.toBe('node-1.cvm');
     expect(h.f('node-1', 'haState')).toBe('connected');
     expect(h.firstAt('ha.vm.restarted')).toBeNull();
-    // Array back: the next re-map restarts the services, then sessions fail back.
-    if (b) b.state = 'ok';
-    const remap = (entered ?? 0) + HADES.mapNvmfVolumesIntervalS.value;
-    h.run(remap + BOOT + P.redirector.failbackStableS.value + 10 - h.s().simTime);
-    expect(h.firstAt('hades.volumes.remapped', 'node-1.cvm')).toBe(remap);
-    expect(h.f('node-1.cvm', 'hades')).toBe('ok');
-    expect(h.f('node-1.vm-1', 'ownerCvm')).toBe('node-1.cvm');
-    // Its ZK seat moved to the inactive node after the migration delay.
+    // Still in maintenance after the migration delay: its ZK seat moves to the inactive node.
+    h.run(T + MIGRATE + 1 - h.s().simTime);
     expect(h.firstAt('zk.seat.migrated', 'node-4.cvm')).toBe(T + MIGRATE);
+    // Array back: the next volume check ends maintenance, the services restart, and the sessions
+    // fail back only after the redirector's stable window.
+    const back = h.s().simTime;
+    if (b) b.state = 'ok';
+    h.run(HADES.volumeMonitorIntervalS.value + RESTART + 2);
+    const exit = h.firstAt('hades.maintenance.exit', 'node-1.cvm');
+    expect(exit ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+      back + HADES.volumeMonitorIntervalS.value,
+    );
+    expect(h.f('node-1.cvm', 'hades')).toBe('ok');
+    expect(h.f('node-1.vm-1', 'ownerCvm')).not.toBe('node-1.cvm');
+    h.run(P.redirector.failbackStableS.value + 10);
+    expect(h.f('node-1.vm-1', 'ownerCvm')).toBe('node-1.cvm');
   });
 
   it('Hades off: a CVM that lost every array path keeps its Stargate up and its VMs stall in place', () => {

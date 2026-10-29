@@ -13,18 +13,20 @@
  * - every `hades.mapNvmfVolumesIntervalS` (300 s) Hades connects all NVMf volumes again.
  *
  * Model (`inferred`): the kernel path uses the same CVM storage vNICs and FA ports as Stargate's
- * SPDK initiator, so the backend's `health() === 'unavailable'` is the proxy for "the service
- * volumes are unreachable". The kernel initiator queues IO while it waits for a path (controller
- * loss 3600 s), so a mount check only fails once its IO is abandoned at the NVMe IO timeout
- * (`externalStorage.ioTimeoutS`): maintenance follows path-loss detection, that timeout and the
- * 5 s threshold. Maintenance takes the node out of the cluster, which is admitted only within the
- * cluster's node-failure tolerance (N−2 / N−3, `assumption`); a refused node keeps retrying at
- * every check. In maintenance the CVM's services (Stargate, ZK member, Cassandra,
- * Acropolis) stop, which the rest of the model treats exactly like a CVM that is down: the
- * redirector moves the host's VM IO to a Stargate that still reaches the array, and seats and
- * leaders move. The backend keeps reconnecting meanwhile; after a re-map that finds the array
- * the services restart (`cluster.cvmBootS` settling). The topology option
- * `hades-maintenance-on-storage-error` (default: the profile) turns the rule off for lab L1.
+ * SPDK initiator, so the backend's `health() === 'unavailable'` (every path declared lost by
+ * keep-alive) is the proxy for "the service volumes are unreachable". Maintenance therefore
+ * follows path-loss detection by the next monitor check and the 5 s threshold. Maintenance takes
+ * the node out of the cluster, which is admitted only within the cluster's node-failure tolerance
+ * (N−2 / N−3, `assumption`); a refused node keeps retrying at every check. In maintenance the
+ * CVM's services (Stargate, ZK member, Cassandra, Acropolis) stop, which the rest of the model
+ * treats exactly like a CVM that is down: the redirector moves the host's VM IO to a Stargate
+ * that still reaches the array within seconds, and seats and leaders move. The backend keeps
+ * reconnecting meanwhile. The first monitor check that finds the mounts healthy again takes the
+ * node out of maintenance and the services restart (`hades.servicesRestartS`). The 300 s re-map
+ * only reconnects volumes that are not connected; controllers that reconnected on their own do
+ * not wait for it (the model keeps every controller inside its 3600 s loss window, so it never
+ * gates recovery here). The topology option `hades-maintenance-on-storage-error` (default: the
+ * profile) turns the rule off.
  */
 
 import type { Ctx, StorageBackend } from '../contracts';
@@ -34,21 +36,17 @@ export type HadesState = 'ok' | 'maintenance' | 'restarting';
 export type HadesStep =
   /** The error has lasted the threshold: put the node in maintenance mode now. */
   | 'enter-maintenance'
-  /** A re-map found the volumes again: restart the CVM services now. */
-  | 'remapped'
+  /** A monitor check found the volumes healthy again: leave maintenance, restart services. */
+  | 'volumes-healthy'
   | null;
 
 export class Hades {
   state: HadesState = 'ok';
   /** First monitor check that saw the current error. */
   private errorSince: number | null = null;
-  /** First tick the backend had no live path (the check IO starts waiting then). */
-  private unavailableSince: number | null = null;
   /** `hades.maintenance.refused` reported for the current episode. */
   refusedAnnounced = false;
   private lastCheckAt = Number.NEGATIVE_INFINITY;
-  /** Next periodic re-map while in maintenance. */
-  nextRemapAt: number | null = null;
   enteredAt: number | null = null;
 
   constructor(
@@ -65,18 +63,13 @@ export class Hades {
     const H = ctx.profile.hades;
     const now = ctx.now;
     if (this.state === 'ok') {
-      if (!monitored || this.backend.health() !== 'unavailable') {
-        this.unavailableSince = null;
-        this.refusedAnnounced = false;
-      } else this.unavailableSince ??= now;
+      if (!monitored || this.backend.health() !== 'unavailable') this.refusedAnnounced = false;
       if (!monitored) {
         this.errorSince = null;
         return null;
       }
-      if (now - this.lastCheckAt < H.volumeMonitorIntervalS.value) return null;
-      this.lastCheckAt = now;
-      const since = this.unavailableSince;
-      if (since === null || now - since < this.detectS(ctx)) {
+      if (!this.checkDue(ctx)) return null;
+      if (this.backend.health() !== 'unavailable') {
         this.errorSince = null;
         return null;
       }
@@ -85,52 +78,49 @@ export class Hades {
         ? 'enter-maintenance'
         : null;
     }
-    if (this.state !== 'maintenance' || this.nextRemapAt === null || now < this.nextRemapAt) {
-      return null;
-    }
-    if (this.backend.health() !== 'unavailable') return 'remapped';
-    this.nextRemapAt += H.mapNvmfVolumesIntervalS.value;
-    return null;
+    if (this.state !== 'maintenance' || !this.checkDue(ctx)) return null;
+    return this.backend.health() !== 'unavailable' ? 'volumes-healthy' : null;
   }
 
-  /** A mount check fails once its IO is abandoned (the NVMe IO timeout). */
-  private detectS(ctx: Ctx): number {
-    return ctx.profile.externalStorage.ioTimeoutS.value;
+  /** The volume monitor runs every `volumeMonitorIntervalS`. */
+  private checkDue(ctx: Ctx): boolean {
+    if (ctx.now - this.lastCheckAt < ctx.profile.hades.volumeMonitorIntervalS.value) return false;
+    this.lastCheckAt = ctx.now;
+    return true;
   }
 
   /** When the monitor will next decide something (for "fast-forward to next timer"). */
   nextDueAt(ctx: Ctx): number | null {
     if (!this.enabled) return null;
-    if (this.state === 'maintenance') return this.nextRemapAt;
+    const H = ctx.profile.hades;
+    const nextCheck = this.lastCheckAt + H.volumeMonitorIntervalS.value;
     if (this.state === 'ok' && this.errorSince !== null) {
-      return this.errorSince + ctx.profile.hades.externalStorageErrorThresholdS.value;
+      return Math.max(this.errorSince + H.externalStorageErrorThresholdS.value, nextCheck);
     }
-    if (this.state === 'ok' && this.unavailableSince !== null) {
-      return this.unavailableSince + this.detectS(ctx);
-    }
+    // Only while the check's answer would change something: a lost backend (ok) or a healthy
+    // one (maintenance). Otherwise the backend's own reconnect timers wake the engine.
+    const unavailable = this.backend.health() === 'unavailable';
+    if (this.state === 'ok' && unavailable) return nextCheck;
+    if (this.state === 'maintenance' && !unavailable) return nextCheck;
     return null;
   }
 
-  enterMaintenance(now: number, ctx: Ctx): void {
+  enterMaintenance(now: number): void {
     this.state = 'maintenance';
     this.enteredAt = now;
     this.errorSince = null;
-    this.nextRemapAt = now + ctx.profile.hades.mapNvmfVolumesIntervalS.value;
   }
 
   beginRestart(): void {
     this.state = 'restarting';
-    this.nextRemapAt = null;
   }
 
   /** Services are back (restart done) or the CVM was power-cycled: start monitoring afresh. */
   reset(): void {
     this.state = 'ok';
     this.errorSince = null;
-    this.unavailableSince = null;
     this.refusedAnnounced = false;
     this.lastCheckAt = Number.NEGATIVE_INFINITY;
-    this.nextRemapAt = null;
     this.enteredAt = null;
   }
 }

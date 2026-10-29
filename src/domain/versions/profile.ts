@@ -101,8 +101,16 @@ export interface Profile {
     readonly volumeMonitorIntervalS: Cited<number>;
     /** An external-storage error lasting this long is critical: the node enters maintenance. */
     readonly externalStorageErrorThresholdS: Cited<number>;
-    /** Hades re-maps (connects) every NVMf service volume at this interval. */
+    /**
+     * Hades connects every NVMf service volume that is not connected at this interval. Controllers
+     * that reconnect on their own do not wait for it.
+     */
     readonly mapNvmfVolumesIntervalS: Cited<number>;
+    /**
+     * Leaving maintenance (service volumes healthy again at a monitor check) → CVM services
+     * (Stargate, Zookeeper, Cassandra) serving again.
+     */
+    readonly servicesRestartS: Cited<number>;
   };
 
   /** HCI data path (T2/T3). */
@@ -208,7 +216,8 @@ export interface Profile {
     readonly targetResetRetryS: Cited<number>;
     /**
      * A remote Stargate taking over a vDisk whose owner CVM went into Hades maintenance waits this
-     * long (ownership and NVMe reservation handover) before it serves the vDisk's IO.
+     * long (ownership and NVMe reservation handover) before it serves the vDisk's IO: about
+     * immediate on a healthy cluster.
      */
     readonly vdiskHandoverS: Cited<number>;
     /** Default for the `whole-array-loss-vm-behavior` topology option. */

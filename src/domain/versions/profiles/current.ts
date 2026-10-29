@@ -99,6 +99,12 @@ export const current: Profile = {
       ['ntnx-bible-5b', 'ntnx-ahv-admin-11.2'],
       'Not published. When no Stargate has served a VM\'s session this long (every Stargate down, or no redirector to log in through), the AHV initiator gives up, the VM\'s process exits ("VM shut down unexpectedly") and AHV powers it back on once a Stargate can serve. Longer than any single-CVM failover, so those only stall.',
     ),
+    externalPathValidityS: c(
+      3600,
+      'assumption',
+      ['ntnx-bible-5b'],
+      "Not published. When the host-internal link to the local CVM fails, the initiator's NOPs go unanswered and it logs in again through the redirector, which sends it to a peer; while the vDisk's leader (the local CVM) is alive, the peer's iSCSI load balancer sends the session on to the leader's external portal, so the same Stargate serves it over the external network. The session is not moved back as soon as the link returns: it stays on the external path for a long validity window (order of an hour).",
+    ),
   },
 
   dnd: {

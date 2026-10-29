@@ -14,9 +14,9 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | verified | 39 |
 | inferred | 15 |
 | unverified | 1 |
-| assumption | 31 |
+| assumption | 32 |
 | lab-observed | 0 |
-| **Total** | **86** |
+| **Total** | **87** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -36,6 +36,7 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `redirector.failbackStepS` | 10 | assumption | `ntnx-bible-5b` | Not published. Failback is driven from the Stargate side and returns sessions one vDisk at a time, a check apart, each with a brief IO pause, rather than all at once. |
 | `redirector.redirectStallS` | 1 | assumption | `ntnx-bible-5b`, `ntnx-kb-io-freeze-cvm-down` | No published AHV figure. IO pause while the initiator logs in to the Stargate the redirector chose, once that Stargate may serve the vDisk: about a second (the KB puts an orderly Stargate stop at "~1 second or potentially less"). |
 | `redirector.initiatorSessionTimeoutS` | 50 | assumption | `ntnx-bible-5b`, `ntnx-ahv-admin-11.2` | Not published. When no Stargate has served a VM's session this long (every Stargate down, or no redirector to log in through), the AHV initiator gives up, the VM's process exits ("VM shut down unexpectedly") and AHV powers it back on once a Stargate can serve. Longer than any single-CVM failover, so those only stall. |
+| `redirector.externalPathValidityS` | 3600 | assumption | `ntnx-bible-5b` | Not published. When the host-internal link to the local CVM fails, the initiator's NOPs go unanswered and it logs in again through the redirector, which sends it to a peer; while the vDisk's leader (the local CVM) is alive, the peer's iSCSI load balancer sends the session on to the leader's external portal, so the same Stargate serves it over the external network. The session is not moved back as soon as the link returns: it stays on the external path for a long validity window (order of an hour). |
 | `dnd.enabled` | true | inferred | `ntnx-community-dnd`, `ntnx-cmdref-aos-7.6` | Degraded Node Detection is on by default (Nutanix community); the AOS 7.6 Command Reference lists a disable-degraded-node-monitoring command to turn it off. |
 | `dnd.scoringWindowS` | 60 | assumption | `ntnx-community-dnd` | No published window. Peers score each CVM's responsiveness; a CVM that was unresponsive to them (network flaps, partial blackouts) within this window and answers again is marked Degraded at its end. |
 | `dnd.autoResolveHealthyS` | 86400 | assumption | `ntnx-community-dnd` | No published figure. A Degraded node is cleared only after a long healthy observation period (here a day) or when an operator marks it fixed. |

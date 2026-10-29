@@ -59,7 +59,7 @@ export class AhvHost implements Device<Profile> {
     if (!this.alive()) return;
     if (msg.kind === MSG.nop) {
       const p = msg.payload as PingPayload;
-      if (p.t === 'resp') this.redirector.onNopReply(p.from);
+      if (p.t === 'resp') this.redirector.onNopReply(p.from, msg.dst);
       return;
     }
     if (msg.kind === MSG.haPoll) {

@@ -1623,6 +1623,20 @@ exports[`scenario acceptance > t1-29-degraded-cvm-light-loss: T1: light packet l
 ]
 `;
 
+exports[`scenario acceptance > t1-30-internal-link-lost: T1: host–CVM internal link lost — the local Stargate keeps serving over the external path 1`] = `
+[
+  "11	action.cvm.internal-link-down@node-2.cvm",
+  "11	cvm.internal-link.down@node-2.cvm",
+  "21	redirector.unhealthy@node-2",
+  "21	redirector.leader-redirect@node-2",
+  "21	redirector.redirect@node-2",
+  "71	action.cvm.internal-link-up@node-2.cvm",
+  "71	cvm.internal-link.up@node-2.cvm",
+  "3671	redirector.path-internal@node-2",
+  "3671	redirector.path-internal@node-2",
+]
+`;
+
 exports[`scenario acceptance > t1lab-01-disable-one-fa-ip: T1-lab: disable one FlashArray data IP 1`] = `
 [
   "11	action.fa.interface.disable@fa.ct0.eth10.v10",

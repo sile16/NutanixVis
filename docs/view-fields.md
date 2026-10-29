@@ -50,6 +50,7 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `zkQuorum` | boolean | It is in a partition that has a ZK majority. |
 | `zkPartition` | string \| null | Stable id of its network partition (for example, the lowest CVM id reachable). The "unique quorum side" invariant groups by this. |
 | `ringState` | `normal` \| `down` \| `detached` \| `forwarding` | Cassandra ring membership. `detached`: auto-removed after `cassandraRingDetachS`. `forwarding`: Degraded Node Detection disabled its metadata store (it holds no live replica). |
+| `internalLink` | `up` \| `down` | The host-internal link between the AHV host and this CVM (`cvm.internal-link-down` / `-up`). |
 | `dndState` | `ok` \| `scoring` \| `degraded` | Degraded Node Detection (SPEC §6.2). `scoring`: its peers found it unresponsive and the `dnd.scoringWindowS` window is running. `degraded`: marked Degraded until `dnd.autoResolveHealthyS` of health or `cvm.mark-fixed`. |
 | `hades` | `ok` \| `maintenance` \| `restarting` | T1 Hades state (SPEC §6.2). `maintenance`: every path to the CVM's service volumes was lost and the error lasted `hades.externalStorageErrorThresholdS`, so its services are stopped (`stargate` is `down`). `restarting`: a volume check found the mounts healthy again, the node left maintenance and the services are restarting (`hades.servicesRestartS`). Always `ok` outside T1, or with `hades-maintenance-on-storage-error: off`. |
 
@@ -191,6 +192,8 @@ All of these are scalars.
 | `redirector.unhealthy` | host | A silent Stargate: the initiators' NOPs to it went unanswered `missesToUnhealthy` times. A reset connection (stop, crash) is noticed at once and raises no `unhealthy`. |
 | `redirector.redirect` | host | iSCSI sessions logged in (again) to another Stargate through the redirector. |
 | `redirector.parked` | host | A session logged in to a peer that may not serve the vDisk yet: its leadership is still the silent Stargate's until that Stargate's ZK session expires. The initiator tries again at its next NOP cycle. |
+| `redirector.leader-redirect` | host | A peer sent a session on to the vDisk's leader at its external portal; the leader is alive and answers, so it serves the session over the external network (no handover). |
+| `redirector.path-internal` | host | A session that was on its local CVM's external portal moved back to the host-internal link after `externalPathValidityS`. |
 | `redirector.failback` | host | One vDisk's session returned to the local Stargate (one per `failbackStepS`, after `failbackStableS`). |
 | `ha.host.disconnected` | host | The text names alert A1006. |
 | `ha.host.fenced` | host | |
@@ -201,6 +204,7 @@ All of these are scalars.
 | `vm.force-shutdown` | vm | The per-VM path-loss force-shutdown fired. |
 | `vm.crashed` | vm | The VM went down: with its host, or (`whole-array-loss-vm-behavior: crash-and-restart`) no Stargate served its disk for `redirector.initiatorSessionTimeoutS`, so the initiator gave up ("VM shut down unexpectedly"; for example a whole-array loss). |
 | `cvm.network.blackout` | cvm | `cvm.network-flap`: its inter-CVM interface stops answering for a while. |
+| `cvm.internal-link.down` / `cvm.internal-link.up` | cvm | The host-internal link between the AHV host and this CVM failed or returned. |
 | `cvm.network.lossy` / `cvm.network.loss-cleared` | cvm | `cvm.network-loss` at or above `dnd.partialLossPct`: the CVM is half reachable; then its network is clean again. |
 | `dnd.outlier` | cvm | `cvm.network-loss` below `dnd.partialLossPct`: peers score it as an outlier, nothing else changes. |
 | `stargate.hung-op-fail-fast` | cvm | Its Stargate's operations on a half-reachable peer's metadata hung for `cluster.stargateHungOpS`, so it failed fast; it stays down until that peer is Degraded or reachable again. |

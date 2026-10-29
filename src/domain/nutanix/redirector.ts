@@ -11,10 +11,16 @@
  *   a live CVM, the CVM rebooting) is noticed at once and the session logs in again. A silent
  *   Stargate (power loss, hang) is noticed only by the initiator's NOPs: `missesToUnhealthy`
  *   unanswered NOPs `nopIntervalS` apart.
- * - **vDisk leadership.** A peer Stargate may serve a vDisk only once its leader (the owner CVM)
- *   has released it (`Registry.leadershipFree`): at once after an orderly stop or a process exit,
- *   otherwise when that Stargate's Zookeeper session expires. Until then the new session parks:
- *   logged in but not served, and the initiator tries again at its next NOP cycle.
+ * - **vDisk leadership.** A peer Stargate that receives a redirected login sends the session on to
+ *   the vDisk's leader (the owner CVM) while that leader is alive in Zookeeper: to the leader's
+ *   external portal. If the leader is alive and its external portal answers (only the host-internal
+ *   link to it failed), the same Stargate serves the session over the external network at once,
+ *   with no vDisk re-hosting. If the leader is dead or hung, that connection hangs: the session
+ *   parks (logged in, not served) and the initiator tries again at its next NOP cycle. Once the
+ *   leader has released the vDisk (`Registry.leadershipFree`: at once after an orderly stop or a
+ *   process exit, otherwise when that Stargate's Zookeeper session expires) the peer serves it.
+ * - **External path.** A session sent on to the local CVM's external portal stays there after the
+ *   host-internal link returns, for `externalPathValidityS`, then moves back to the internal path.
  * - **Failback** is driven from the Stargate side: once the preferred Stargate has answered for
  *   `failbackStableS`, sessions return to it one vDisk per `failbackStepS`, each with a brief
  *   pause. A restart starts the stable period again.
@@ -31,6 +37,8 @@ import type { Registry } from './registry';
 
 /** Portal probe cadence (model plumbing: the redirector checks a portal before each login). */
 const PROBE_S = 1;
+/** Health-key suffix for the local CVM's external portal. */
+const EXT = '#ext';
 
 interface PortalHealth {
   /** First tick of the current run of answered probes; null after a miss. */
@@ -53,6 +61,10 @@ interface Session {
   misses: number;
   /** Logged in to a peer that may not serve the vDisk yet (leadership not released). */
   parked: boolean;
+  /** Logged in to its local CVM over the external network instead of the host-internal link. */
+  external: boolean;
+  /** When the session moved to the external path. */
+  externalSince: number;
   /** Last tick a Stargate was serving this session. */
   servedAt: number;
 }
@@ -79,7 +91,14 @@ export class Redirector {
   sessionsView(): Record<string, string> {
     const out: Record<string, string> = {};
     for (const [v, s] of [...this.sessions].sort(([a], [b]) => (a < b ? -1 : 1))) {
-      out[v] = s.target === null ? 'none' : s.parked ? `${s.target} (parked)` : s.target;
+      out[v] =
+        s.target === null
+          ? 'none'
+          : s.parked
+            ? `${s.target} (parked)`
+            : s.external
+              ? `${s.target} (external)`
+              : s.target;
     }
     return out;
   }
@@ -87,7 +106,7 @@ export class Redirector {
   /** Stargates this host's probes find not answering. */
   unhealthyView(): string[] {
     return [...this.health]
-      .filter(([, h]) => h.sentAt !== null && h.upSince === null)
+      .filter(([k, h]) => !k.endsWith(EXT) && h.sentAt !== null && h.upSince === null)
       .map(([c]) => c)
       .sort();
   }
@@ -110,7 +129,7 @@ export class Redirector {
   sendIo(io: IoRequest, ctx: Ctx): string | null {
     const s = this.session(io.vdisk);
     if (s.target === null) return null;
-    const ends = this.endpoints(s.target);
+    const ends = this.endpoints(s.target, s.external);
     if (ends === null) return null;
     const ectx = asEngineContext(ctx);
     const payload: IoReqPayload = { t: 'req', io, host: this.host.id };
@@ -140,18 +159,26 @@ export class Redirector {
   emit(ctx: Ctx): void {
     if (ctx.now - this.lastProbeAt < PROBE_S) return;
     this.lastProbeAt = ctx.now;
+    // Probe keys: a CVM id (its usual path), or `<local CVM>#ext` for its external portal.
     const probe = new Set<string>();
-    if (this.host.cvm !== null) probe.add(this.host.cvm);
+    const local = this.host.cvm;
+    if (local !== null) probe.add(local);
     for (const [vdisk, s] of this.sessions) {
-      if (s.target !== null) probe.add(s.target);
+      if (s.target !== null) probe.add(this.key(s.target, s.external));
       const pref = this.reg.preferredCvm(this.host.id, vdisk);
       if (pref !== null) probe.add(pref);
     }
     if (this.probeAll) for (const c of this.cvmOrder) probe.add(c);
+    // The local CVM's external portal is probed while its internal link does not answer.
+    if (local !== null && (this.probeAll || this.healthOf(local).upSince === null)) {
+      probe.add(this.key(local, true));
+    }
     const ectx = asEngineContext(ctx);
-    for (const cvm of [...probe].sort()) {
-      const ends = this.endpoints(cvm);
-      const h = this.healthOf(cvm);
+    for (const k of [...probe].sort()) {
+      const ext = k.endsWith(EXT);
+      const cvm = ext ? k.slice(0, -EXT.length) : k;
+      const ends = this.endpoints(cvm, ext);
+      const h = this.healthOf(k);
       h.sentAt = ctx.now;
       h.answered = false;
       if (ends === null) continue;
@@ -162,7 +189,7 @@ export class Redirector {
         dst: ends.dst,
         size: 'small',
         flow: ectx.flow(ends.src, ends.dst, {
-          srcPort: portFor(`${this.host.id}~nop`),
+          srcPort: portFor(`${this.host.id}~nop${ext ? EXT : ''}`),
           dstPort: PORT.iscsi,
         }),
         payload,
@@ -170,8 +197,10 @@ export class Redirector {
     }
   }
 
-  onNopReply(cvm: string): void {
-    const h = this.health.get(cvm);
+  /** A NOP reply from `cvm`, received on this host's endpoint `dst` (which path it came over). */
+  onNopReply(cvm: string, dst?: string): void {
+    const ext = cvm === this.host.cvm && dst !== undefined && dst === this.host.mgmtEndpoint;
+    const h = this.health.get(this.key(cvm, ext));
     if (h) h.answered = true;
   }
 
@@ -203,6 +232,7 @@ export class Redirector {
       this.noteServed(s, now);
     }
     this.failback(ctx);
+    this.returnInternal(ctx);
 
     for (const [to, n] of [...redirected].sort(([a], [b]) => (a < b ? -1 : 1))) {
       ctx.emit({
@@ -225,7 +255,7 @@ export class Redirector {
         s.target === null ||
         s.parked ||
         s.misses > 0 ||
-        this.healthOf(s.target).upSince === null ||
+        this.healthOf(this.key(s.target, s.external)).upSince === null ||
         this.reg.stargateOutage(s.target) !== null,
     );
     if (this.host.cvm !== null && this.healthOf(this.host.cvm).upSince === null) {
@@ -263,6 +293,8 @@ export class Redirector {
         nopAt: now + this.reg.profile.redirector.nopIntervalS.value,
         misses: 0,
         parked: false,
+        external: false,
+        externalSince: now,
         servedAt: now,
       };
       this.sessions.set(vdisk, s);
@@ -285,7 +317,7 @@ export class Redirector {
     }
     if (ctx.now < s.nopAt) return false;
     s.nopAt = ctx.now + R.nopIntervalS.value;
-    const h = this.healthOf(target);
+    const h = this.healthOf(this.key(target, s.external));
     const answered =
       !s.parked && h.lastAnswerAt !== null && h.lastAnswerAt > ctx.now - R.nopIntervalS.value;
     s.misses = answered ? 0 : s.misses + 1;
@@ -316,9 +348,33 @@ export class Redirector {
     s.loggedInAt = now;
     s.nopAt = now + R.nopIntervalS.value;
     s.misses = 0;
+    s.external = false;
     if (next === null) {
       s.parked = false;
       s.readyAt = now;
+      return;
+    }
+    // The peer's iSCSI load balancer sends the session on to the vDisk's leader while it is alive
+    // in Zookeeper. A leader that serves and whose external portal answers takes it at once.
+    const leader = this.reg.owner.get(vdisk);
+    if (
+      leader !== undefined &&
+      leader !== next &&
+      this.reg.isStargateUp(leader) &&
+      this.externalUsable(leader)
+    ) {
+      s.target = leader;
+      s.external = leader === this.host.cvm;
+      s.externalSince = now;
+      s.parked = false;
+      s.readyAt = now + R.redirectStallS.value;
+      this.report(
+        leader,
+        'leader',
+        ctx,
+        `${next} sent ${vdisk}'s session on to its leader ${leader}'s external portal; ${leader} still serves it, over the external network`,
+        R.redirectStallS,
+      );
       return;
     }
     s.parked = !this.reg.leadershipFree(vdisk, next, now);
@@ -329,7 +385,7 @@ export class Redirector {
         owner,
         'parked',
         ctx,
-        `${next} may not serve ${owner}'s vDisks until that Stargate's Zookeeper session expires; logged-in sessions wait and the initiator tries again at its next NOP cycle`,
+        `${next} sends ${owner}'s vDisk sessions on to ${owner}, which does not answer; ${next} may serve them only once ${owner}'s Zookeeper session expires, so the sessions wait and the initiator tries again at its next NOP cycle`,
         ctx.profile.hci.stargateDownDetectS,
       );
     }
@@ -339,8 +395,37 @@ export class Redirector {
   private noteServed(s: Session, now: number): void {
     if (s.target === null || s.parked || now < s.readyAt) return;
     if (!this.reg.isStargateUp(s.target)) return;
-    if (this.healthOf(s.target).upSince === null) return;
+    if (this.healthOf(this.key(s.target, s.external)).upSince === null) return;
     s.servedAt = now;
+  }
+
+  /**
+   * A session on its local CVM's external portal moves back to the host-internal link once that
+   * link has answered for `externalPathValidityS` since the session moved (brief re-login pause).
+   */
+  private returnInternal(ctx: Ctx): void {
+    const R = ctx.profile.redirector;
+    const V = R.externalPathValidityS.value;
+    for (const [vdisk, s] of this.sorted()) {
+      if (!s.external || s.target === null || s.parked) continue;
+      const h = this.healthOf(s.target);
+      if (h.upSince === null || ctx.now - Math.max(h.upSince, s.externalSince) < V) continue;
+      s.external = false;
+      s.epoch = ++this.epochs;
+      s.loggedInAt = ctx.now;
+      s.nopAt = ctx.now + R.nopIntervalS.value;
+      s.misses = 0;
+      s.readyAt = ctx.now + R.redirectStallS.value;
+      ctx.emit({
+        severity: 'info',
+        deviceId: this.host.id,
+        code: 'redirector.path-internal',
+        text: `${this.host.label}: ${vdisk} moved back from ${s.target}'s external portal to the host-internal link (${V} s validity)`,
+        causeIds: [],
+        cite: R.externalPathValidityS.cite,
+        confidence: R.externalPathValidityS.confidence,
+      });
+    }
   }
 
   /** Stargate-driven failback: one vDisk per `failbackStepS` once the preferred one is stable. */
@@ -374,7 +459,7 @@ export class Redirector {
 
   private report(
     cvm: string,
-    kind: 'reset' | 'unhealthy' | 'parked',
+    kind: 'reset' | 'unhealthy' | 'parked' | 'leader',
     ctx: Ctx,
     text: string,
     cited = ctx.profile.redirector.missesToUnhealthy,
@@ -387,7 +472,12 @@ export class Redirector {
     ctx.emit({
       severity: 'warn',
       deviceId: this.host.id,
-      code: kind === 'parked' ? 'redirector.parked' : 'redirector.unhealthy',
+      code:
+        kind === 'parked'
+          ? 'redirector.parked'
+          : kind === 'leader'
+            ? 'redirector.leader-redirect'
+            : 'redirector.unhealthy',
       text: `${this.host.label}: ${text}`,
       causeIds: [],
       cite: cited.cite,
@@ -395,14 +485,26 @@ export class Redirector {
     });
   }
 
-  private healthOf(cvm: string): PortalHealth {
-    let h = this.health.get(cvm);
+  /** Health key: the CVM id, or `<local CVM>#ext` for the local CVM's external portal. */
+  private key(cvm: string, external: boolean): string {
+    return external && cvm === this.host.cvm ? `${cvm}${EXT}` : cvm;
+  }
+
+  private healthOf(key: string): PortalHealth {
+    let h = this.health.get(key);
     if (!h) {
       // Never probed: assume answering until probes say otherwise.
       h = { upSince: 0, lastAnswerAt: 0, sentAt: null, answered: false };
-      this.health.set(cvm, h);
+      this.health.set(key, h);
     }
     return h;
+  }
+
+  /** `cvm`'s external portal answers this host's probes (the usual path for a remote CVM). */
+  private externalUsable(cvm: string): boolean {
+    return (
+      this.healthOf(this.key(cvm, true)).upSince !== null && this.endpoints(cvm, true) !== null
+    );
   }
 
   /**
@@ -445,11 +547,14 @@ export class Redirector {
     return null;
   }
 
-  /** Local Stargate over virbr0; remote ones from the host mgmt IP to the CVM's mgmt IP. */
-  private endpoints(cvm: string): { src: string; dst: string } | null {
+  /**
+   * Local Stargate over virbr0; remote ones (and the local one's external portal) from the host
+   * mgmt IP to the CVM's mgmt IP.
+   */
+  private endpoints(cvm: string, external = false): { src: string; dst: string } | null {
     const f = this.reg.facts.cvm(cvm);
     if (!f) return null;
-    if (cvm === this.host.cvm && this.host.internalEndpoint !== null) {
+    if (!external && cvm === this.host.cvm && this.host.internalEndpoint !== null) {
       return { src: this.host.internalEndpoint, dst: f.internalEndpoint };
     }
     if (this.host.mgmtEndpoint === null) return null;

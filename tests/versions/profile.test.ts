@@ -6,7 +6,7 @@ import { CONFIDENCES, isCited, leaves } from './helpers';
 // Every field the Profile type declares, so a new contract field without a value fails here.
 const EXPECTED_GROUPS: Record<string, number> = {
   ahvHa: 10,
-  redirector: 6,
+  redirector: 7,
   cluster: 11,
   hades: 6,
   hci: 15,

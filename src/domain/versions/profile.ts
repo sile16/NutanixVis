@@ -68,6 +68,11 @@ export interface Profile {
      * (with `whole-array-loss-vm-behavior: crash-and-restart`).
      */
     readonly initiatorSessionTimeoutS: Cited<number>;
+    /**
+     * A session a peer sent on to its vDisk leader's external portal (the host-internal link to
+     * that CVM was down) stays on that path this long after the link returns, then moves back.
+     */
+    readonly externalPathValidityS: Cited<number>;
   };
 
   /**

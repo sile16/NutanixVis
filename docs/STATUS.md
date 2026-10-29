@@ -12,7 +12,7 @@ Living status page: where the project stands, what is left, which behavior still
   - T1-lab: the single-NIC mirror of the test drive.
   - T2: Nutanix HCI.
   - T3: compute-only plus storage-only, and compute-only plus HCI.
-- **Scenarios:** 85 run as automated tests against the real models. All are `active`, so a behavior change that breaks one fails CI.
+- **Scenarios:** 86 run as automated tests against the real models. All are `active`, so a behavior change that breaks one fails CI.
 - **Tests:**
   - About 1,010 unit, contract, architecture and property tests (Vitest and fast-check).
   - 29 browser tests (Playwright), including the T1 visual baseline.
@@ -27,6 +27,8 @@ Living status page: where the project stands, what is left, which behavior still
 - **Behavior data:** every timer and policy lives in `src/domain/versions/profiles/current.ts` as a cited field with a confidence label. Lab results become data changes, not code changes. `docs/research/profile-coverage.md` lists them all.
 
 ### Recent changes
+
+- **2026-10-29: host–CVM internal link** (`cvm.internal-link-down` / `-up`, T1-30; `assumption` values, SPEC §6.2): a peer that receives a redirected login sends the session on to the vDisk's leader at its external portal while the leader is alive. With only the host-internal link down, the local Stargate keeps serving over the external network after one NOP detection, with no vDisk handover; the session stays on that path for a long validity window after the link returns. A dead or hung leader still makes the session wait for its ZK expiry, as before.
 
 - **2026-10-29: a half-reachable CVM** (`cvm.network-loss`, T1-29; `assumption` values, SPEC §6.2):
   - Light packet loss on one CVM's inter-CVM interface only makes its peers score it as an outlier.

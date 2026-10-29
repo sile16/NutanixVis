@@ -198,6 +198,30 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
     },
     {
       spec: {
+        kind: 'cvm.internal-link-down',
+        label: 'Fail host–CVM internal link',
+        description:
+          'The internal link between the AHV host and its CVM fails; the CVM’s cluster network and storage paths stay up. The host’s VM initiators miss their NOPs and log in again through the redirector; a peer Stargate sends each session on to this CVM’s external portal while it is alive, so the same Stargate keeps serving after about one NOP detection, with no vDisk handover.',
+        appliesTo: (t) =>
+          isKind(t, 'cvm') && field(t, 'power') !== 'off' && field(t, 'internalLink') !== 'down',
+      },
+      apply: (req, ctx) => {
+        reg.causes.set(req.target, ctx.causeIds);
+        cvm(req.target).requestInternalLink(false);
+      },
+    },
+    {
+      spec: {
+        kind: 'cvm.internal-link-up',
+        label: 'Restore host–CVM internal link',
+        description:
+          'The internal link returns. Sessions already on the CVM’s external portal stay there for a long validity window, then move back.',
+        appliesTo: (t) => isKind(t, 'cvm') && field(t, 'internalLink') === 'down',
+      },
+      apply: (req) => cvm(req.target).requestInternalLink(true),
+    },
+    {
+      spec: {
         kind: 'cvm.mark-fixed',
         label: 'Mark node fixed (clear Degraded)',
         description:

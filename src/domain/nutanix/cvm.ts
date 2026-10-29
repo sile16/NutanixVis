@@ -84,6 +84,9 @@ export class Cvm implements Device<Profile> {
   /** Stargate failed fast on operations hung on a partly unresponsive peer; held down until then. */
   private hungOpHeld = false;
   private restartTimer: TimerHandle | null = null;
+  /** `cvm.internal-link-down` / `-up`: requested state, and whether the link is down now. */
+  private internalLinkRequest: boolean | null = null;
+  private internalLinkDown = false;
 
   constructor(
     readonly facts: CvmFacts,
@@ -192,6 +195,46 @@ export class Cvm implements Device<Profile> {
   /** `cvm.network-loss`: packet loss on the CVM's cluster network (percent; 0 clears it). */
   requestNetworkLoss(pct: number): void {
     this.lossRequest = pct;
+  }
+
+  /**
+   * `cvm.internal-link-down` / `-up`: the host-internal link between the AHV host and this CVM
+   * fails or returns. Its cluster network and storage paths stay up.
+   */
+  requestInternalLink(up: boolean): void {
+    this.internalLinkRequest = up;
+  }
+
+  internalLinkUp(): boolean {
+    return !this.internalLinkDown;
+  }
+
+  /**
+   * The host's initiators reach this CVM's Stargate over the host-internal link. With it down they
+   * miss their NOPs and log in again through the redirector; a peer then sends each session on to
+   * this CVM's external portal while it is alive, so the same Stargate keeps serving (SPEC §6.2).
+   */
+  private stepInternalLink(ctx: Ctx): void {
+    const up = this.internalLinkRequest;
+    this.internalLinkRequest = null;
+    if (up === null || up === !this.internalLinkDown) return;
+    this.internalLinkDown = !up;
+    const ectx = asEngineContext(ctx);
+    const ep = this.facts.internalEndpoint;
+    if (this.power !== 'off')
+      ectx.endpoints.setUp(ep, up, up ? [] : (this.reg.causes.get(this.id) ?? []));
+    const R = ctx.profile.redirector;
+    ctx.emit({
+      severity: up ? 'info' : 'warn',
+      deviceId: this.id,
+      code: up ? 'cvm.internal-link.up' : 'cvm.internal-link.down',
+      text: up
+        ? `${this.label}: the host-internal link to its AHV host is back; sessions already moved to its external portal stay there for the validity window`
+        : `${this.label}: the host-internal link to its AHV host is down; its cluster network and storage paths stay up. The host's initiators miss their NOPs and log in again through the redirector`,
+      causeIds: up ? [] : (this.reg.causes.get(this.id) ?? []),
+      cite: R.externalPathValidityS.cite,
+      confidence: 'assumption',
+    });
   }
 
   /**
@@ -423,6 +466,7 @@ export class Cvm implements Device<Profile> {
       }
     }
     if (this.stargateCmd !== null) this.applyStargateCmd(ctx);
+    if (this.internalLinkRequest !== null) this.stepInternalLink(ctx);
     if (this.flapRequest !== null || this.flapUntil !== null) this.stepFlap(ctx);
     if (this.lossRequest !== null || this.reg.netLoss.has(this.id)) this.stepLoss(ctx);
     if (this.power === 'running' && (this.hungOpHeld || this.reg.netLoss.size > 0)) {
@@ -509,6 +553,8 @@ export class Cvm implements Device<Profile> {
       backendHealth: this.backend.health(),
       // T1: Hades maintenance mode after losing the service volumes (`ok` elsewhere).
       hades: this.hades.state,
+      // Host-internal link between the AHV host and this CVM (up | down).
+      internalLink: this.internalLinkDown ? 'down' : 'up',
     };
     for (const c of this.components) Object.assign(fields, c.viewFields?.() ?? {});
     const badges: string[] = [];
@@ -773,7 +819,9 @@ export class Cvm implements Device<Profile> {
   private setEndpoints(ctx: Ctx, up: boolean): void {
     const ectx = asEngineContext(ctx);
     for (const e of ectx.net.endpointsOf(this.id)) {
-      if (ectx.net.isAdminUp(e.id) !== up) ectx.endpoints.setUp(e.id, up);
+      // A failed host-internal link stays down across a CVM boot.
+      const want = up && !(this.internalLinkDown && e.id === this.facts.internalEndpoint);
+      if (ectx.net.isAdminUp(e.id) !== want) ectx.endpoints.setUp(e.id, want);
     }
   }
 }

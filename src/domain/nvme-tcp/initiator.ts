@@ -335,6 +335,15 @@ export class NvmeTcpInitiator implements StorageBackend {
     return live === this.paths.length ? 'ok' : 'degraded';
   }
 
+  /** Every path is down and the target closed or reset each one (not a silent loss). */
+  lostByTarget(): boolean {
+    return (
+      this.paths.length > 0 &&
+      this.liveCount() === 0 &&
+      this.paths.every((p) => p.lostHow === 'refused' || p.lostHow === 'reset')
+    );
+  }
+
   /** NVMe path ids that carried this vDisk's IO during the last tick. */
   pathsFor(vdisk: string): readonly string[] {
     return [...(this.lastUsage.paths.get(vdisk) ?? [])].sort();

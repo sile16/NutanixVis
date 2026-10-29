@@ -175,6 +175,9 @@ export class ExternalStorageBackend implements StorageBackend {
   health(): 'ok' | 'degraded' | 'unavailable' {
     return this.nvme.health();
   }
+  lostByTarget(): boolean {
+    return this.nvme.lostByTarget();
+  }
   /**
    * NVMe path ids, then the bond member NICs those paths' frames egressed on, during the last
    * tick. The contract allows links/endpoints here; the Nutanix registry splits path ids (`~`)

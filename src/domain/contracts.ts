@@ -82,6 +82,11 @@ export interface StorageBackend extends CvmComponent {
   drain(): readonly IoCompletion[];
   /** `unavailable` = no IO can make progress (Stargate should report unhealthy upstream). */
   health(): 'ok' | 'degraded' | 'unavailable';
+  /**
+   * Optional (T1): every path is down and the target ended each one (it closed or reset the
+   * connection), rather than going silent. IO on such paths errors at once instead of queueing.
+   */
+  lostByTarget?(): boolean;
   /** Links/endpoints a vDisk's IO currently uses (path-usage view). */
   pathsFor?(vdisk: string): readonly string[];
   /** Physical NICs (bond members) that carried a vDisk's IO during the last tick (vm `ioUplinks`). */

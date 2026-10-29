@@ -18,8 +18,12 @@
  * - Once that has lasted `hades.mountFailAfterS` (the multipath fast-IO-fail time, `assumption`),
  *   multipath fails the service-volume IO instead of queueing it: the mounts go bad and **stay
  *   bad** even if the array returns, until Hades remounts them. A shorter loss is a plain stall.
+ * - If the target ended every path instead (it closed or reset each connection, e.g. its ports
+ *   flapped on both fabrics), multipath does not queue: the IO errors and the mounts go bad at
+ *   once, however short the flap (`StorageBackend.lostByTarget`).
  * - Hades acts on the bad mounts at its next monitor check plus the 5 s threshold, so a
- *   whole-array blip just past the fast-IO-fail time still puts every node in maintenance.
+ *   whole-array blip just past the fast-IO-fail time, or a short port flap on every data port,
+ *   still puts every node in maintenance.
  * - Each node decides on its own volumes: there is no cluster-wide admission limit. A
  *   single-fabric loss never triggers it (the other fabric keeps the mounts healthy).
  *
@@ -78,6 +82,9 @@ export class Hades {
       }
       if (this.backend.health() === 'unavailable') {
         this.lostSince ??= now;
+        // Silent loss: multipath queues IO up to its fast-IO-fail time. Target-side resets of
+        // every path: the IO errors at once, so the mounts fail at once.
+        if (this.backend.lostByTarget?.() === true) this.mountsBad = true;
         if (now - this.lostSince >= H.mountFailAfterS.value) this.mountsBad = true;
       } else this.lostSince = null;
       if (!this.checkDue(ctx)) return null;

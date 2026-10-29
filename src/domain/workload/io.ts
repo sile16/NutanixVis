@@ -31,6 +31,6 @@ export const WORKLOAD: WorkloadModel = {
     32,
     'assumption',
     [],
-    'Illustrative guest queue depth per vDisk. On a silent NVMe path loss the queue-depth selector holds only a few slots; round-robin fills it (SPEC §6.4c).',
+    'Illustrative guest queue depth per vDisk. On a silent NVMe path loss the queue-depth selector leaves one command on each IO queue of the dead path, so a guest this deep stalls only partially; round-robin fills it (SPEC §6.4c). Topology option guest-queue-depth.',
   ),
 };

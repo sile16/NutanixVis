@@ -22,6 +22,7 @@ export interface Citation {
     | 'NVM Express'
     | 'smartmontools'
     | 'Linux kernel'
+    | 'IETF'
     | 'Community';
   /** ISO date the source was last checked. */
   readonly retrieved: string;
@@ -354,6 +355,13 @@ const entries = {
     publisher: 'Linux kernel',
     retrieved: RETRIEVED_2026_10_28,
   },
+  'rfc-6298': {
+    title:
+      "RFC 6298: Computing TCP's Retransmission Timer (§5.5: back off the timer by doubling it on each retransmission)",
+    url: 'https://www.rfc-editor.org/rfc/rfc6298',
+    publisher: 'IETF',
+    retrieved: RETRIEVED_2026_10_28,
+  },
   'nvme-base-spec': {
     title:
       'NVM Express Base Specification (Keep Alive, Command Quiesce Time / TP4129 KATO Corrections and Clarifications)',
@@ -412,6 +420,13 @@ const entries = {
     title: 'Josh Odgers: "Nutanix Resiliency – Part 1 – Node failure rebuild performance" (2018)',
     url: 'https://www.joshodgers.com/2018/05/30/nutanix-resiliency-part-1-node-failure-rebuild-performance/',
     publisher: 'Community',
+  },
+  'odgers-ahv-io-failover-2015': {
+    title:
+      'Josh Odgers: "Acropolis Hypervisor (AHV) I/O Failover & Load Balancing" (2015; IO returns to the local Stargate "once the local stargate is back online (and stable for 300 seconds)")',
+    url: 'https://www.joshodgers.com/2015/07/29/acropolis-hypervisor-ahv-io-failover-load-balancing/',
+    publisher: 'Community',
+    retrieved: RETRIEVED_2026_10_28,
   },
   'ntnx-community-slb-rebalance': {
     title:

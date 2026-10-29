@@ -113,6 +113,19 @@ export const t1Options = {
     ['on', 'off'],
     'on',
   ),
+  // Outstanding IOs per vDisk of the illustrative guest workload. A queue-depth-bound guest with
+  // no more slots than a dead path has IO queues stalls completely on a silent path loss, even
+  // under the queue-depth selector (SPEC §6.4c item 3).
+  guestQueueDepth: option('guest-queue-depth', 'Guest queue depth per vDisk', [32, 8, 4, 1], 32),
+  // Whole-array loss (SPEC §6.4 "T1 full array loss"): crash-and-restart lets VMs whose IO has
+  // stalled past guest.ioStallCrashS crash and AHV HA restart them once the array is back
+  // (profile default, `assumption`); stall keeps IO retrying in place (DEPLOY-GUIDE wording).
+  wholeArrayLossVmBehavior: option(
+    'whole-array-loss-vm-behavior',
+    'VMs on whole-array loss (assumption)',
+    ['crash-and-restart', 'stall'],
+    'crash-and-restart',
+  ),
   // single-bond: vs1 = eth1 + eth3 bonded (DEPLOY-GUIDE Table 2). per-fabric: two storage
   // vswitches with "No Uplink Bond" (AHV Admin Guide 11.2 Table 9), vs1a = eth1 → Switch A
   // (storage-a), vs1b = eth3 → Switch B (storage-b); NVMe multipathing alone provides redundancy.

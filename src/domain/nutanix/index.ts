@@ -10,6 +10,8 @@
  * and returns the `ClusterView` handed to every backend's `attach`.
  */
 import type { NutanixDomain } from '../contracts';
+import { cited } from '../versions/cited';
+import { WORKLOAD } from '../workload/io';
 import { Vm } from '../workload/vm';
 import { nutanixActions } from './actions';
 import { ClusterDevice } from './cluster';
@@ -35,7 +37,20 @@ export const createNutanixDomain: NutanixDomain = ({ topology, profile, backendF
     return new Cvm(c, backend, reg);
   });
   for (const c of cvms) reg.cvms.set(c.id, c);
-  const vms = facts.vms.map((v) => new Vm(v, reg));
+  // `guest-queue-depth` (T1): a queue-depth-bound guest with fewer slots (SPEC §6.4c).
+  const workload =
+    facts.guestQueueDepth === null
+      ? WORKLOAD
+      : {
+          ...WORKLOAD,
+          queueDepth: cited(
+            facts.guestQueueDepth,
+            'assumption',
+            [],
+            'Topology option guest-queue-depth (illustrative guest queue depth per vDisk).',
+          ),
+        };
+  const vms = facts.vms.map((v) => new Vm(v, reg, workload));
   for (const v of vms) reg.vms.set(v.id, v);
   const cluster = new ClusterDevice(reg);
   // Contract: `attach` once after all devices exist (a backend shared by CVMs is attached once).

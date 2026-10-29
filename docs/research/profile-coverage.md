@@ -13,10 +13,10 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 |---|---|
 | verified | 39 |
 | inferred | 16 |
-| unverified | 0 |
-| assumption | 17 |
+| unverified | 1 |
+| assumption | 24 |
 | lab-observed | 0 |
-| **Total** | **72** |
+| **Total** | **80** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -33,8 +33,11 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `redirector.nopIntervalS` | 1 | inferred | `ntnx-bible-5b` | Not published. The Bible says the redirector "regularly" NOPs Stargates; the ~1 s cadence is inferred from the Bible's redirector log sample. |
 | `redirector.missesToUnhealthy` | 2 | assumption | `ntnx-blog-cvm-failure`, `ntnx-bible-5b` | Hypervisor-agnostic Autopath rule (2014): "fails to respond two or more times in a 30-second period". The AHV redirector's miss count is not published; lab L3. |
 | `redirector.missWindowS` | 30 | assumption | `ntnx-blog-cvm-failure`, `ntnx-bible-5b` | Window for the two-miss rule (hypervisor-agnostic Autopath rule, 2014); AHV value not published. |
-| `redirector.failbackStableS` | 30 | inferred | `ntnx-cmdref-aos-7.6`, `ntnx-blog-cvm-failure`, `ntnx-bible-5b` | Genesis --def_stargate_stable_interval = 30: "seconds a stargate has to be alive to be considered as stable and healthy" (Command Ref 7.6); Autopath: path restored once the CVM "has been stable for at least 30 seconds". One 2015 AHV blog says 300 s; lab L3. |
+| `redirector.failbackStableS` | 300 | unverified | `odgers-ahv-io-failover-2015`, `ntnx-bible-5b` | AHV: IO returns to the local Stargate "once the local stargate is back online (and stable for 300 seconds)" (Josh Odgers, 2015). Failback is much slower than the failover. The Genesis --def_stargate_stable_interval (30 s) is a different path: when Genesis treats a Stargate as stable for HA, not the redirector's failback. |
 | `redirector.redirectStallS` | 3 | assumption | `ntnx-bible-5b` | No published AHV figure. Extra IO pause while the initiator (Frodo/QEMU) re-logs in to the remote Stargate after the redirect decision; lab L3. |
+| `dnd.enabled` | true | inferred | `ntnx-community-dnd`, `ntnx-cmdref-aos-7.6` | Degraded Node Detection is on by default (Nutanix community); the AOS 7.6 Command Reference lists a disable-degraded-node-monitoring command to turn it off. |
+| `dnd.scoringWindowS` | 60 | assumption | `ntnx-community-dnd` | No published window. Peers score each CVM's responsiveness; a CVM that was unresponsive to them (network flaps, partial blackouts) within this window and answers again is marked Degraded at its end. |
+| `dnd.autoResolveHealthyS` | 86400 | assumption | `ntnx-community-dnd` | No published figure. A Degraded node is cleared only after a long healthy observation period (here a day) or when an operator marks it fixed. |
 | `cluster.zkMembersFt1` | 3 | verified | `ntnx-kb-1587`, `ntnx-bible-4i` | KB-1587: "Replication Factor of 2 (RF2) has 3 zookeeper servers running". |
 | `cluster.zkMembersFt2` | 5 | verified | `ntnx-kb-1587`, `ntnx-bible-4i` | KB-1587: "Replication Factor of 3 (RF3) has 5 zookeeper servers running"; FT2 needs ≥ 5 nodes (Bible 4i). |
 | `cluster.cassandraRingDetachS` | 1800 | verified | `ntnx-bible-4i`, `ntnx-kb-1256` | A node down for 30 min is removed from the metadata ring; re-added after it is stable. |
@@ -80,7 +83,11 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `externalStorage.lostPathHoldKatoMultiplier` | 3 | assumption | `nvme-base-spec-2.1` | Conservative traffic-based-keep-alive case of NVMe 2.1 §9.6.2 (2 × KATT with command-based keep-alive); which mode the array uses is not published. Retry at 3 × KATO + CQT ≈ 45 s after the last exchange. The spec lets reads retry at detection; the model holds all in-flight IO (conservative default). |
 | `externalStorage.reconnectDelayS` | 10 | assumption | `linux-nvme-host`, `spdk-nvme-multipath` | Integration value not public. Linux NVMF_DEF_RECONNECT_DELAY (10 s), as used by the CVM kernel initiator; SPDK has no default (its multipath example uses 20 s); lab L5. |
 | `externalStorage.controllerLossTimeoutS` | 3600 | verified | `everpure-nutanix-nci-cfg`, `ntnx-cmdref-aos-7.6`, `everpure-nutanix-301-deck` | Set automatically by the integration (Hades gflag --nvme_ctrl_loss_tmo 3600); long enough to ride out FA controller reboots (e.g. NDU with firmware). Until it expires, IO retries (DEPLOY-GUIDE "retries I/O until the array responds"). |
-| `externalStorage.ioTimeoutS` | 45 | inferred | `nvme-base-spec-2.1`, `everpure-nutanix-nci-cfg` | Integration value not public. NVMe 2.1 §9.6 derivation 3 × KATO + CQT applied to the published timers: must be ≥ the lost-path hold, or IO could be retried while still in flight; lab L5. |
+| `externalStorage.ioTimeoutS` | 45 | inferred | `nvme-base-spec-2.1`, `everpure-nutanix-nci-cfg` | Integration value not public. NVMe 2.1 §9.6 derivation 3 × KATO + CQT applied to the published timers: must be ≥ the lost-path hold, or IO could be retried while still in flight. An IO timeout resets the path (the host tears the association down and reconnects); lab L5. |
+| `externalStorage.tcpRtoMaxS` | 32 | assumption | `rfc-6298`, `linux-nvme-host` | TCP doubles its retransmission timer on each retransmission of the same segment (RFC 6298 §5.5). With 1 s ticks the sub-second first retries fold into 1, 1, 1 s, then 2, 4, 8, 16, 32 s. A frame lost repeatedly on a lossy link therefore waits longer and longer, until the NVMe IO timeout aborts it. |
+| `externalStorage.targetResetRetryS` | 0 | assumption | `nvme-base-spec-2.1`, `nvme-tcp-spec` | The NVMe 2.1 §9.6 wait gives the controller time to notice the loss and quiesce. A TCP reset from a target that has already torn the association down (its port lost link, or KATO passed without traffic) shows it no longer holds the commands, so they are retried at once. |
+| `externalStorage.vdiskHandoverS` | 60 | assumption | `ntnx-bible-8c`, `ntnx-bible-5b` | No published figure. The remote Stargate must take over the vDisk (ownership and NVMe reservation, Bible 8c) from a CVM that went into Hades maintenance before IO flows there. Chosen clearly longer than the redirect and shorter than an AHV HA restart. |
+| `externalStorage.wholeArrayLossVmBehavior` | 'crash-and-restart' | assumption | `ntnx-ncp-everpure-deploy-7.6`, `ntnx-bible-5b` | The deployment guide says IO retries until the array responds, which bounds nothing on the guest side. Once a VM's IO has been stalled past guest.ioStallCrashS it crashes (QEMU exits), and AHV HA restarts it after the array returns. Topology option whole-array-loss-vm-behavior: stall keeps the retry-in-place picture. |
 | `flasharray.claimExpiryDetectS` | 1 | verified | `everpure-ha-crash` | Secondary detects expired drive-quorum claims in about 1 s. |
 | `flasharray.primaryCrashPauseS` | 16 | verified | `everpure-ha-crash` | No array IO for a few seconds up to ~16 s; the model uses the documented upper bound. |
 | `flasharray.promotionMaxS` | 15 | verified | `everpure-ha-timing` |  |
@@ -92,6 +99,7 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `flasharray.controllerRebootS` | 300 | assumption | `everpure-upgrade` | Model value for one controller reboot during NDU (minutes; longer with firmware updates). Replace from lab testing. |
 | `flasharray.serviceTimeMs` | { read: 0.2, write: 0.15 } | assumption |  | Illustrative array service time for displayed latency only; never drives timing. Replace from lab measurements. |
 | `guest.linuxScsiTimeoutS` | 60 | verified | `ntnx-ahv-admin-11.2` | Recommended Linux guest SCSI device timeout. |
+| `guest.ioStallCrashS` | 180 | assumption | `ntnx-ahv-admin-11.2` | No published figure. How long a VM survives a whole-array IO stall before it crashes (QEMU exits, "VM shut down unexpectedly"): minutes, well past the guest disk timeout. |
 <!-- coverage:end -->
 
 ## Assumptions and unverified values

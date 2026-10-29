@@ -27,7 +27,7 @@ import { buildTopology, isTopologyId } from '../src/topologies';
 // ── Registry and static validation ───────────────────────────────────────────
 
 /** SPEC §7.2 backlog sizes. */
-const BACKLOG: Readonly<Record<ScenarioFamily, number>> = { t1: 18, t2: 11, t3: 7, t1lab: 3 };
+const BACKLOG: Readonly<Record<ScenarioFamily, number>> = { t1: 26, t2: 13, t3: 7, t1lab: 4 };
 
 const ACTION_KINDS = new Set([
   'fail',
@@ -53,6 +53,13 @@ const ACTION_KINDS = new Set([
   'vswitch.set-lacp-rate',
   'fabric.set-mlag',
   'fabric.set-vlan-placement',
+  'link.flap',
+  'link.set-loss',
+  'fa.interface.flap',
+  'cvm.network-flap',
+  'cvm.mark-fixed',
+  'power-on',
+  'switch.port.allow-vlan',
 ]);
 /** Proposed by stream H, pending the integrator (see docs/view-fields.md "Proposals"). */
 const PROPOSED_ACTIONS = new Set(['vm.snapshot', 'vswitch.rebalance']);

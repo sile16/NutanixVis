@@ -13,6 +13,7 @@ import {
   type ConnectRespPayload,
   NVME_MSG,
   type ReplyDraft,
+  type ResetPayload,
 } from '../nvme-tcp/protocol';
 import type { Profile } from '../versions/profile';
 import type { FaFacts, FaInterfaceFact } from './facts';
@@ -115,6 +116,27 @@ export class FaArrayDevice implements EngineDevice<Profile> {
       return t.result === 'delivered' ? 'delivered' : 'dropped';
     });
     const f = this.model.facts;
+    // A data port that loses link drops its NVMe/TCP connections (`assumption`): frames of the
+    // old associations get a TCP reset once the port is back (SPEC §6.4c "Short port flap").
+    for (const i of f.interfaces) {
+      if (i.service !== 'nvme-tcp' || i.floating) continue;
+      const link = f.linkOfNic.get(i.nic);
+      const up = link !== undefined && ctx.net.link(link)?.status === 'up' && ctx.isUp(i.nic);
+      if (this.carrier.get(i.nic) !== false && !up) {
+        const n = this.model.tearDown(i.id);
+        if (n > 0) {
+          ctx.emit({
+            severity: 'debug',
+            deviceId: i.id,
+            code: 'fa.port.connections-dropped',
+            text: `${i.id}: port lost link; the target drops its ${n} NVMe/TCP connection(s)`,
+            causeIds: this.causes.causeOf(i.nic, link),
+            cite: this.model.profile.externalStorage.targetResetRetryS.cite,
+            confidence: 'assumption',
+          });
+        }
+      }
+    }
     const nics = new Set([
       ...f.interfaces.map((i) => i.nic),
       ...f.controllers.flatMap((c) => (c.mgmtNic === null ? [] : [c.mgmtNic])),
@@ -176,6 +198,7 @@ export class FaControllerDevice implements EngineDevice<Profile> {
     m.observe(ctx.now);
     const ctrl = m.controller(this.id);
     if (!ctrl || (ctrl.state !== 'up' && ctrl.state !== 'stalled')) return;
+    if (!this.admitted(msg, ctx)) return;
     switch (msg.kind) {
       case NVME_MSG.connect:
       case NVME_MSG.keepAlive: {
@@ -205,6 +228,30 @@ export class FaControllerDevice implements EngineDevice<Profile> {
       default:
         return;
     }
+  }
+
+  /** Association check; a frame of a torn-down association gets a TCP reset instead. */
+  private admitted(msg: Message, ctx: ECtx): boolean {
+    const nvme: readonly string[] = [
+      NVME_MSG.connect,
+      NVME_MSG.keepAlive,
+      NVME_MSG.io,
+      NVME_MSG.resv,
+    ];
+    if (!nvme.includes(msg.kind)) return true;
+    const gen = (msg.payload as { readonly gen?: number }).gen ?? 0;
+    const host = (msg.payload as { readonly host?: string }).host ?? '';
+    if (this.model.admit(msg.dst, msg.src, gen, msg.kind === NVME_MSG.connect)) return true;
+    replySender(ctx)<ResetPayload>({
+      kind: NVME_MSG.reset,
+      src: msg.dst,
+      dst: msg.src,
+      size: 'small',
+      srcPort: msg.flow.dstPort,
+      dstPort: msg.flow.srcPort,
+      payload: { host, gen },
+    });
+    return false;
   }
 
   onFail(): void {

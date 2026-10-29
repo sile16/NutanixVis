@@ -59,7 +59,7 @@ The failure matrix says: no HA event, no failed IO, and latency may rise [2].
 
 **Shared rules** [9]. The blog is archived; the text was re-checked on 2026-10-27. It describes the hypervisor-agnostic Autopath of 2014, before AHV.
 - **Trigger:** "If any process fails to respond two or more times in a 30-second period", the storage path is redirected. The AHV redirector's count is not published, so the model labels 2-in-30 s an `assumption`.
-- **Failback:** "the data path will not be restored until the original CVM has been stable for at least 30 seconds." The AOS 7.6 Genesis flag `--def_stargate_stable_interval` = 30 ("seconds a stargate has to be alive to be considered as stable and healthy") supports the value [28], so it stays `inferred`. One 2015 AHV blog says 300 s (lab L3).
+- **Failback:** on AHV, IO returns to the local Stargate "once the local stargate is back online (and stable for 300 seconds)" (Josh Odgers, "Acropolis Hypervisor (AHV) I/O Failover & Load Balancing", 2015) [34]. The model uses 300 s (`unverified`). The 30 s in the hypervisor-agnostic Autopath text ("stable for at least 30 seconds") is the older, pre-AHV rule, and the AOS 7.6 Genesis flag `--def_stargate_stable_interval` = 30 [28] is when Genesis treats a Stargate as healthy, not the redirector's failback.
 
 **Stargate-down detection** [20]. A remote Stargate is seen as down through its Zookeeper session.
 - A Stargate that stops or crashes cleanly closes its session, so the IO pause is "~1 second or potentially less".
@@ -178,7 +178,7 @@ The failure matrix says: no HA event, no failed IO, and latency may rise [2].
 | 30 min | Cassandra ring detach |
 
 On return:
-- The local path is restored after 30 s stable.
+- The local path is restored after 300 s stable (AHV).
 - Over-replicated copies are cleaned up by a later Curator scan.
 - Ring re-add happens through auto ring-repair.
 
@@ -237,7 +237,7 @@ On return:
 | Name | Value | Source | Confidence |
 |---|---|---|---|
 | Autopath trigger | ≥2 misses in 30 s | [9] | assumption (2014 hypervisor-agnostic rule) |
-| Autopath failback hold | 30 s stable | [9][28] | inferred |
+| Autopath failback hold | 300 s stable | [34] | unverified |
 | AHV redirector NOP interval | ~1 s | [5] | inferred from logs |
 | AHV HA libvirt heartbeat | 1 s | [5] | verified |
 | AHV host-down timeout | 40 s (starts ~T20) | [5], AHV Admin Guide | verified |
@@ -315,4 +315,5 @@ These need portal or KB access, or Nutanix engineering:
 31. https://next.nutanix.com/how-it-works-22/scheduled-power-outage-relocating-cluster-hardware-if-you-need-to-shut-down-all-the-nodes-in-your-ahv-cluster-here-s-how-37326
 32. https://next.nutanix.com/ahv-virtualization-27/cluster-not-fully-starting-in-ce-43393
 33. https://www.reddit.com/r/nutanix/comments/1kxan8l/
+34. https://www.joshodgers.com/2015/07/29/acropolis-hypervisor-ahv-io-failover-load-balancing/
 - https://patents.google.com/patent/US11194680

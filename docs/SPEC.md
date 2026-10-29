@@ -215,7 +215,9 @@ This keeps the reference's key property that all devices see a consistent snapsh
   - **MAC-pinning rebalance** follows OVS: a hash moves only off a member that carries at least 2 hashes with traffic, at least 3 % more load than the lighter member, and only if the move narrows the gap. The 1 Mbps floor is not modeled (loads are message counts).
   - **Misplacement.** If the VLAN a vNIC uses is not carried on the surviving member's switch, its traffic blackholes. The bond is not VLAN-aware.
 - **MTU mismatch.** Messages are tagged with a size class (`small` for heartbeats and keep-alives, `large` for 1 MiB IO). Large frames are dropped on links whose MTU is lower than the endpoint MTU, so the "small IO works, large IO stalls" misconfiguration can be shown.
-- **Latency.** Latency accumulates along the path into IO latency reported by VMs. It is illustrative only and never drives timing.
+- **Latency.** Latency accumulates along the path into IO latency reported by VMs. It is illustrative and never drives timing; the NVMe queue-depth selector weighs it when it spreads IO (§6.4c "Slow link").
+- **Grey failure (`link.set-loss`).** A link keeps carrier and forwards, but each frame crossing it is lost with the given per-packet probability. A `large` frame stands for a multi-packet data transfer (`largeFrameSegments`, model granularity), so data is hit far more often than single-packet keep-alives. The draw is a deterministic hash of the link and a per-link frame counter (drop reason `loss`).
+- **Flap (`link.flap`).** Carrier drops now and returns after the given time, applied at the start of that tick before any traffic.
 
 ### 5.4 Messages and traces
 
@@ -239,6 +241,7 @@ type Trace   = { msgId; kind; links: LinkId[]; result: 'delivered'|'dropped'; dr
   - `fail`, `recover`, `power-off` and `reboot`
   - `link-down` / `link-up`, and `set-latency`
   - kind-specific ones: `fa.controller.failover` (planned), `fa.ndu`, `fa.io-stall`, `fa.interface.disable` / `enable` (one FA data IP), `cvm.stop-stargate`, `host.isolate`, `disk.fail`, `switch.fail`, `switch.port.prune-vlan`
+  - timed and grey-failure injections: `link.flap {durationS}` and `fa.interface.flap {durationS}` (the FA port behind one IP loses link, then returns), `link.set-loss {pct}`, `set-latency {ms}`, `cvm.network-flap {durationS}` (the CVM's inter-CVM interface stops answering, then returns), and the operator action `cvm.mark-fixed` (clear a Degraded node, §6.2)
 - **Runtime network-configuration actions.** These can be changed **mid-scenario**, so users can compare bond setups on the same running workload:
   - `vswitch.set-bond-mode` sets Active-Backup, MAC pinning, LACP or no-bond. It applies to every host on that virtual switch, because Nutanix does not support mixed bond modes (AHV Admin Guide).
   - `vswitch.set-uplinks` adds or removes NICs from the bond.
@@ -272,6 +275,8 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
   - A running VM emits read and write IO every tick to its vDisk owner, which is the local Stargate when healthy.
   - IO latency is shown, and IO that is pending for longer than the guest timeout produces an event.
   - `io-stalled` means IO is pending but the VM is still running.
+  - **Queue depth.** Each vDisk keeps at most `queueDepth` IOs outstanding (32, illustrative). The T1 option `guest-queue-depth` (32, 8, 4, 1) models a queue-depth-bound guest with few slots, which a silent path loss can stall completely (§6.4c item 3).
+  - **Whole-array loss (T1).** With `whole-array-loss-vm-behavior: crash-and-restart` (default), a VM whose oldest IO has waited `guest.ioStallCrashS` while no CVM reaches the array crashes ("VM shut down unexpectedly": QEMU exits), and AHV HA restarts it once the array and the cluster services are back (§6.4).
 - **vDisk.** Each vDisk has an owner Stargate. Ownership moves on a CVM redirect, or after 300 s or more of remote IO (Bible 4a).
 
 ### 6.2 Nutanix cluster (shared by T1 and T2)
@@ -314,7 +319,10 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
   - All NVMf volumes are re-mapped every `hades.mapNvmfVolumesIntervalS` = 300 s.
 - **Model (`inferred`).**
   - The kernel path uses the same storage vNICs and FA ports as Stargate's initiator, so "no live NVMe path" stands in for "service volumes unreachable".
-  - In maintenance the CVM's services stop (Stargate, ZK member, Cassandra, Acropolis), exactly as for a CVM that is down. The redirector moves the host's VM IO to a Stargate that reaches the array, and seats and leaders move.
+  - **When.** The kernel initiator queues IO while it waits for a path (controller loss 3600 s), so the mount check fails only once its IO is abandoned at the NVMe IO timeout (`externalStorage.ioTimeoutS`). Maintenance therefore follows path-loss detection (KATO), that timeout, the next monitor check and the 5 s threshold: about a minute after a silent loss, after the silently lost path's own IO has been abandoned.
+  - **Admission (`assumption`).** Maintenance takes the node out of the cluster, so it is admitted only while the nodes already out (down or in maintenance) stay within the N−2 / N−3 tolerance. A refused node (`hades.maintenance.refused`) keeps its Stargate up, its IO retries in place, and Hades retries at every check. On a whole-array loss every node tries, but only N−2 get in.
+  - In maintenance the CVM's services stop (Stargate, ZK member, Cassandra, Acropolis), exactly as for a CVM that is down. The redirector moves the host's VM sessions to a Stargate that reaches the array, and seats and leaders move.
+  - **vDisk handover (`externalStorage.vdiskHandoverS`, `assumption`).** The remote Stargate must take each vDisk over from the CVM in maintenance (ownership and NVMe reservation, Bible 8c) before it serves its IO. The guest sees the redirect within seconds, but its IO resumes only after the handover: clearly longer than the redirect, shorter than an AHV HA restart.
   - The initiator keeps reconnecting meanwhile. The first re-map that finds the array restarts the services (`cluster.cvmBootS` settling), and the sessions then fail back.
 - **Lab switch.** The topology option `hades-maintenance-on-storage-error` (default `on`, the profile's `hades.maintenanceOnStorageError`) turns this off for lab L1. With it off, a CVM without paths keeps its Stargate up and IO retries in place (DEPLOY-GUIDE default).
 
@@ -327,6 +335,14 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
   - **T+120:** the host's VMs are restarted on hosts with capacity (Bible 5b; AHV Admin Guide).
 - An isolated host's VMs self-terminate 45 s after their first failed IO. The model asserts that no VM ever runs twice.
 - HA reservation is `best-effort` or `guarantee` (N+1 for FT1, N+2 for FT2).
+- **What HA watches.** AHV HA reacts to the Acropolis leader losing a host's management services (its libvirt heartbeat). The leader polls its own host over the internal `virbr0` bridge, so a host whose management IP is unreachable but whose CVM is the leader still answers and does not trigger HA. Other hosts are polled on their management IP (Bible 5b; AHV Admin Guide "Fault Detection for High Availability").
+
+**Degraded Node Detection** (Nutanix community "Degraded Node Detection"; Command Reference 7.6 lists a `disable-degraded-node-monitoring` command; profile `dnd.*`)
+
+- DND is on by default. Peers score each CVM's responsiveness. A running CVM that its peers cannot reach (outside the quorum side, for example during a network flap or a partial blackout) starts a scoring window of `dnd.scoringWindowS` (`assumption`).
+- If the CVM answers again by the end of the window, it is marked **Degraded** (`dnd.node.degraded`): its Cassandra goes to **forwarding mode** (metadata store disabled, `ringState: forwarding`), so it holds no live metadata replica, the cluster's node-failure tolerance drops, and an alert is raised. A CVM still cut off or down at the end is not a degraded-node case; isolation and HA handle it.
+- While a node is Degraded, a second CVM outage can leave metadata key ranges without a Paxos majority, so cluster storage goes down although only one CVM is down (T2-13).
+- It is cleared only after a long healthy observation period (`dnd.autoResolveHealthyS`, `assumption`) or when an operator marks it fixed (`cvm.mark-fixed`).
 
 **Cluster status (derived)**
 
@@ -364,7 +380,7 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 
 - The iSCSI redirector sends a NOP to the local Stargate about every 1 s. The interval is not published; the cadence is inferred from the Bible's redirector log sample.
 - Two or more misses in 30 s mark it unhealthy, and the session moves to a healthy remote Stargate. This is the hypervisor-agnostic Autopath rule from 2014; the AHV count is not published (`assumption`).
-- Failback happens after the local Stargate has been stable for 30 s (`inferred`: Genesis `--def_stargate_stable_interval` = 30 s, Command Reference 7.6; Nutanix blog). One 2015 AHV blog says 300 s (lab L3).
+- Failback happens only after the local Stargate has been stable for `redirector.failbackStableS` = 300 s ("once the local stargate is back online (and stable for 300 seconds)", Josh Odgers 2015, `unverified`). Failback is much slower than the failover. The Genesis `--def_stargate_stable_interval` (30 s) is a different path: when Genesis treats a Stargate as healthy, not the redirector's failback.
 - A session with no target (every Stargate was failing) logs in afresh to the first Stargate that answers again, preferring the local one; the failback hold only applies to moving a working session.
 - The duration of the IO pause while the initiator (Frodo/QEMU) re-logs in is an `assumption` (`redirectStallS`, 3 s).
 
@@ -465,10 +481,13 @@ Each model is a state machine plugged into the engine primitives. Timers and rul
 
 **T1 full array loss**
 
-- All cluster-service volumes are on the FA. Every node enters Hades maintenance mode (§6.2), so cluster services fail, Prism Element goes down and there is no HA.
-- Per the default path-loss handling, VM IO retries until the array returns.
-- **Recovery** (`inferred`): paths reconnect while the nodes are in maintenance. The next periodic re-map, `hades.mapNvmfVolumesIntervalS` after maintenance began, restarts the services (`cluster.cvmBootS`). Then quorum re-forms and the stalled IO completes in place.
-- The exact guest-visible effect (how long until guest OS IO errors) is an `assumption` (**[OPEN-7]**). How long Stargate tolerates hung operations before it restarts is not public (**[OPEN] Stargate hung-op threshold**).
+- All cluster-service volumes are on the FA, so ZK quorum, cluster services and Prism Element go down and there is no HA. Every node tries to enter Hades maintenance mode, but only N−2 (N−3) are admitted (§6.2); the rest keep trying with their Stargate up.
+- VM IO stalls everywhere. What the VMs then do is the topology option `whole-array-loss-vm-behavior` (`assumption`, default from `externalStorage.wholeArrayLossVmBehavior`):
+  - `crash-and-restart` (default): a guest cannot wait forever. Once a VM's IO has stalled `guest.ioStallCrashS` (minutes) it crashes (QEMU exits, "VM shut down unexpectedly"). Nothing restarts it while the array is gone; after the array returns and the services re-form, AHV HA restarts the VMs on hosts whose CVM reaches the array (T1-26).
+  - `stall`: the DEPLOY-GUIDE wording taken literally: VM IO retries until the array responds, and the VMs resume in place.
+- An outage shorter than `guest.ioStallCrashS` only stalls the VMs under either option (T1-10).
+- **Recovery** (`inferred`): paths reconnect. Seats lost for `serviceVolumeMigrationDelayS` move to array-connected CVMs, so quorum and the services can re-form before the nodes in maintenance return; those restart at their next periodic re-map (`hades.mapNvmfVolumesIntervalS` after maintenance began, then `cluster.cvmBootS`).
+- How long Stargate tolerates hung operations before it restarts is not public (**[OPEN] Stargate hung-op threshold**).
 
 ### 6.4b Path usage: how one vDisk's IO spreads (T1)
 
@@ -512,18 +531,24 @@ The integration sets the multipath and NVMe timers automatically, and they must 
 
 1. **Keep-alive.** The host sends Keep Alive on each path's admin queue every KATO/2. The target (the FA controller) also tears down an association that goes quiet for KATO.
 2. **Detecting a lost path.** The initiator runs **inside the CVM**, whose vNIC never sees a host uplink, cable or switch lose carrier.
-   - **Silent losses, the normal case:** a node NIC, cable or switch failure, an FA port failure, an FA controller crash, a pruned VLAN, or a strict-A/B frame with no member carrying its VLAN. In each case, keep-alive goes unanswered and the path is lost **KATO after the last successful exchange**. (The spec allows detection anywhere up to 1.5 × KATO; the model uses KATO.)
+   - **Silent losses, the normal case:** a node NIC, cable or switch failure, an FA port failure, an FA controller crash, a pruned VLAN, or a strict-A/B frame with no member carrying its VLAN. In each case, keep-alive goes unanswered and the path is lost **KATO after the last successful exchange**. (The spec allows detection anywhere up to 1.5 × KATO; the model uses KATO.) Keep-alive is traffic-based, the mode the hold below assumes: a completed IO command counts as an exchange, so a path that still completes IO is not declared lost when a keep-alive goes astray.
    - **Fast losses, the exception:** if the far end is reachable and actively closes the connection, the path is lost on that error before KATO. Examples are a TCP reset, a disabled FA interface, or a graceful controller reboot during NDU (`inferred`).
 3. **IO around a path loss.**
    - **During the detection window** the initiator cannot tell the path is dead, so **new IO still goes to it** according to the path selector; nothing is redistributed until the path is declared lost.
-     - `queue-depth`: the dead path's commands never complete, so its outstanding count grows and it soon stops getting new IO. A few commands are stuck: a **partial stall** (lower effective queue depth plus latency outliers).
-     - `round-robin`: every Nth new command goes to the dead path. A guest that keeps its queue full re-issues each completed IO at once, so within moments **all** its queue slots sit on the dead path: the guest **stalls completely** until the hold below expires. (`assumption`: the model's few IOs per tick stand for that closed loop.)
+     - `queue-depth`: each of the dead path's IO queues (`ioQueuesPerPath`) is idle, at depth 0, just like the live ones, so a guest that re-issues each completed IO at once lands a command on every dead queue within moments; after that the dead queues are deeper than the live ones and get no more. **The rule:** a queue-depth-bound guest whose queue depth is at most the number of IO queues the dead path holds has every slot stuck: it **stalls completely** until the stuck commands are abandoned (the hold below), then IO resumes on the surviving paths with no guest error (T1-22, `guest-queue-depth: 4`). A deeper queue keeps most of its slots: a **partial stall** (lower effective queue depth plus latency outliers).
+     - `round-robin`: every Nth new command goes to the dead path, so **all** of a closed-loop guest's slots end up there whatever its queue depth: a complete stall until the hold expires.
+     - (`assumption`: the model's few IOs per tick stand for that sub-millisecond closed loop. A path counts as dead for it only while it completes no IO at all, so a lossy path is not a sink.)
    - **After the loss is declared,** new IO uses the remaining live paths. All paths are ANA Optimized, so with `active-active` the load just redistributes.
    - **Commands in flight on a silently lost path** are retried on another path only at **`lostPathHoldKatoMultiplier` × KATO + CQT after the path's last successful exchange**. NVMe 2.1 §9.6.2 asks the host to wait until the controller must have detected the loss (2 × KATT with command-based keep-alive, 3 × KATT with traffic-based), then CQT, so the target can quiesce them and no stale or duplicate write lands. The multiplier is 3, an `assumption` (the conservative traffic-based case; the array's mode is not published). The spec lets reads retry at detection; the model holds all IO.
    - **On a closed connection** (fast loss) the keep-alive wait does not apply (§9.6.2 step 2c): new IO moves to the other paths at once and commands in flight wait **CQT**.
    - So the worst case for a single command is about **3 × KATO + CQT ≈ 45 s** after a silent loss, and CQT after a closed connection. With `queue-depth` the VM sees outliers on a fraction of its IO; with `round-robin` a queue-depth-bound guest sees a hard pause of that length. A guest only sees errors if the wait exceeds its disk timeout (Linux SCSI timeout 60 s, AHV Admin Guide).
-   - **IO timeout.** A command stuck on a live but broken queue (a hung bond member, no carrier loss) is aborted after `ioTimeoutS` and retried. It must be at least the hold above, or a command could be retried while still in flight: 45 s (`inferred`, the same §9.6 derivation applied to the published timers).
+   - **IO timeout.** A command stuck on a live but broken queue (a hung bond member, a lossy link, no carrier loss) is aborted after `ioTimeoutS` and retried on another path, and the host **resets the path** (error recovery: it tears the association down and reconnects after `reconnectDelayS`). It must be at least the hold above, or a command could be retried while still in flight: 45 s (`inferred`, the same §9.6 derivation applied to the published timers).
+   - **TCP retransmission.** A frame the network dropped silently is resent with a doubling timer (RFC 6298 §5.5): 1, 1, 1, 2, 4, … s up to `tcpRtoMaxS` (the sub-second first retries fold into 1 s ticks). Keep-alives are resent every second.
+   - **Target reset.** The target tears an association down when it goes quiet for KATO, or at once when the FA port it lives on loses link (`assumption`). A later frame of that association is answered with a TCP reset. After a silent loss the host keeps retransmitting the oldest held command on the old connection, and probes it again right after a reconnect; a reset proves the target holds none of the held commands, so they are retried after `targetResetRetryS` (0) instead of waiting out the hold (`nvme.io.released`).
 4. **Reconnect.** A lost path retries every `reconnectDelayS`. When it reconnects, the path is restored (Optimized) and IO rebalances onto it.
+   - **Short port flap (T1-23).** If the FA port returns before the stuck IO is abandoned, the target resets the stale connections, so the stuck IO is retried at once: the guest stall is about the outage length (plus the reconnect delay when the outage outlasted KATO), not the 45 s hold. The initiator then runs a normal reconnect cycle.
+   - **Lossy link (T1-24, grey failure).** No path is declared failed: keep-alives are single packets and get through, and completed IO counts as keep-alive. IO on the lossy path is resent with backoff, so it sees multi-second latency outliers and short stalls, and its outstanding commands steer the queue-depth selector away. Eventually a command waits past the IO timeout: it is retried on the healthy fabric and the path is reset and reconnects. Once the loss is removed the path is used like the others.
+   - **Slow link (T1-25).** Added latency on one path: its IO completes later by the added latency (once per crossing). A slower path drains its queue more slowly, so under `queue-depth` it holds more commands and gets proportionally less new IO (Little's law: it is eligible about every (its latency ÷ the fastest path's latency)-th turn), but it keeps being used. `round-robin` ignores latency and keeps an equal share.
 5. **Controller loss.** If a path has not reconnected within `controllerLossTimeoutS`, its controller is deleted, and the path stays gone until it is rediscovered.
    - The timeout is set long enough to ride out long FA controller reboots, such as an NDU with a firmware update.
 6. **All paths lost** (the CVM, its fabric or the array):
@@ -547,7 +572,7 @@ This is the reference that E, F, G and H implement. Each row is about **one** fa
 | Failure | Detector and timer | IO effect | VM / HA effect | Data effect |
 |---|---|---|---|---|
 | **Stargate process down** (CVM up) | iSCSI redirector NOP to the local Stargate, about 1 s; ≥2 misses in 30 s mark it unhealthy (`inferred`) | The QEMU iSCSI re-login is redirected to a healthy remote Stargate (AHV Admin Guide "Storage Overview"). There is a brief stall whose length is an `assumption`. Latency rises. | None | Rebuild starts 60 s after the Stargate is declared down (clean stop: about 1 s), §6.3 |
-| **CVM down** (host up) | Same as above, plus loss of the CVM's ZK and Cassandra membership | Redirected to a remote CVM (AHV Admin Guide). Failback after 30 s stable. | None, and the VM keeps running (AHV Admin Guide) | Writes needing its replicas stall until it is declared down (about 20 s); rebuild starts 60 s later (§6.3). The node is detached from the Cassandra ring after 30 min. Leaders it held are re-elected. |
+| **CVM down** (host up) | Same as above, plus loss of the CVM's ZK and Cassandra membership | Redirected to a remote CVM (AHV Admin Guide). Failback only after 300 s stable, much slower than the failover. | None, and the VM keeps running (AHV Admin Guide) | Writes needing its replicas stall until it is declared down (about 20 s); rebuild starts 60 s later (§6.3). The node is detached from the Cassandra ring after 30 min. Leaders it held are re-elected. |
 | **Host / node down** | Acropolis leader heartbeat at 1 Hz; HA fault detection also covers host management-service heartbeats and a corrupt or read-only root FS (AHV Admin Guide) | — | T+20 the 40 s timeout starts; T+60 fence; T+120 restart, subject to resources. HA status goes OK → Healing → Critical/OK. | As for CVM down |
 | **Host network isolation** | As for host down, from the majority side | The local Stargate cannot complete RF writes and is in the ZK minority, so writes fail. Reads fail too, because there is no metadata majority (`inferred`). | Isolated VMs self-terminate 45 s after their first failed IO, then restart on the majority side by T+120 | The majority declares its Stargate down at ZK session expiry (about 20 s); rebuild starts 60 s later (§6.3) |
 | **One uplink or ToR down** | Bond: active-backup on link state; LACP fast ≤3 s / slow ≤90 s | Hashes on the dead member blackhole until detection (LACP only) | None if a member survives | None |
@@ -569,10 +594,13 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 | **FA secondary controller down** | Keep-alive (KATO): a crash is silent | Only IO on its paths stalls, then retries on the primary's paths at 3 × KATO + CQT (§6.4c). A graceful reboot (NDU) closes the connections instead: its paths are lost at once and in-flight IO waits CQT. | None | None |
 | **FA IO stall on primary** | IO delay timeout of 15 s, then giveback | Pause of 15 s plus promotion | None | None |
 | **Stargate or CVM down** (host up) | Redirector NOP (as in T2) | Redirected to a remote Stargate, which takes the vDisk lock and NVMe Persistent Reservation (Bible ext-storage) | None | None (no rebuild) |
-| **One CVM loses all array paths** | Its service volumes are gone too. Hades checks every 5 s, marks the error critical after 5 s and puts the node in maintenance mode (Command Ref 7.6). Its Stargate stops, then the redirector NOP rule applies. | IO pauses for KATO, up to 10 s more, and the redirect, then runs on a remote Stargate that reaches the array (`inferred`). After the paths return, the next 300 s re-map restarts the services (`cvmBootS`) and sessions fail back. | None. The VMs keep running on their host. The Acropolis leader and the ZK seat move off the node (the seat after 300 s). | None |
+| **One CVM loses all array paths** | Its service volumes are gone too. The volume check's IO is abandoned at the NVMe IO timeout; Hades checks every 5 s, marks the error critical after 5 s and puts the node in maintenance mode (Command Ref 7.6). Its Stargate stops, then the redirector NOP rule applies. | IO pauses for KATO, the IO timeout, up to 10 s more and the redirect; the remote Stargate then takes the vDisks over (`vdiskHandoverS`, `assumption`) before IO runs there (`inferred`). After the paths return, the next 300 s re-map restarts the services (`cvmBootS`) and sessions fail back after 300 s stable. | None. The VMs keep running on their host. The Acropolis leader and the ZK seat move off the node (the seat after 300 s). | None |
 | **One CVM loses all array paths, Hades maintenance off** (lab option) | Stargate still answers NOPs, so **the redirector has no reason to move** (`inferred`) | **IO retries until the array responds** (DEPLOY-GUIDE) | Optional **per-VM force-shutdown timeout** restarts the VM on a node with connectivity (DEPLOY-GUIDE). Otherwise the VM stalls. | None |
 | **Host / node down** | As in T2 | — | AHV HA as in T2. The cluster tolerates N−2 (<5 nodes) or N−3 (≥5) simultaneous node failures, and services resume automatically (DEPLOY-GUIDE). If the lost nodes held a ZK majority of seats, services resume only once the seats move (300 s). The new leader then runs the HA timeline from its own election. | None |
-| **Whole array or both fabrics down** | Every node enters Hades maintenance mode | All IO retries until the array returns (DEPLOY-GUIDE). Cluster services and Prism Element stop, because their volumes are on the array. After the array returns, the next 300 s re-map restarts the services (`cvmBootS`), then the stalled IO completes. | VMs stall; per-VM force-shutdown only helps if some node still has connectivity. No HA. | None |
+| **Whole array or both fabrics down** | Every node tries Hades maintenance mode; only N−2 (N−3) are admitted, the rest keep trying | All IO stalls (DEPLOY-GUIDE: it retries). Cluster services and Prism Element stop, because their volumes are on the array. After the array returns, paths reconnect, seats migrate or the next 300 s re-map restarts the services (`cvmBootS`). | `whole-array-loss-vm-behavior`: `crash-and-restart` (default, `assumption`): VMs crash after `guest.ioStallCrashS` of stalled IO and AHV HA restarts them after the array returns; `stall`: VMs stall and resume in place. Per-VM force-shutdown only helps if some node still has connectivity. | None |
+| **FA port flap** (link down, then up) | The target drops the port's connections (`assumption`); hosts see silence, then a TCP reset | Stuck IO is retried as soon as the port returns (the reset), so the stall is about the outage; then a normal reconnect | None | None |
+| **Lossy link** (grey failure) | Nothing declares it: keep-alive and completed IO keep the path live | Multi-second outliers on that path; eventually an IO timeout retries the command elsewhere and resets the path; used again once the loss is gone | None | None |
+| **Slow link** (added latency) | Nothing declares it | Queue-depth shifts share to faster paths but keeps using it; its IO is slower by the added latency | None | None |
 | **FA mgmt API down or slow** | — | Running IO is unaffected | Provisioning, snapshot and DR tasks fail | None |
 
 **Known gaps.** These are `assumption` values in the profile until a public source exists:
@@ -580,7 +608,7 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 - The length of the redirect stall.
 - The integration's NVMe reconnect delay, IO timeout, path selector and keep-alive mode (command- or traffic-based), and whether reads skip the in-flight hold. KATO, CQT and controller loss are published.
 - The default per-VM force-shutdown timeout.
-- The guest-visible effect of a long array outage.
+- How long a guest survives a whole-array IO stall (`guest.ioStallCrashS`), the vDisk handover time (`vdiskHandoverS`), maintenance admission, and the target's connection reset on port link loss.
 
 ### 6.5 Default reference topologies
 
@@ -682,7 +710,7 @@ T1 (AHV + FlashArray):
 7. An AHV host loses power, and HA restarts its VMs by T+120.
 8. A CVM fails while the host stays alive.
 9. A node loses both storage uplinks but keeps `vs0`. Hades puts the node in maintenance mode and its VMs move to a remote Stargate; a lab variant with Hades maintenance off shows the retry-in-place default. **[OPEN-6]**
-10. Both storage switches fail, or the whole array is lost. Every node enters Hades maintenance mode; services return at the next 300 s re-map after the array does.
+10. Both storage switches fail, or the whole array is lost, for less than a guest can wait. Every node tries Hades maintenance mode but only N−2 are admitted; VMs stall and resume in place once the array is back and the services re-form.
 11. Misconfiguration: single storage VLAN, then a switch failure.
 12. Misconfiguration: MTU mismatch.
 13. The FA mgmt API is unreachable, so snapshots fail while IO continues.
@@ -694,10 +722,15 @@ T1 (AHV + FlashArray):
 19. Misconfiguration: switch flow control (PFC or global pause) enabled.
 20. **Hung Switch A with every host's `vs0` active on it** (OVS default). No bond notices, CVM-to-CVM traffic is lost cluster-wide, Zookeeper quorum is lost and writes stop, although the NVMe paths through Switch B are healthy. No HA restarts. Powering Switch A off fails every `vs0` over and the cluster recovers.
 21. **Hung Switch A with `vs0-active-member: alternate`.** Nodes 1 and 3 are each isolated. They hold two of the three ZK seats, so nodes 2 and 4 regain quorum (N−2) only when the seats move, after 300 s. The new leader then marks the isolated hosts disconnected and their VMs self-terminate. AHV HA fences the hosts 40 s later and restarts the VMs 60 s after that.
+22. **Silent path loss, queue-depth-bound guest.** One FA IP goes silent under the default queue-depth selector: a guest whose queue depth fits in the dead path's IO queues stalls completely until the stuck IO is abandoned, then resumes on the surviving paths with no error; a deep queue stalls only partially (§6.4c item 3).
+23. **Short FA port flap** (3 s and 20 s). The target resets the stale connections when the port returns, so the stuck IO is retried at once: the stall is about the outage, followed by a normal reconnect.
+24. **Lossy FA port cable** (grey failure). No path is declared failed; IO sees multi-second outliers until an IO timeout retries elsewhere and resets the path; the path is used again once the loss is removed.
+25. **Slow FA port cable** (added latency), queue-depth vs round-robin: queue-depth shifts share away from the slow path but keeps using it; round-robin keeps an equal share.
+26. **Whole array lost for minutes**, `whole-array-loss-vm-behavior` crash-and-restart vs stall: maintenance is admitted for only N−2 nodes; VMs crash after `guest.ioStallCrashS` and AHV HA restarts them after the array returns, or they stall in place.
 
 T2 (HCI AHV):
 
-1. CVM power-off triggers Autopath, then failback after 30 s stable.
+1. CVM power-off triggers Autopath; failback after 300 s stable, much slower than the failover.
 2. Host power loss: fence at T+60, restart at T+120, rebuild from about T+80 (about 64 min), ring detach at 30 min mid-rebuild.
 3. Host network isolation, with isolated VMs self-terminating at 45 s.
 4. The host running the Acropolis leader fails.
@@ -709,6 +742,7 @@ T2 (HCI AHV):
 10. Block failure with block awareness met vs not met.
 11. A 3/2 partition on a 5-node cluster.
 12. Total partition (both ToRs down): no quorum anywhere, VMs self-terminate 45 s after their first failed IO, and the new leader restarts them when the network returns.
+13. **Degraded Node Detection.** A CVM's network flaps; after the scoring window it is marked Degraded (metadata store in forwarding mode, FT reduced). A second CVM outage then takes cluster storage down; marking the node fixed brings it back.
 
 T3 (CO + SO / CO + HCI):
 
@@ -901,7 +935,7 @@ Stream H raised these while writing the acceptance scenarios. Each is labeled wi
 
 | # | Question | Decision | Confidence |
 |---|---|---|---|
-| 1 | Total partition: no side has a quorum majority (T1-10 both switches; T2-12 both ToRs). | No fencing and no HA restart while no quorum exists. **T1:** VM IO **retries until the array responds** (DEPLOY-GUIDE), so VMs are `io-stalled` and do not self-terminate. Every node is in Hades maintenance mode, and the VMs resume in place after the next service-volume re-map once the fabric returns. **T2/T3:** a VM whose IO fails self-terminates 45 s after its first failed IO (Bible 5b ties the rule to IO failure, `inferred`). When quorum re-forms, the new Acropolis leader restarts the VMs that were running (anecdotal: public r/nutanix thread, "the system will return to its previous state"). | `inferred` / anecdotal **(owner)** |
+| 1 | Total partition: no side has a quorum majority (T1-10 both switches; T2-12 both ToRs). | No fencing and no HA restart while no quorum exists. **T1:** VM IO **retries until the array responds** (DEPLOY-GUIDE), so VMs are `io-stalled` and do not self-terminate. Every node tries Hades maintenance mode (only N−2 are admitted), and the VMs resume in place once the fabric returns and the services re-form; an outage longer than `guest.ioStallCrashS` crashes them instead and AHV HA restarts them afterwards (#13). **T2/T3:** a VM whose IO fails self-terminates 45 s after its first failed IO (Bible 5b ties the rule to IO failure, `inferred`). When quorum re-forms, the new Acropolis leader restarts the VMs that were running (anecdotal: public r/nutanix thread, "the system will return to its previous state"). | `inferred` / anecdotal **(owner)** |
 | 2 | T1-05 NDU: controller reboot time, and the final primary. | Add `flasharray.controllerRebootS` to the profile (`assumption`). The upgrade does **not** fail back: the controller upgraded first ends as primary. | `assumption` / `inferred` |
 | 3 | T1-17: LACP without MLAG. | Follow the engine's OVS-like behavior: only members to one partner aggregate (`lacpState: partial`). Redundancy is lost but traffic is not blackholed. | `inferred` |
 | 4 | T1-18 / T2-06: slow LACP with a hung member. | **T1:** if the path's admin-queue connection hashes to the hung member, keep-alive fails, the path is lost after KATO, and IO continues elsewhere. Stuck IO-queue connections wait for an NVMe IO timeout, a new profile field `externalStorage.ioTimeoutS` (`assumption`). **T2:** if host-management flows blackhole past the 40 s disconnect timeout, AHV HA triggers (AHV Admin Guide). | `inferred` + `assumption` |
@@ -909,9 +943,14 @@ Stream H raised these while writing the acceptance scenarios. Each is labeled wi
 | 6 | T3-07: configured FT for T3. | Add `replication-factor` (2 / 3) to T3 topologies. RF/FT count only CVM-bearing nodes. | decided |
 | 7 | T1-lab-3: what starts the force-shutdown timer, and the restart delay. | Counts from the **first IO that could not complete** on that VM. On expiry the VM is powered off and restarted through AHV HA on a node with array connectivity, at the next HA cycle. | `assumption` (lab L2) |
 | 8 | T2-04: initial Acropolis leader. | Deterministic: the lowest node id (`node-1`). | decided (model) |
-| 9 | CVM boot time. | Add `cluster.cvmBootS` to the profile (`assumption`). Failback is still gated by the 30 s stable rule after `stargate.up`. | `assumption` |
+| 9 | CVM boot time. | Add `cluster.cvmBootS` to the profile (`assumption`). Failback is still gated by the `failbackStableS` (300 s) stable rule after `stargate.up`. | `assumption` |
 | 10 | T1-20: what a hung switch does to `vs0` active-backup. | Nothing detects it (OVS checks carrier only; AHV's gateway checks run only during vswitch changes). With every host active on the hung switch, ZK quorum is lost at once, writes stop and HA does nothing. Recovery only through carrier loss: power-off or port admin-down. | `verified` (no detection) / `inferred` (cluster effect) |
 | 11 | T1-21: HA timeline for hosts isolated by a hung switch. | The existing AHV HA model: leader re-election at T+20 when the leader host is isolated, disconnected at T+20, fenced at T+60, isolated VMs self-terminate 45 s after the first failed IO, restart by T+120. The AHV Admin Guide's "disconnected for 40 seconds, the VMs are restarted" would let restarts begin at T+60; the model restarts at the Bible's T+120 bound. | `inferred` |
+| 12 | Behavior over exact timing: what order things happen in, and at what rough scale. | The model keeps this relative order (fast → slow): a redirect after a clean Stargate stop (about a second) < abandoning IO stuck on a silently lost path (3 × KATO + CQT, about 45 s) < Hades maintenance (path-loss detection, the abandoned check IO and the 5 s threshold, about a minute) < the vDisk handover to a remote Stargate (`vdiskHandoverS`, 60 s) < an AHV HA restart (120 s) < redirector failback (300 s stable) < Degraded-node auto-resolve (`dnd.autoResolveHealthyS`). Values are cited profile values or labeled `assumption`s chosen to keep that order. | decided |
+| 13 | Whole-array loss: what VMs do (`whole-array-loss-vm-behavior`). | `crash-and-restart` (default): VMs whose IO stalls past `guest.ioStallCrashS` crash (QEMU exits, "VM shut down unexpectedly") and AHV HA restarts them after the array returns. `stall`: IO retries in place, the DEPLOY-GUIDE wording. Only N−2 (N−3) nodes are admitted to Hades maintenance at once; the rest keep trying. | `assumption` **(owner)** |
+| 14 | Silent path loss under the queue-depth selector. | Full stall when the guest's queue depth is at most the number of IO queues the dead path holds; partial stall for deeper queues; round-robin stalls fully at any depth (§6.4c item 3). | `assumption` |
+| 15 | Port flap, lossy link, slow link. | The target drops a port's connections when it loses link and resets later frames of them, so stuck IO is retried at once; an IO timeout resets the path; keep-alive is traffic-based; the queue-depth selector weighs path latency (§6.4c). | `assumption` / `inferred` |
+| 16 | Degraded Node Detection. | A CVM unresponsive to its peers and responsive again by the end of `dnd.scoringWindowS` is Degraded: metadata store in forwarding mode, FT reduced, alert; cleared after `dnd.autoResolveHealthyS` or `cvm.mark-fixed` (§6.2). | `assumption` |
 
 ### Phase 2 contract backlog (from stream H)
 

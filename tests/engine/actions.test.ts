@@ -18,6 +18,8 @@ describe('action registry', () => {
       'link-down',
       'hang',
       'set-latency',
+      'link.flap',
+      'link.set-loss',
       'switch.port.prune-vlan',
     ]);
     expect(kinds(s.availableActions('h1'))).toEqual(['fail']);
@@ -43,6 +45,7 @@ describe('action registry', () => {
       'link-up',
       'hang',
       'set-latency',
+      'link.set-loss',
       'switch.port.prune-vlan',
       'switch.port.allow-vlan',
     ]);

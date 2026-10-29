@@ -57,6 +57,12 @@ export class Registry implements NutanixClusterView, VmEnv {
   /** Spare replicas above Paxos majority over every key range ("METADATA" row); null in T1. */
   metadataTolerance: number | null = null;
 
+  // Degraded Node Detection (SPEC §6.2)
+  /** CVM → DND state: `scoring` while a responsiveness window is being judged. */
+  readonly dnd = new Map<string, 'ok' | 'scoring' | 'degraded'>();
+  /** CVMs an operator marked fixed (`cvm.mark-fixed`), applied at the next cluster tick. */
+  readonly dndMarkFixed = new Set<string>();
+
   // Acropolis / AHV HA
   leaderHost: string | null;
   leaderSince = 0;
@@ -176,6 +182,10 @@ export class Registry implements NutanixClusterView, VmEnv {
     if (!this.cvmRunning(cvm)) return false;
     if (!this.facts.externalStorage) return true;
     return this.backends.get(cvm)?.health() !== 'unavailable';
+  }
+
+  isDegraded(cvm: string): boolean {
+    return this.dnd.get(cvm) === 'degraded';
   }
 
   inQuorum(cvm: string): boolean {
@@ -311,6 +321,16 @@ export class Registry implements NutanixClusterView, VmEnv {
     if (!this.facts.externalStorage) return false;
     const cvm = this.owner.get(vdisk);
     return cvm !== undefined && this.backends.get(cvm)?.health() === 'unavailable';
+  }
+
+  /** T1: no CVM reaches the array and the topology lets stalled VMs crash (SPEC §6.4). */
+  crashOnArrayLoss(): boolean {
+    if (!this.facts.externalStorage) return false;
+    const mode =
+      this.facts.wholeArrayLossVmBehavior ??
+      this.profile.externalStorage.wholeArrayLossVmBehavior.value;
+    if (mode !== 'crash-and-restart') return false;
+    return this.facts.cvms.every((c) => this.backends.get(c.id)?.health() === 'unavailable');
   }
 
   hostOfNic(nic: string): string | undefined {

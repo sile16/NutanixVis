@@ -73,7 +73,8 @@ export class ZkMember implements CvmComponent {
   }
 }
 
-export type RingState = 'normal' | 'down' | 'detached';
+/** `forwarding`: Degraded Node Detection disabled its metadata store (it holds no live replica). */
+export type RingState = 'normal' | 'down' | 'detached' | 'forwarding';
 
 export class CassandraNode implements CvmComponent {
   readonly name = 'cassandra';

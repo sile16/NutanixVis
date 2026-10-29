@@ -25,6 +25,8 @@ const PUBLIC_HOSTS = new Set([
   'www.joshodgers.com',
   // Public community forum (anecdotal field reports; labeled unverified/inferred with a primary source).
   'www.reddit.com',
+  // IETF RFCs.
+  'www.rfc-editor.org',
 ]);
 
 const INTERNAL = [

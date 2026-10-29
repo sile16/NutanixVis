@@ -5,6 +5,7 @@
  */
 import { cvmInternalEndpoint, hostInternalEndpoint } from '../../loader/network';
 import type { DeviceSpec, Topology } from '../../topologies/schema';
+import type { WholeArrayLossVmBehavior } from '../versions/profile';
 
 type Of<K extends DeviceSpec['kind']> = Extract<DeviceSpec, { kind: K }>;
 export type HostRole = Of<'ahv-host'>['role'];
@@ -58,6 +59,10 @@ export interface Facts {
    * use the profile default (`hades.maintenanceOnStorageError`).
    */
   readonly hadesMaintenance: boolean | null;
+  /** T1 `whole-array-loss-vm-behavior` option; null to use the profile default. */
+  readonly wholeArrayLossVmBehavior: WholeArrayLossVmBehavior | null;
+  /** `guest-queue-depth` option (outstanding IOs per vDisk); null for the workload default. */
+  readonly guestQueueDepth: number | null;
   /** Data replication factor (T2/T3 `replication-factor`); null for external storage. */
   readonly replicationFactor: number | null;
   /** NIC id → owning host id. */
@@ -159,6 +164,12 @@ export function buildFacts(t: Topology): Facts {
   const externalStorage = t.family === 't1' || t.family === 't1-lab';
   const hadesOpt = t.options.find((o) => o.id === 'hades-maintenance-on-storage-error');
   const hadesVal = hadesOpt?.value ?? hadesOpt?.default;
+  const optionOf = (id: string) => {
+    const o = t.options.find((x) => x.id === id);
+    return o?.value ?? o?.default;
+  };
+  const wal = optionOf('whole-array-loss-vm-behavior');
+  const qd = optionOf('guest-queue-depth');
 
   const hostById = new Map(hosts.map((h) => [h.id, h]));
   const cvmById = new Map(cvms.map((c) => [c.id, c]));
@@ -170,6 +181,8 @@ export function buildFacts(t: Topology): Facts {
     cvms: [...cvms].sort((a, b) => nodeOrder(a.id, b.id)),
     vms,
     hadesMaintenance: hadesVal === 'on' ? true : hadesVal === 'off' ? false : null,
+    wholeArrayLossVmBehavior: wal === 'stall' || wal === 'crash-and-restart' ? wal : null,
+    guestQueueDepth: typeof qd === 'number' && qd > 0 ? qd : null,
     replicationFactor: externalStorage ? null : typeof rfVal === 'number' ? rfVal : 2,
     nicOwner,
     linkHostNic,

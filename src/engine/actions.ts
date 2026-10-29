@@ -236,6 +236,28 @@ export function builtinActions(env: BuiltinEnv): ActionDefinition[] {
     },
     {
       spec: {
+        kind: 'link.flap',
+        label: 'Flap link',
+        description:
+          'Carrier drops now and returns after the chosen time (a port flap or a cable reseat).',
+        appliesTo: (t) => isLinkView(t) && net.isAdminUp(t.id),
+        params: { durationS: { label: 'Outage (s)', choices: [3, 10, 20, 60] } },
+      },
+      apply: (req, ctx) => ctx.net.flapLink(req.target, numberParam(req, 'durationS')),
+    },
+    {
+      spec: {
+        kind: 'link.set-loss',
+        label: 'Set packet loss (grey failure)',
+        description:
+          'Carrier and forwarding stay up, but a share of the packets crossing this link is lost. Data frames (many packets each) are hit far more often than keep-alives. 0 removes the impairment.',
+        appliesTo: isLinkView,
+        params: { pct: { label: 'Packet loss (%)', choices: [0, 1, 2, 5, 10, 20] } },
+      },
+      apply: (req, ctx) => ctx.net.setLinkLoss(req.target, numberParam(req, 'pct')),
+    },
+    {
+      spec: {
         kind: 'switch.port.prune-vlan',
         label: 'Prune VLAN from switch port',
         appliesTo: hasSwitchEnd,

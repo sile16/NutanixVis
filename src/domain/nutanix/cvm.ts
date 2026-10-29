@@ -49,6 +49,9 @@ export class Cvm implements Device<Profile> {
   private stargateCmd: 'stop' | 'start' | null = null;
   private hadesWake: TimerHandle | null = null;
   private stopCause: 'clean-stop' | 'silent' = 'silent';
+  /** `cvm.network-flap`: requested blackout length, and when the current one ends. */
+  private flapRequest: number | null = null;
+  private flapUntil: number | null = null;
 
   constructor(
     readonly facts: CvmFacts,
@@ -105,6 +108,35 @@ export class Cvm implements Device<Profile> {
     this.stargateCmd = cmd;
   }
 
+  /** `cvm.network-flap`: the CVM's inter-CVM interface goes dark for `seconds`, then returns. */
+  requestNetworkFlap(seconds: number): void {
+    this.flapRequest = seconds;
+  }
+
+  /** Start or end a peer-communication blackout (the CVM keeps running). */
+  private stepFlap(ctx: Ctx): void {
+    const ectx = asEngineContext(ctx);
+    const ep = this.facts.dataEndpoint;
+    if (this.flapRequest !== null && this.power !== 'off') {
+      this.flapUntil = ctx.now + this.flapRequest;
+      this.flapRequest = null;
+      ectx.endpoints.setUp(ep, false, this.reg.causes.get(this.id) ?? []);
+      ctx.emit({
+        severity: 'warn',
+        deviceId: this.id,
+        code: 'cvm.network.blackout',
+        text: `${this.label}: its inter-CVM interface stops answering for ${this.flapUntil - ctx.now} s (network flap); the CVM keeps running`,
+        causeIds: this.reg.causes.get(this.id) ?? [],
+        cite: ['ntnx-community-dnd'],
+        confidence: 'assumption',
+      });
+    }
+    if (this.flapUntil !== null && ctx.now >= this.flapUntil) {
+      this.flapUntil = null;
+      if (this.power !== 'off') ectx.endpoints.setUp(ep, true);
+    }
+  }
+
   // ── Hooks ───────────────────────────────────────────────────────────────
 
   preTick(ctx: Ctx): void {
@@ -122,6 +154,7 @@ export class Cvm implements Device<Profile> {
       }
     }
     if (this.stargateCmd !== null) this.applyStargateCmd(ctx);
+    if (this.flapRequest !== null || this.flapUntil !== null) this.stepFlap(ctx);
     if (this.power === 'running') this.stepHades(ctx);
     this.each((c) => c.preTick?.(ctx));
   }
@@ -187,6 +220,8 @@ export class Cvm implements Device<Profile> {
       zkQuorum: this.running() && this.reg.inQuorum(this.id),
       zkPartition: this.running() ? (this.reg.partitionOf.get(this.id) ?? null) : null,
       ringState: this.cassandra.state,
+      // Degraded Node Detection (SPEC §6.2): ok | scoring | degraded.
+      dndState: this.reg.dnd.get(this.id) ?? 'ok',
       ownedVdisks: this.stargate.ownedVdisks(),
       backend: this.backend.kind,
       backendHealth: this.backend.health(),
@@ -197,9 +232,12 @@ export class Cvm implements Device<Profile> {
     const badges: string[] = [];
     if (this.reg.zkLeader === this.id) badges.push('zk-leader');
     if (this.reg.zkMembers.has(this.id)) badges.push('zk');
+    if (this.reg.isDegraded(this.id)) badges.push('degraded');
     let status: DeviceStatus = 'healthy';
     if (!up) status = 'offline';
-    else if (this.power === 'booting' || stargate !== 'up') status = 'degraded';
+    else if (this.power === 'booting' || stargate !== 'up' || this.reg.isDegraded(this.id)) {
+      status = 'degraded';
+    }
     return {
       id: this.id,
       kind: this.kind,
@@ -284,6 +322,29 @@ export class Cvm implements Device<Profile> {
   /** Hades: service volumes lost past the threshold → maintenance mode, services stop. */
   private enterMaintenance(ctx: Ctx): void {
     const H = ctx.profile.hades;
+    // Maintenance takes the node out of the cluster: admitted only while the nodes already out
+    // (down or in maintenance) stay within the N−2 / N−3 tolerance (`assumption`). A refused
+    // node keeps retrying at every monitor check.
+    const out = this.reg.facts.cvms.filter((c) => c.id !== this.id && !this.reg.cvmRunning(c.id));
+    const tolerance = this.reg.externalTolerance();
+    if (out.length + 1 > tolerance) {
+      if (!this.hades.refusedAnnounced) {
+        this.hades.refusedAnnounced = true;
+        ctx.emit({
+          severity: 'error',
+          deviceId: this.id,
+          code: 'hades.maintenance.refused',
+          text: `${this.label}: service volumes unreachable, but the node cannot enter maintenance mode: ${out.length} node(s) are already out and the cluster tolerates ${tolerance}. Hades keeps retrying every ${H.volumeMonitorIntervalS.value} s; its Stargate stays up and IO retries in place`,
+          causeIds: this.reg.causes.get(this.id) ?? [],
+          cite: [
+            ...ctx.profile.externalStorage.nodeFailureTolerance.cite,
+            ...H.externalStorageErrorThresholdS.cite,
+          ],
+          confidence: 'assumption',
+        });
+      }
+      return;
+    }
     this.stopCause = 'clean-stop';
     this.failComponents(ctx);
     this.stargate.setProcess(false);
@@ -299,7 +360,7 @@ export class Cvm implements Device<Profile> {
       severity: 'error',
       deviceId: this.id,
       code: 'hades.maintenance.enter',
-      text: `${this.label}: service volumes unreachable for ${H.externalStorageErrorThresholdS.value} s; Hades puts the node in maintenance mode and its services (Stargate, Zookeeper, Cassandra) stop. Prism alerts A3032 "Cluster services are down" and A1030 "Stargate Temporarily Down"`,
+      text: `${this.label}: service-volume IO abandoned after the ${ctx.profile.externalStorage.ioTimeoutS.value} s NVMe IO timeout and the error lasted ${H.externalStorageErrorThresholdS.value} s; Hades puts the node in maintenance mode and its services (Stargate, Zookeeper, Cassandra) stop. Prism alerts A3032 "Cluster services are down" and A1030 "Stargate Temporarily Down"`,
       causeIds: this.reg.causes.get(this.id) ?? [],
       cite,
       confidence: H.maintenanceOnStorageError.confidence,

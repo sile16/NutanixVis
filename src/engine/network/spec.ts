@@ -128,6 +128,12 @@ export interface NetworkConfig {
    * active-backup over every member with carrier. Off: the bond goes down instead.
    */
   readonly lacpFallbackAb: boolean;
+  /**
+   * Packets one `large` frame stands for on a lossy link (`link.set-loss`): a data transfer spans
+   * many segments, so it is far likelier to lose one than a keep-alive is. Model granularity
+   * (`assumption`), not a vendor value.
+   */
+  readonly largeFrameSegments: number;
 }
 
 /** Placeholder defaults for engine tests; real runs pass profile values (SPEC §5.3). */
@@ -136,6 +142,7 @@ export const DEFAULT_NETWORK_CONFIG: NetworkConfig = {
   lacpSlowDetectS: 90,
   slbRebalanceIntervalS: 10,
   lacpFallbackAb: true,
+  largeFrameSegments: 24,
 };
 
 export interface NetworkSpec {

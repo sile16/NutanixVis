@@ -194,7 +194,7 @@ export const isStalled = (v: VmView): boolean => v.state === 'io-stalled' || v.s
 export const STARGATE_STATES = ['up', 'down', 'unhealthy'] as const;
 export const PATH_STATES = ['live', 'lost', 'removed'] as const;
 export type PathState = (typeof PATH_STATES)[number];
-export const RING_STATES = ['normal', 'down', 'detached'] as const;
+export const RING_STATES = ['normal', 'down', 'detached', 'forwarding'] as const;
 
 export interface CvmView {
   readonly id: string;
@@ -208,7 +208,11 @@ export interface CvmView {
   readonly zkQuorum: boolean;
   readonly zkPartition: string | null;
   readonly ringState: (typeof RING_STATES)[number];
+  /** Degraded Node Detection state (SPEC §6.2). */
+  readonly dndState: (typeof DND_STATES)[number];
 }
+
+export const DND_STATES = ['ok', 'scoring', 'degraded'] as const;
 
 function readCvm(d: DeviceView): CvmView {
   const raw = jsonMap(d, 'nvmePaths');
@@ -229,8 +233,31 @@ function readCvm(d: DeviceView): CvmView {
     zkQuorum: bool(d, 'zkQuorum'),
     zkPartition: strOrNull(d, 'zkPartition'),
     ringState: oneOf(d, 'ringState', RING_STATES),
+    dndState: oneOf(d, 'dndState', DND_STATES),
   };
 }
+
+/** A JSON-encoded `Record<string, number | null>` field of a CVM (path latency / share views). */
+function pathNumbers(s: Snapshot, n: number | string, key: string): Record<string, number | null> {
+  const d = device(s, cvmRef(n));
+  const v = parseJson(d, key);
+  if (v === null) return {};
+  if (typeof v !== 'object' || Array.isArray(v)) throw mistyped(d, key, 'JSON object', v);
+  const out: Record<string, number | null> = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (x !== null && typeof x !== 'number') throw mistyped(d, key, 'JSON number map', v);
+    out[k] = x;
+  }
+  return out;
+}
+
+/** Share (%) of a CVM's IO commands sent on `path` over the last 30 s (`nvmePathIoShare`). */
+export const pathShare = (s: Snapshot, n: number | string, path: string): number =>
+  pathNumbers(s, n, 'nvmePathIoShare')[path] ?? 0;
+
+/** Latest IO completion latency (ms) seen on `path` (`nvmePathLatencyMs`), null before any. */
+export const pathLatencyMs = (s: Snapshot, n: number | string, path: string): number | null =>
+  pathNumbers(s, n, 'nvmePathLatencyMs')[path] ?? null;
 
 export const cvm = (s: Snapshot, n: number | string): CvmView => readCvm(device(s, cvmRef(n)));
 export const cvms = (s: Snapshot): CvmView[] => devicesOfKind(s, 'cvm').map(readCvm);

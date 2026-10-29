@@ -76,7 +76,9 @@ export type DropReason =
   | 'mtu'
   | 'no-route'
   | 'bond-no-member'
-  | 'fenced';
+  | 'fenced'
+  /** Dropped by a lossy link (`link.set-loss`, grey failure): carrier and forwarding stay up. */
+  | 'loss';
 
 /** Category used for packet color/legend in the UI (registered by domain modules). */
 export type TrafficCategory = string;
@@ -159,6 +161,8 @@ export interface LinkView {
   readonly status: 'up' | 'down';
   readonly mtu: number;
   readonly latencyMs: number;
+  /** Injected packet loss in percent (`link.set-loss`); absent or 0 = none. */
+  readonly lossPct?: number;
   /** Delivered messages per traffic category during the last tick. */
   readonly util: Readonly<Record<TrafficCategory, number>>;
 }

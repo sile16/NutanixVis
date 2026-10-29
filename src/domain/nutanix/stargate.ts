@@ -11,6 +11,9 @@
  *   lookup and no key range has a Paxos majority outside the quorum side (`inferred`, Bible
  *   4g/4i). T1 keeps serving reads (metadata is the array's).
  * - Replies dropped on the wire are retransmitted (TCP) while the Stargate is serving.
+ * - T1 vDisk handover: taking over a vDisk whose owner CVM went into Hades maintenance takes
+ *   `externalStorage.vdiskHandoverS` (ownership and NVMe reservation, `assumption`). The session
+ *   is redirected at once, but its IO waits here until the handover completes.
  */
 
 import { asEngineContext } from '../../engine/context';
@@ -43,6 +46,13 @@ export class Stargate implements CvmComponent {
   private toRelease = new Set<string>();
   private resend: MessageDraft[] = [];
   private sentReplies: { id: string; draft: MessageDraft; at: number }[] = [];
+  /** T1 handover in progress: vDisk → time this Stargate may serve it, and the old owner. */
+  private readonly handover = new Map<
+    string,
+    { readonly readyAt: number; readonly from: string }
+  >();
+  /** IO waiting for a handover, by IO id. */
+  private readonly waiting = new Map<string, Inflight>();
 
   constructor(
     private readonly cvm: string,
@@ -75,6 +85,47 @@ export class Stargate implements CvmComponent {
       if (this.process === 'up') this.backend.release(v, ctx);
     }
     this.toRelease = new Set();
+    if (this.process === 'up') this.finishHandovers(ctx);
+  }
+
+  /** A vDisk whose current owner CVM is in Hades maintenance (T1): taking it over takes time. */
+  private handoverFrom(vdisk: string): string | null {
+    if (!this.reg.facts.externalStorage) return null;
+    const owner = this.reg.owner.get(vdisk);
+    if (owner === undefined || owner === this.cvm) return null;
+    const state = this.reg.cvms.get(owner)?.hades.state ?? 'ok';
+    return state === 'ok' ? null : owner;
+  }
+
+  private finishHandovers(ctx: Ctx): void {
+    for (const [vdisk, h] of [...this.handover].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      if (ctx.now < h.readyAt) continue;
+      this.handover.delete(vdisk);
+      this.take(vdisk, ctx);
+      ctx.emit({
+        severity: 'info',
+        deviceId: this.cvm,
+        code: 'stargate.vdisk.taken-over',
+        text: `${this.cvm} took over ${vdisk} from ${h.from}; its IO is served again`,
+        causeIds: [],
+        cite: ctx.profile.externalStorage.vdiskHandoverS.cite,
+        confidence: ctx.profile.externalStorage.vdiskHandoverS.confidence,
+      });
+      for (const [id, e] of [...this.waiting]) {
+        if (e.req.vdisk !== vdisk) continue;
+        this.waiting.delete(id);
+        this.inflight.set(id, e);
+        this.backend.submit(e.req, ctx);
+      }
+    }
+  }
+
+  /** Take ownership: NVMe reservation (T1) and the cluster's vDisk owner. */
+  private take(vdisk: string, ctx: Ctx): void {
+    this.backend.acquire(vdisk, ctx);
+    this.acquired.add(vdisk);
+    this.toRelease.delete(vdisk);
+    this.reg.setOwner(vdisk, this.cvm);
   }
 
   emit(ctx: Ctx): void {
@@ -127,11 +178,28 @@ export class Stargate implements CvmComponent {
       this.inflight.set(io.id, entry);
       return true;
     }
+    if (this.waiting.has(io.id) || this.handover.has(io.vdisk)) {
+      this.waiting.set(io.id, entry);
+      return true;
+    }
     if (!this.acquired.has(io.vdisk)) {
-      this.backend.acquire(io.vdisk, ctx);
-      this.acquired.add(io.vdisk);
-      this.toRelease.delete(io.vdisk);
-      this.reg.setOwner(io.vdisk, this.cvm);
+      const from = this.handoverFrom(io.vdisk);
+      if (from !== null) {
+        const H = ctx.profile.externalStorage.vdiskHandoverS;
+        this.handover.set(io.vdisk, { readyAt: ctx.now + H.value, from });
+        this.waiting.set(io.id, entry);
+        ctx.emit({
+          severity: 'warn',
+          deviceId: this.cvm,
+          code: 'stargate.vdisk.handover',
+          text: `${this.cvm} is taking over ${io.vdisk} from ${from} (in Hades maintenance): ownership and NVMe reservation handover, IO waits about ${H.value} s`,
+          causeIds: [],
+          cite: H.cite,
+          confidence: H.confidence,
+        });
+        return true;
+      }
+      this.take(io.vdisk, ctx);
     }
     this.inflight.set(io.id, entry);
     this.backend.submit(io, ctx);
@@ -197,6 +265,8 @@ export class Stargate implements CvmComponent {
 
   private clear(): void {
     this.inflight.clear();
+    this.handover.clear();
+    this.waiting.clear();
     this.acquired.clear();
     this.toRelease.clear();
     this.resend = [];

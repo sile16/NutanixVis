@@ -434,7 +434,14 @@ function LinkInspector({ link }: { link: LinkView }) {
         </div>
       </header>
       <Section title="State">
-        <Fields fields={{ status: link.status, mtu: link.mtu, latencyMs: link.latencyMs }} />
+        <Fields
+          fields={{
+            status: link.status,
+            mtu: link.mtu,
+            latencyMs: link.latencyMs,
+            lossPct: link.lossPct ?? 0,
+          }}
+        />
       </Section>
       <Section title={`Utilization (${windowLabel})`}>
         {total === 0 ? (

@@ -53,6 +53,9 @@ export class ClusterDevice implements Device<Profile> {
   private readonly restartFailed = new Set<string>();
   private haShort = false;
   private readonly wakes = new Map<string, TimerHandle>();
+  /** DND per CVM: end of its scoring window, and since when a Degraded node has been healthy. */
+  private readonly dndWindowEnd = new Map<string, number>();
+  private readonly dndHealthySince = new Map<string, number | null>();
   private derivedCache: Record<string, ViewField> = {};
 
   constructor(private readonly reg: Registry) {
@@ -66,6 +69,7 @@ export class ClusterDevice implements Device<Profile> {
   tick(ctx: Ctx): void {
     this.reg.now = ctx.now;
     this.evalZk(ctx);
+    this.evalDnd(ctx);
     this.evalRing(ctx);
     this.evalLeader(ctx);
     this.evalHa(ctx);
@@ -309,13 +313,111 @@ export class ClusterDevice implements Device<Profile> {
     }
   }
 
+  // ── Degraded Node Detection ─────────────────────────────────────────────
+
+  /**
+   * DND (Nutanix community "Degraded Node Detection"; `dnd.*`): peers score each CVM's
+   * responsiveness. A running CVM the quorum side cannot reach starts a scoring window; if at its
+   * end the CVM answers again (it flapped or was partly unresponsive), it is marked Degraded: its
+   * Cassandra goes to forwarding mode (metadata store disabled), so the ring and the cluster's
+   * fault tolerance lose it, and an alert is raised. A CVM still cut off or down at the end is not
+   * a degraded-node case (isolation and HA handle it). Cleared after `autoResolveHealthyS` of
+   * health, or when an operator marks it fixed (`cvm.mark-fixed`).
+   */
+  private evalDnd(ctx: Ctx): void {
+    const reg = this.reg;
+    const D = ctx.profile.dnd;
+    const side = reg.quorumSide;
+    for (const c of reg.facts.cvms.map((x) => x.id)) {
+      const state = reg.dnd.get(c) ?? 'ok';
+      if (!D.enabled.value) {
+        reg.dnd.set(c, 'ok');
+        continue;
+      }
+      const running = reg.cvmRunning(c);
+      const healthy = running && side?.has(c) === true;
+      const unresponsive = running && side !== null && reg.partitionOf.has(c) && !side.has(c);
+      if (reg.dndMarkFixed.delete(c) && state === 'degraded') {
+        reg.dnd.set(c, 'ok');
+        this.emitDnd(
+          ctx,
+          c,
+          'dnd.node.cleared',
+          `${c} marked fixed by the operator: Degraded cleared, its metadata store rejoins`,
+        );
+        continue;
+      }
+      if (state === 'ok') {
+        if (!unresponsive) continue;
+        reg.dnd.set(c, 'scoring');
+        this.dndWindowEnd.set(c, ctx.now + D.scoringWindowS.value);
+        this.wake(ctx, `${c} dnd scoring`, ctx.now + D.scoringWindowS.value, D.scoringWindowS);
+        continue;
+      }
+      if (state === 'scoring') {
+        if (ctx.now < (this.dndWindowEnd.get(c) ?? 0)) continue;
+        if (!healthy) {
+          reg.dnd.set(c, 'ok');
+          continue;
+        }
+        reg.dnd.set(c, 'degraded');
+        this.dndHealthySince.set(c, ctx.now);
+        this.emitDnd(
+          ctx,
+          c,
+          'dnd.node.degraded',
+          `${c} marked Degraded by Degraded Node Detection: it was unresponsive to its peers within the ${D.scoringWindowS.value} s scoring window. Its Cassandra goes to forwarding mode (metadata store disabled), so the cluster tolerates one node failure fewer; a degraded-node alert is raised`,
+          'warn',
+        );
+        continue;
+      }
+      // Degraded: cleared only after a long healthy observation period.
+      let since = this.dndHealthySince.get(c) ?? null;
+      if (!healthy) since = null;
+      else since ??= ctx.now;
+      this.dndHealthySince.set(c, since);
+      if (since === null) continue;
+      const due = since + D.autoResolveHealthyS.value;
+      this.wake(ctx, `${c} dnd resolve`, due, D.autoResolveHealthyS);
+      if (ctx.now < due) continue;
+      reg.dnd.set(c, 'ok');
+      this.emitDnd(
+        ctx,
+        c,
+        'dnd.node.cleared',
+        `${c} healthy for ${D.autoResolveHealthyS.value} s: Degraded cleared automatically, its metadata store rejoins`,
+      );
+    }
+    reg.dndMarkFixed.clear();
+  }
+
+  private emitDnd(
+    ctx: Ctx,
+    cvm: string,
+    code: string,
+    text: string,
+    severity: 'info' | 'warn' = 'info',
+  ): void {
+    const D = ctx.profile.dnd;
+    ctx.emit({
+      severity,
+      deviceId: cvm,
+      code,
+      text,
+      causeIds: this.reg.causes.get(cvm) ?? [],
+      cite: [...new Set([...D.enabled.cite, ...D.scoringWindowS.cite])],
+      confidence: D.scoringWindowS.confidence,
+    });
+  }
+
   // ── Cassandra ring ──────────────────────────────────────────────────────
 
   private evalRing(ctx: Ctx): void {
     const reg = this.reg;
     const D = ctx.profile.cluster.cassandraRingDetachS;
     const R = ctx.profile.cluster.cassandraRejoinStableS;
-    const live = (c: string) => reg.inQuorum(c) && reg.cvmCapable(c);
+    // A Degraded node's metadata store is disabled (forwarding mode): it holds no live replica.
+    const live = (c: string) => reg.inQuorum(c) && reg.cvmCapable(c) && !reg.isDegraded(c);
     const rf = reg.metadataRf;
     for (const id of reg.facts.ringOrder) {
       const node = reg.cvms.get(id)?.cassandra;
@@ -348,6 +450,11 @@ export class ClusterDevice implements Device<Profile> {
       }
       if (live(id)) {
         node.state = 'normal';
+        node.downSince = null;
+        continue;
+      }
+      if (reg.isDegraded(id) && reg.inQuorum(id) && reg.cvmCapable(id)) {
+        node.state = 'forwarding';
         node.downSince = null;
         continue;
       }
@@ -668,6 +775,12 @@ export class ClusterDevice implements Device<Profile> {
       nodeFailureTolerance: Math.max(0, tolerance),
       ftConfigured: ft,
       metadataAvailable: reg.metaAvailable,
+      degradedNodes: JSON.stringify(
+        [...reg.dnd]
+          .filter(([, st]) => st === 'degraded')
+          .map(([c]) => c)
+          .sort(nodeOrder),
+      ),
       clusterServices: services,
       // Prism Element is a CVM cluster service with an elected leader (Bible): unreachable once
       // the services are down. Prism Central, a separate VM, then shows A200000.

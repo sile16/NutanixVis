@@ -13,7 +13,11 @@ const onOff = (v: unknown): string | undefined =>
 
 /** The target's current value for an action parameter, when the view exposes it. */
 export function currentParamValue(kind: string, key: string, view: DeviceView | LinkView): unknown {
-  if (isLink(view)) return key === 'ms' ? view.latencyMs : undefined;
+  if (isLink(view)) {
+    if (key === 'ms') return view.latencyMs;
+    if (key === 'pct') return view.lossPct ?? 0;
+    return undefined;
+  }
   const f = view.fields;
   switch (key) {
     case 'mode':

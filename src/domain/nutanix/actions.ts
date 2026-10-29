@@ -126,6 +126,35 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
     },
     {
       spec: {
+        kind: 'cvm.network-flap',
+        label: 'Flap CVM network (peer blackout)',
+        description:
+          'The CVM’s inter-CVM interface stops answering for a short time, then returns: a flapping or partly unresponsive node. Degraded Node Detection may mark it Degraded.',
+        appliesTo: (t) => isKind(t, 'cvm') && field(t, 'power') === 'running',
+        params: { durationS: { label: 'Blackout (s)', choices: [5, 10, 15] } },
+      },
+      apply: (req, ctx) => {
+        const n = Number(req.params?.durationS);
+        if (!Number.isFinite(n) || n < 1) throw new ActionError(`bad duration ${String(n)}`);
+        reg.causes.set(req.target, ctx.causeIds);
+        cvm(req.target).requestNetworkFlap(n);
+      },
+    },
+    {
+      spec: {
+        kind: 'cvm.mark-fixed',
+        label: 'Mark node fixed (clear Degraded)',
+        description:
+          'Operator action after fixing a node that Degraded Node Detection flagged: its metadata store rejoins at once instead of after the long healthy observation period.',
+        appliesTo: (t) => isKind(t, 'cvm') && field(t, 'dndState') === 'degraded',
+      },
+      apply: (req) => {
+        cvm(req.target);
+        reg.dndMarkFixed.add(req.target);
+      },
+    },
+    {
+      spec: {
         kind: 'vm.set-path-loss-force-shutdown',
         label: 'Set path-loss force-shutdown timeout',
         description:

@@ -40,7 +40,7 @@ const END = by(
 
 export default defineScenario({
   id: 't2-01-cvm-power-off-autopath',
-  title: 'T2: CVM power-off triggers Autopath, then failback after 30 s stable',
+  title: 'T2: CVM power-off triggers Autopath; failback is much slower than the failover',
   topology: T2.topology,
   durationS: END,
   timeline: [
@@ -73,11 +73,22 @@ export default defineScenario({
       'ZK keeps quorum and storage stays available',
       (s) => derived(s).zkQuorum && derived(s).dataAvailable,
     ),
-    atCtx(END, 'failback only after the local Stargate is stable for 30 s', (_s, ctx) => {
-      const up = firstEventAt(ctx, 'stargate.up', { device: CVM, from: POWER_ON_AT });
-      const back = firstEventAt(ctx, 'redirector.failback', { device: nodeId(1) });
-      return up !== null && back !== null && back - up >= P.redirector.failbackStableS;
-    }),
+    atCtx(
+      END,
+      `failback only after the local Stargate is stable for ${P.redirector.failbackStableS} s, far slower than the failover`,
+      (_s, ctx) => {
+        const redirect = firstEventAt(ctx, 'redirector.redirect', { device: nodeId(1) });
+        const up = firstEventAt(ctx, 'stargate.up', { device: CVM, from: POWER_ON_AT });
+        const back = firstEventAt(ctx, 'redirector.failback', { device: nodeId(1) });
+        return (
+          redirect !== null &&
+          up !== null &&
+          back !== null &&
+          back - up >= P.redirector.failbackStableS &&
+          redirect - T0 < (back - up) / 10
+        );
+      },
+    ),
     at(END, 'node 1 VMs are served locally again', (s) =>
       vmsOfNode(s, 1).every((v) => isRunning(v) && v.ownerCvm === CVM),
     ),

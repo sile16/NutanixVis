@@ -14,7 +14,12 @@
  *
  * Model (`inferred`): the kernel path uses the same CVM storage vNICs and FA ports as Stargate's
  * SPDK initiator, so the backend's `health() === 'unavailable'` is the proxy for "the service
- * volumes are unreachable". In maintenance the CVM's services (Stargate, ZK member, Cassandra,
+ * volumes are unreachable". The kernel initiator queues IO while it waits for a path (controller
+ * loss 3600 s), so a mount check only fails once its IO is abandoned at the NVMe IO timeout
+ * (`externalStorage.ioTimeoutS`): maintenance follows path-loss detection, that timeout and the
+ * 5 s threshold. Maintenance takes the node out of the cluster, which is admitted only within the
+ * cluster's node-failure tolerance (N−2 / N−3, `assumption`); a refused node keeps retrying at
+ * every check. In maintenance the CVM's services (Stargate, ZK member, Cassandra,
  * Acropolis) stop, which the rest of the model treats exactly like a CVM that is down: the
  * redirector moves the host's VM IO to a Stargate that still reaches the array, and seats and
  * leaders move. The backend keeps reconnecting meanwhile; after a re-map that finds the array
@@ -37,6 +42,10 @@ export class Hades {
   state: HadesState = 'ok';
   /** First monitor check that saw the current error. */
   private errorSince: number | null = null;
+  /** First tick the backend had no live path (the check IO starts waiting then). */
+  private unavailableSince: number | null = null;
+  /** `hades.maintenance.refused` reported for the current episode. */
+  refusedAnnounced = false;
   private lastCheckAt = Number.NEGATIVE_INFINITY;
   /** Next periodic re-map while in maintenance. */
   nextRemapAt: number | null = null;
@@ -56,13 +65,18 @@ export class Hades {
     const H = ctx.profile.hades;
     const now = ctx.now;
     if (this.state === 'ok') {
+      if (!monitored || this.backend.health() !== 'unavailable') {
+        this.unavailableSince = null;
+        this.refusedAnnounced = false;
+      } else this.unavailableSince ??= now;
       if (!monitored) {
         this.errorSince = null;
         return null;
       }
       if (now - this.lastCheckAt < H.volumeMonitorIntervalS.value) return null;
       this.lastCheckAt = now;
-      if (this.backend.health() !== 'unavailable') {
+      const since = this.unavailableSince;
+      if (since === null || now - since < this.detectS(ctx)) {
         this.errorSince = null;
         return null;
       }
@@ -79,12 +93,20 @@ export class Hades {
     return null;
   }
 
+  /** A mount check fails once its IO is abandoned (the NVMe IO timeout). */
+  private detectS(ctx: Ctx): number {
+    return ctx.profile.externalStorage.ioTimeoutS.value;
+  }
+
   /** When the monitor will next decide something (for "fast-forward to next timer"). */
   nextDueAt(ctx: Ctx): number | null {
     if (!this.enabled) return null;
     if (this.state === 'maintenance') return this.nextRemapAt;
     if (this.state === 'ok' && this.errorSince !== null) {
       return this.errorSince + ctx.profile.hades.externalStorageErrorThresholdS.value;
+    }
+    if (this.state === 'ok' && this.unavailableSince !== null) {
+      return this.unavailableSince + this.detectS(ctx);
     }
     return null;
   }
@@ -105,6 +127,8 @@ export class Hades {
   reset(): void {
     this.state = 'ok';
     this.errorSince = null;
+    this.unavailableSince = null;
+    this.refusedAnnounced = false;
     this.lastCheckAt = Number.NEGATIVE_INFINITY;
     this.nextRemapAt = null;
     this.enteredAt = null;

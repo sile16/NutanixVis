@@ -105,6 +105,13 @@ export interface SnapshotRequest {
   readonly causes: readonly string[];
 }
 
+/** One NVMe/TCP association on the target: a host endpoint connected to one FA interface. */
+interface Assoc {
+  gen: number;
+  lastSeen: SimTime;
+  torn: boolean;
+}
+
 export class FaModelError extends Error {
   override readonly name = 'FaModelError';
 }
@@ -130,6 +137,8 @@ export class FlashArrayModel {
   private unacked: Unacked[] = [];
   private ndu: Ndu | null = null;
   private readonly stallCauses = new Map<DeviceId, readonly string[]>();
+  /** `<iface>|<host endpoint>` → association state (target-side TCP/NVMe connection). */
+  private readonly assocs = new Map<string, Assoc>();
 
   constructor(
     readonly facts: FaFacts,
@@ -237,9 +246,46 @@ export class FlashArrayModel {
     for (const i of c.interfaces) env.setEndpointUp(i, this.endpointShouldBeUp(i), causes);
   }
 
+  /**
+   * Target-side association check for a frame from `host` on `iface` (SPEC §6.4c). The target
+   * tears an association down when it goes quiet for KATO (NVMe Keep Alive) or when the port it
+   * lives on loses link (`assumption`: the port's TCP connections are dropped). A frame of a
+   * torn-down or older association is answered with a TCP reset (returns false). A connect always
+   * starts a fresh association; one first seen without a connect existed at t=0 (steady state).
+   */
+  admit(iface: EndpointId, host: EndpointId, gen: number, connect: boolean): boolean {
+    const key = `${iface}|${host}`;
+    const now = this.now;
+    const a = this.assocs.get(key);
+    if (connect || a === undefined) {
+      this.assocs.set(key, { gen, lastSeen: now, torn: false });
+      return true;
+    }
+    if (a.gen !== gen || a.torn) return false;
+    if (now - a.lastSeen > this.profile.externalStorage.keepAliveTimeoutS.value) {
+      a.torn = true;
+      return false;
+    }
+    a.lastSeen = now;
+    return true;
+  }
+
+  /** The port behind `iface` lost link (or its controller went away): drop its associations. */
+  tearDown(iface: EndpointId): number {
+    let n = 0;
+    for (const [key, a] of this.assocs) {
+      if (key.startsWith(`${iface}|`) && !a.torn) {
+        a.torn = true;
+        n++;
+      }
+    }
+    return n;
+  }
+
   /** Controller crashed (fail action on it or the array). */
   crash(id: DeviceId): void {
     const c = this.requireController(id);
+    for (const i of c.interfaces) this.tearDown(i);
     c.state = 'crashed';
     c.role = 'offline';
     c.stalledAt = null;
@@ -385,6 +431,7 @@ export class FlashArrayModel {
     c.role = 'offline';
     c.rebootUntil = env.now + Math.max(1, r.value);
     c.hosts.clear();
+    for (const i of c.interfaces) this.tearDown(i);
     this.held = this.held.filter((h) => h.ctrl !== c.id);
     this.unacked = this.unacked.filter((u) => u.ctrl !== c.id);
     const ev = this.ev(

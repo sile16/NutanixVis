@@ -24,7 +24,12 @@ import { KATO, P, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
 
 function variant(rate: 'fast' | 'slow'): ScenarioDef {
   const detect = rate === 'fast' ? P.bond.lacpFastDetectS : P.bond.lacpSlowDetectS;
-  const settled = Math.max(detect, KATO) + P.externalStorage.reconnectDelayS;
+  // Slow rate: IO queues hashed onto the hung member hit the NVMe IO timeout, which resets their
+  // path; one reset just before the detach still needs its reconnect.
+  const settled =
+    Math.max(detect, KATO) +
+    P.externalStorage.reconnectDelayS +
+    (rate === 'slow' ? P.externalStorage.ioTimeoutS : 0);
   const END = by(settled) + 30;
   return defineScenario({
     id: `t1-18-lacp-${rate}-hung-switch`,
@@ -96,7 +101,7 @@ function variant(rate: 'fast' | 'slow'): ScenarioDef {
     narrative:
       rate === 'fast'
         ? 'Switch B hangs without dropping carrier, so only LACP can notice. At the fast rate the vs1 bonds stop receiving LACP PDUs and detach the Switch B member within about 3 s, before any keep-alive timeout, so connections hashed onto it recover on eth1. The paths to the FA ports behind Switch B are lost after the keep-alive timeout, and IO continues on Switch A. Management on vs0 is untouched because its active uplinks are on Switch A: Active-Backup cannot detect a hang, so a hung Switch A would have cut the cluster apart.'
-        : 'Switch B hangs without dropping carrier, and the host bonds run the slow LACP rate, which can only be set outside Prism (Prism Active-Active always uses fast, and a slow rate on the switch alone would still leave the host detecting in about 3 s). At the slow rate LACP takes up to 90 s to detach the member, and until then every TCP connection hashed onto it, including IO queues of paths whose keep-alive still gets through, is blackholed. Those commands wait far longer than they would at the fast rate, which is why the fast rate is the default.',
+        : 'Switch B hangs without dropping carrier, and the host bonds run the slow LACP rate, which can only be set outside Prism (Prism Active-Active always uses fast, and a slow rate on the switch alone would still leave the host detecting in about 3 s). At the slow rate LACP takes up to 90 s to detach the member, and until then every TCP connection hashed onto it, including IO queues of paths whose keep-alive still gets through, is blackholed. Those commands wait for the NVMe IO timeout, which resets their path so it reconnects on fresh connections, far longer than at the fast rate, which is why the fast rate is the default.',
     cite: ['ntnx-ahv-admin-11.2', 'ovs-bonding', 'nvme-base-spec'],
     status: 'active',
   });

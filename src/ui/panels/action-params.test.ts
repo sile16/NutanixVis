@@ -39,6 +39,11 @@ describe('action params', () => {
     expect(currentChoice(mlag, 'enabled', device({ mlagDomain: 'pod-1' }))).toBe('on');
     const latency = spec('set-latency', 'ms', [0, 1, 5]);
     expect(currentChoice(latency, 'ms', link)).toBe(5);
+    const loss = spec('link.set-loss', 'pct', [0, 5, 10]);
+    expect(currentChoice(loss, 'pct', link)).toBe(0);
+    expect(currentChoice(loss, 'pct', { ...link, lossPct: 5 })).toBe(5);
+    const flap = spec('link.flap', 'durationS', [3, 10]);
+    expect(initialParams(flap, link)).toEqual({ durationS: 3 });
     const fs = spec('vm.set-path-loss-force-shutdown', 'seconds', ['off', 60]);
     expect(currentChoice(fs, 'seconds', device({ pathLossForceShutdownS: null }))).toBe('off');
     expect(currentChoice(fs, 'seconds', device({ pathLossForceShutdownS: 60 }))).toBe(60);

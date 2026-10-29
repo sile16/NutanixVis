@@ -11,9 +11,10 @@ const EXPECTED_GROUPS: Record<string, number> = {
   hades: 4,
   hci: 15,
   bond: 4,
-  externalStorage: 14,
+  externalStorage: 18,
   flasharray: 10,
-  guest: 1,
+  guest: 2,
+  dnd: 3,
 };
 
 describe.each(Object.values(profiles))('profile $id', (profile) => {

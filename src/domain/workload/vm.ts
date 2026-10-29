@@ -48,6 +48,11 @@ export interface VmEnv {
   storageUse(vdisk: string): StorageUse;
   /** The serving CVM has lost all array paths (T1); always false where not applicable. */
   storageLost(vdisk: string): boolean;
+  /**
+   * T1 whole-array loss with `whole-array-loss-vm-behavior: crash-and-restart`: no CVM reaches
+   * the array, so a VM stalled past `guest.ioStallCrashS` crashes. Always false elsewhere.
+   */
+  crashOnArrayLoss(): boolean;
   hostOfNic(nic: string): string | undefined;
 }
 
@@ -308,7 +313,35 @@ export class Vm implements Device<Profile> {
       this.selfTerminate(ctx);
       return;
     }
+    if (this.checkArrayLossCrash(ctx)) return;
     this.checkForceShutdown(ctx);
+  }
+
+  /**
+   * Whole-array loss (`whole-array-loss-vm-behavior: crash-and-restart`, `assumption`): once the
+   * oldest outstanding IO has waited `guest.ioStallCrashS`, the guest / QEMU gives up and the VM
+   * goes down ("VM shut down unexpectedly"). AHV HA restarts it once the array, and with it the
+   * cluster services, are back.
+   */
+  private checkArrayLossCrash(ctx: Ctx): boolean {
+    if (this.lifecycle !== 'running' || this.pending.size === 0) return false;
+    if (!this.env.crashOnArrayLoss()) return false;
+    const limit = ctx.profile.guest.ioStallCrashS;
+    let oldest = ctx.now;
+    for (const p of this.pending.values()) oldest = Math.min(oldest, p.req.issuedAt);
+    const stalled = ctx.now - oldest;
+    if (stalled < limit.value) return false;
+    this.kill('crashed', 'ha', ctx.now);
+    ctx.emit({
+      severity: 'error',
+      deviceId: this.id,
+      code: 'vm.crashed',
+      text: `${this.label} shut down unexpectedly: QEMU exited after its IO stalled ${stalled} s with the whole array unreachable; AHV HA restarts it once the array and cluster services are back`,
+      causeIds: [],
+      cite: limit.cite,
+      confidence: limit.confidence,
+    });
+    return true;
   }
 
   postTick(ctx: Ctx): void {

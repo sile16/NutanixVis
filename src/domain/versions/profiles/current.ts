@@ -82,16 +82,37 @@ export const current: Profile = {
       'Window for the two-miss rule (hypervisor-agnostic Autopath rule, 2014); AHV value not published.',
     ),
     failbackStableS: c(
-      30,
-      'inferred',
-      ['ntnx-cmdref-aos-7.6', 'ntnx-blog-cvm-failure', 'ntnx-bible-5b'],
-      'Genesis --def_stargate_stable_interval = 30: "seconds a stargate has to be alive to be considered as stable and healthy" (Command Ref 7.6); Autopath: path restored once the CVM "has been stable for at least 30 seconds". One 2015 AHV blog says 300 s; lab L3.',
+      300,
+      'unverified',
+      ['odgers-ahv-io-failover-2015', 'ntnx-bible-5b'],
+      'AHV: IO returns to the local Stargate "once the local stargate is back online (and stable for 300 seconds)" (Josh Odgers, 2015). Failback is much slower than the failover. The Genesis --def_stargate_stable_interval (30 s) is a different path: when Genesis treats a Stargate as stable for HA, not the redirector\'s failback.',
     ),
     redirectStallS: c(
       3,
       'assumption',
       ['ntnx-bible-5b'],
       'No published AHV figure. Extra IO pause while the initiator (Frodo/QEMU) re-logs in to the remote Stargate after the redirect decision; lab L3.',
+    ),
+  },
+
+  dnd: {
+    enabled: c(
+      true,
+      'inferred',
+      ['ntnx-community-dnd', 'ntnx-cmdref-aos-7.6'],
+      'Degraded Node Detection is on by default (Nutanix community); the AOS 7.6 Command Reference lists a disable-degraded-node-monitoring command to turn it off.',
+    ),
+    scoringWindowS: c(
+      60,
+      'assumption',
+      ['ntnx-community-dnd'],
+      "No published window. Peers score each CVM's responsiveness; a CVM that was unresponsive to them (network flaps, partial blackouts) within this window and answers again is marked Degraded at its end.",
+    ),
+    autoResolveHealthyS: c(
+      86400,
+      'assumption',
+      ['ntnx-community-dnd'],
+      'No published figure. A Degraded node is cleared only after a long healthy observation period (here a day) or when an operator marks it fixed.',
     ),
   },
 
@@ -386,7 +407,31 @@ export const current: Profile = {
       45,
       'inferred',
       ['nvme-base-spec-2.1', 'everpure-nutanix-nci-cfg'],
-      'Integration value not public. NVMe 2.1 §9.6 derivation 3 × KATO + CQT applied to the published timers: must be ≥ the lost-path hold, or IO could be retried while still in flight; lab L5.',
+      'Integration value not public. NVMe 2.1 §9.6 derivation 3 × KATO + CQT applied to the published timers: must be ≥ the lost-path hold, or IO could be retried while still in flight. An IO timeout resets the path (the host tears the association down and reconnects); lab L5.',
+    ),
+    tcpRtoMaxS: c(
+      32,
+      'assumption',
+      ['rfc-6298', 'linux-nvme-host'],
+      'TCP doubles its retransmission timer on each retransmission of the same segment (RFC 6298 §5.5). With 1 s ticks the sub-second first retries fold into 1, 1, 1 s, then 2, 4, 8, 16, 32 s. A frame lost repeatedly on a lossy link therefore waits longer and longer, until the NVMe IO timeout aborts it.',
+    ),
+    targetResetRetryS: c(
+      0,
+      'assumption',
+      ['nvme-base-spec-2.1', 'nvme-tcp-spec'],
+      'The NVMe 2.1 §9.6 wait gives the controller time to notice the loss and quiesce. A TCP reset from a target that has already torn the association down (its port lost link, or KATO passed without traffic) shows it no longer holds the commands, so they are retried at once.',
+    ),
+    vdiskHandoverS: c(
+      60,
+      'assumption',
+      ['ntnx-bible-8c', 'ntnx-bible-5b'],
+      'No published figure. The remote Stargate must take over the vDisk (ownership and NVMe reservation, Bible 8c) from a CVM that went into Hades maintenance before IO flows there. Chosen clearly longer than the redirect and shorter than an AHV HA restart.',
+    ),
+    wholeArrayLossVmBehavior: c(
+      'crash-and-restart',
+      'assumption',
+      ['ntnx-ncp-everpure-deploy-7.6', 'ntnx-bible-5b'],
+      "The deployment guide says IO retries until the array responds, which bounds nothing on the guest side. Once a VM's IO has been stalled past guest.ioStallCrashS it crashes (QEMU exits), and AHV HA restarts it after the array returns. Topology option whole-array-loss-vm-behavior: stall keeps the retry-in-place picture.",
     ),
   },
 
@@ -444,6 +489,12 @@ export const current: Profile = {
       'verified',
       ['ntnx-ahv-admin-11.2'],
       'Recommended Linux guest SCSI device timeout.',
+    ),
+    ioStallCrashS: c(
+      180,
+      'assumption',
+      ['ntnx-ahv-admin-11.2'],
+      'No published figure. How long a VM survives a whole-array IO stall before it crashes (QEMU exits, "VM shut down unexpectedly"): minutes, well past the guest disk timeout.',
     ),
   },
 };

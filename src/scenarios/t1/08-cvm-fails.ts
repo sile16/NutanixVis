@@ -50,11 +50,15 @@ export default defineScenario({
     alwaysFrom(T0, 'node 1 VM IO pause bounded by detection plus redirect stall', (s) =>
       vmsOfNode(s, 1).every((v) => v.ioPendingS <= REDIRECT_PAUSE + SLACK),
     ),
-    atCtx(END, 'failback only after the local Stargate is stable for 30 s', (_s, ctx) => {
-      const up = firstEventAt(ctx, 'stargate.up', { device: CVM, from: RECOVER_AT });
-      const back = firstEventAt(ctx, 'redirector.failback', { device: nodeId(1) });
-      return up !== null && back !== null && back - up >= P.redirector.failbackStableS;
-    }),
+    atCtx(
+      END,
+      `failback only after the local Stargate is stable for ${P.redirector.failbackStableS} s`,
+      (_s, ctx) => {
+        const up = firstEventAt(ctx, 'stargate.up', { device: CVM, from: RECOVER_AT });
+        const back = firstEventAt(ctx, 'redirector.failback', { device: nodeId(1) });
+        return up !== null && back !== null && back - up >= P.redirector.failbackStableS;
+      },
+    ),
     at(END, 'node 1 VMs are served locally again', (s) =>
       vmsOfNode(s, 1).every((v) => isRunning(v) && v.ownerCvm === CVM),
     ),
@@ -64,7 +68,7 @@ export default defineScenario({
     ...baseInvariants(),
   ],
   narrative:
-    "CVM 1 fails but node 1 keeps running its VMs. The host's iSCSI redirector misses its NOPs, marks the local Stargate unhealthy, and the VMs' IO logs in to a remote Stargate, which takes the vDisk lock and NVMe reservation. There is no HA event and no rebuild, because the array owns the data. When CVM 1 has been stable for 30 s the sessions fail back.",
+    "CVM 1 fails but node 1 keeps running its VMs. The host's iSCSI redirector misses its NOPs, marks the local Stargate unhealthy, and the VMs' IO logs in to a remote Stargate, which takes the vDisk lock and NVMe reservation. There is no HA event and no rebuild, because the array owns the data. Failback is much slower than the failover: the sessions return only once CVM 1 has been stable for 300 s.",
   cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-5b', 'ntnx-bible-8c', 'ntnx-blog-cvm-failure'],
   status: 'active',
 });

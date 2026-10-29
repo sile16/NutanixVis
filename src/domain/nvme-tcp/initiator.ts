@@ -16,23 +16,29 @@
  *    uplink carrier loss; the spec allows up to 1.5 × KATO, the model uses KATO), or at once if the
  *    far end is reachable and refuses (fast loss, e.g. an interface disabled or a controller
  *    rebooting gracefully: the frame reaches the target device but its endpoint is down; `inferred`).
+ *    Keep-alive is traffic-based: a completed IO command counts as an exchange.
  * 3. Until then the initiator cannot tell the path is dead, so the selector keeps giving it new IO
  *    (see "Path selection"). Once lost, new IO uses the live paths. Commands in flight on a silently
  *    lost path are retried on another path at `lostPathHoldKatoMultiplier × KATO + CQT` after its
  *    last successful exchange (§9.6.2–9.6.3: give the controller time to detect the loss, then CQT
  *    to quiesce); on a connection the target closed, CQT after the loss (§9.6.2 step 2c). Reads
  *    could retry at detection; the model holds all IO (conservative). A command stuck on a live but
- *    broken queue (hung bond member, no carrier loss) is aborted after `ioTimeoutS` and retried
- *    (SPEC §14 #4).
+ *    broken queue (hung bond member, lossy link, no carrier loss) is aborted after `ioTimeoutS`,
+ *    retried on another path, and the path is reset (it reconnects after `reconnectDelayS`).
+ *    After a silent loss the old connection is still probed; a TCP reset from the target (it tore
+ *    the association down: its port lost link, or KATO passed in silence) releases the held
+ *    commands at once (`targetResetRetryS`): a short port flap costs about its outage.
  * 4. A lost path reconnects every `reconnectDelayS`; after `controllerLossTimeoutS` its controller
  *    is deleted (`RECONNECT_FOREVER` = never).
  * 5. With no live path IO stays queued and is retried until the array responds (DEPLOY-GUIDE);
  *    it fails to the guest only once every path's controller is deleted.
  *
  * Path selection (`active-active`, SPEC §6.4b; SPDK bdev_nvme selectors):
- * - `queue-depth`: the live path with the fewest outstanding commands (ties in turn). A silently
- *   dead path keeps its stuck commands, so it soon stops getting new IO: a partial stall (the
- *   guest's effective queue depth drops and the stuck commands are latency outliers).
+ * - `queue-depth`: the live path with the fewest outstanding commands (ties in turn). A slower
+ *   path drains more slowly, so it is eligible only every (its latency ÷ fastest)-th turn (Little's
+ *   law). A silently dead path's IO queues look idle until each holds a command of the guest
+ *   (closed loop, see `sinkFor`): a guest whose queue depth fits in them stalls completely until
+ *   the hold expires; a deeper one stalls partially (stuck commands are latency outliers).
  * - `round-robin`: the next live path in turn. A queue-depth-bound guest re-issues each completed IO
  *   at once, and with sub-millisecond service times every one of its slots lands on the dead path
  *   within a fraction of a second. The model's few IOs per tick stand for that closed loop
@@ -40,8 +46,8 @@
  *   to that path too, and once the path is declared lost, its new IO waits until the held commands
  *   are retried (the guest has no free slot to issue it from). A full stall, until the hold expires.
  *
- * TCP is abstracted: a frame the network dropped silently is retransmitted on the next tick
- * (an `assumption`: real RTO backoff is sub-second at first, then grows).
+ * TCP is abstracted: a frame the network dropped silently is retransmitted with a doubling timer
+ * (RFC 6298 §5.5; 1, 1, 1, 2, 4, … s up to `tcpRtoMaxS`); keep-alives every second.
  */
 import { asEngineContext, type EngineTickContext, type EngineTrace } from '../../engine/context';
 import type {
@@ -66,6 +72,7 @@ import {
   NVME_MSG,
   NVME_TCP_PORT,
   pathIdOf,
+  type ResetPayload,
 } from './protocol';
 
 export type PathState = 'live' | 'lost' | 'removed';
@@ -119,7 +126,21 @@ interface Path {
   nextReconnectAt: SimTime | null;
   /** Where its last dropped frame died (for causal chains). */
   lastDropAt: string | undefined;
+  /** Last IO completion on this path (data-plane liveness, as opposed to keep-alive). */
+  lastIoOkAt: SimTime;
+  /** Latest observed IO completion latency on this path, ms (null: none yet). */
+  rttMs: number | null;
+  /** Queue-depth selector: share credit of a slower path (see `choose`). */
+  credit: number;
+  /** How the path was last lost (null while live). */
+  lostHow: LossHow | null;
+  /** Association generation the held commands of a silent loss were sent on. */
+  heldGen: number;
+  /** TCP retransmission of the oldest held command on the old connection (silent loss only). */
+  probe: { nextAt: SimTime; tries: number; wire: Wire | null } | null;
 }
+
+type LossHow = 'silent' | 'refused' | 'reset' | 'io-timeout';
 
 type CmdBody =
   | { readonly type: 'io'; readonly req: IoRequest }
@@ -141,6 +162,16 @@ interface Cmd {
   delayed: boolean;
   /** Its frame was dropped on a path the initiator still believes live (a silent dead path). */
   stuck: boolean;
+  /** Association generation of the path when this attempt was sent. */
+  gen: number;
+  /** Retransmissions of the current attempt so far (TCP backoff). */
+  tries: number;
+  /** Earliest time the next retransmission may go out. */
+  nextResendAt: SimTime;
+  /** Held after a silent loss: a TCP reset from the target releases it early. */
+  silentHeld: boolean;
+  /** The frame of the current attempt (resent by the post-loss probe). */
+  lastDraft: MessageDraft | null;
 }
 
 interface UsageWire {
@@ -176,6 +207,8 @@ function hash(s: string): number {
 }
 
 const EPHEMERAL_BASE = 33000;
+/** Rolling window of the per-path IO share view (a display choice, not vendor behavior). */
+const SHARE_WINDOW_S = 30;
 const EPHEMERAL_SPAN = 28000;
 
 export class NvmeTcpInitiator implements StorageBackend {
@@ -200,6 +233,8 @@ export class NvmeTcpInitiator implements StorageBackend {
   private completions: IoCompletion[] = [];
   private readonly rr = new Map<string, number>();
   private readonly active = new Map<string, string>();
+  /** Queue-depth closed loop: this tick's new commands per vDisk to a dead-path sink vs others. */
+  private readonly tally = new Map<string, { sink: number; live: number }>();
   /** Round-robin: vDisk → time its new IO may go out again (its guest slots are all held). */
   private readonly blocked = new Map<string, SimTime>();
   private readonly reservations = new Set<string>();
@@ -207,6 +242,9 @@ export class NvmeTcpInitiator implements StorageBackend {
   private usageWires: UsageWire[] = [];
   private usage: Usage = emptyUsage();
   private lastUsage: Usage = emptyUsage();
+  /** IO dispatched per path, per tick, over the last `SHARE_WINDOW_S` ticks (path-share view). */
+  private shareWindow: Map<string, number>[] = [];
+  private shareNow = new Map<string, number>();
   private allLostAnnounced = false;
   private allRemovedAnnounced = false;
   private portSeq = 0;
@@ -245,6 +283,15 @@ export class NvmeTcpInitiator implements StorageBackend {
   }
   private get queues(): number {
     return Math.max(1, this.es.ioQueuesPerPath.value);
+  }
+  /**
+   * TCP retransmission wait before resend number `tries + 1` of the same frame (RFC 6298 §5.5:
+   * the timer doubles on each retransmission). With 1 s ticks the sub-second first retries fold
+   * into 1, 1, 1 s; then 2, 4, 8, … up to `tcpRtoMaxS`.
+   */
+  private rto(tries: number): number {
+    if (tries < 3) return 1;
+    return Math.max(1, Math.min(2 ** (tries - 2), this.es.tcpRtoMaxS.value));
   }
 
   // ── StorageBackend ────────────────────────────────────────────────────────
@@ -326,6 +373,7 @@ export class NvmeTcpInitiator implements StorageBackend {
     const ctx = asEngineContext(c);
     this.causes.observe(ctx.prev);
     const now = ctx.now;
+    this.tally.clear();
     for (const p of this.paths) {
       if (p.state === 'live' && now - p.lastOkAt >= this.kato) this.lose(p, ctx, 'silent');
       if (
@@ -352,15 +400,19 @@ export class NvmeTcpInitiator implements StorageBackend {
       }
     }
     for (const [pathId, n] of timedOut) {
-      ctx.emit({
+      const ev = ctx.emit({
         severity: 'warn',
         deviceId: this.cvm,
         code: 'nvme.io.timeout',
-        text: `${n} command(s) on ${pathId} got no completion in ${this.ioTimeout}s: aborted and retried`,
+        text: `${n} command(s) on ${pathId} got no completion in ${this.ioTimeout}s: aborted and retried on another path; the path is reset and reconnects`,
         causeIds: this.causes.causeOf(this.path(pathId)?.lastDropAt),
         cite: this.es.ioTimeoutS.cite,
         confidence: this.es.ioTimeoutS.confidence,
       });
+      // An IO timeout triggers error recovery: the host tears the association down and
+      // reconnects (Linux nvme-tcp error recovery; `inferred` for Stargate).
+      const p = this.path(pathId);
+      if (p) this.lose(p, ctx, 'io-timeout', [ev]);
     }
     if (this.paths.length > 0 && this.paths.every((p) => p.state === 'removed')) {
       this.failAll(ctx);
@@ -393,12 +445,39 @@ export class NvmeTcpInitiator implements StorageBackend {
     }
     for (const cmd of this.cmds.values()) {
       if (cmd.state === 'queued') this.dispatch(cmd, ctx);
-      else if (cmd.state === 'inflight' && cmd.wire?.resend) {
+      else if (cmd.state === 'inflight' && cmd.wire?.resend && now >= cmd.nextResendAt) {
         cmd.wire = this.retransmit(cmd.wire, ctx);
         cmd.delayed = true;
         this.noteUsage(cmd, ctx);
       }
     }
+    for (const p of this.paths) this.sendProbe(p, ctx);
+  }
+
+  /**
+   * After a silent loss the host's TCP keeps retransmitting the oldest held command on the old
+   * connection, with backoff. If the fabric is back and the target answers with a reset (it tore
+   * the association down), every held command of the path is retried at once (`onReset`).
+   */
+  private sendProbe(p: Path, ctx: EngineTickContext<Profile>): void {
+    const pr = p.probe;
+    if (pr === null || pr.wire !== null || ctx.now < pr.nextAt) return;
+    let oldest: Cmd | undefined;
+    for (const c of this.cmds.values()) {
+      if (c.state !== 'held' || !c.silentHeld || c.path !== p.id) continue;
+      if (oldest === undefined || c.startedAt < oldest.startedAt) oldest = c;
+    }
+    if (oldest === undefined) {
+      p.probe = null;
+      return;
+    }
+    if (oldest.lastDraft === null) return;
+    pr.wire = {
+      msgId: ctx.send(oldest.lastDraft),
+      sentAt: ctx.now,
+      draft: oldest.lastDraft,
+      resend: false,
+    };
   }
 
   onMessage(msg: Message, c: Ctx): boolean {
@@ -425,8 +504,21 @@ export class NvmeTcpInitiator implements StorageBackend {
         const [id, attempt] = splitKey(pl.key);
         const cmd = this.cmds.get(id);
         if (cmd && cmd.state === 'inflight' && cmd.attempt === attempt) {
+          const p = cmd.path === null ? undefined : this.path(cmd.path);
+          if (p) this.noteIoOk(p, pl, ctx.trace(msg.id), ctx);
           this.complete(cmd, pl, ctx.trace(msg.id), ctx);
+        } else if (cmd && cmd.state === 'held' && cmd.silentHeld && cmd.attempt === attempt) {
+          // A probe on the old connection was served after all: that connection works again,
+          // so the rest of the path's held commands are retried now rather than at the hold.
+          const p = cmd.path === null ? undefined : this.path(cmd.path);
+          this.complete(cmd, pl, ctx.trace(msg.id), ctx);
+          if (p) this.releaseHeld(p, ctx.now);
         }
+        return true;
+      }
+      case NVME_MSG.reset: {
+        const p = this.path(pathIdOf(msg.dst, msg.src));
+        if (p) this.onReset(p, (msg.payload as ResetPayload).gen, ctx);
         return true;
       }
       default:
@@ -452,15 +544,37 @@ export class NvmeTcpInitiator implements StorageBackend {
     }
     for (const cmd of this.cmds.values()) {
       if (cmd.state !== 'inflight' || cmd.wire === null || cmd.path === null) continue;
+      if (cmd.wire.resend) continue; // fate known, waiting for the retransmission timer
       const p = this.path(cmd.path);
       if (!p) continue;
       const fate = this.fate(cmd.wire, p, ctx);
       if (fate === 'refused') this.lose(p, ctx, 'refused');
       else if (fate === 'dropped') {
         cmd.wire.resend = true;
+        cmd.nextResendAt = ctx.now + this.rto(cmd.tries);
+        cmd.tries++;
         if (p.state === 'live') cmd.stuck = true;
       }
     }
+    for (const p of this.paths) {
+      const pr = p.probe;
+      if (pr?.wire == null) continue;
+      const fate = this.fate(pr.wire, p, ctx);
+      if (fate === 'pending' || fate === 'delivered') {
+        // Delivered: the target answers with a reset or a completion (onMessage).
+        if (fate === 'delivered') {
+          pr.wire = null;
+          pr.nextAt = ctx.now + 1;
+        }
+        continue;
+      }
+      pr.wire = null;
+      pr.nextAt = ctx.now + this.rto(pr.tries);
+      pr.tries++;
+    }
+    this.shareWindow.push(this.shareNow);
+    if (this.shareWindow.length > SHARE_WINDOW_S) this.shareWindow.shift();
+    this.shareNow = new Map();
     this.settleUsage(ctx);
     this.armTimer(ctx);
   }
@@ -474,6 +588,8 @@ export class NvmeTcpInitiator implements StorageBackend {
     this.usageWires = [];
     this.usage = emptyUsage();
     this.lastUsage = emptyUsage();
+    this.shareWindow = [];
+    this.shareNow = new Map();
     this.timer = null;
     for (const p of this.paths) {
       p.state = 'lost';
@@ -481,6 +597,7 @@ export class NvmeTcpInitiator implements StorageBackend {
       p.connect = null;
       p.lostAt = null;
       p.nextReconnectAt = null;
+      p.probe = null;
     }
   }
 
@@ -509,7 +626,31 @@ export class NvmeTcpInitiator implements StorageBackend {
       nvmeIoHeld: o.held,
       nvmeIoQueued: o.queued,
       nvmeReservations: JSON.stringify([...this.reservations].sort()),
+      nvmePathLatencyMs: JSON.stringify(
+        Object.fromEntries(
+          this.paths.map((p) => [p.id, p.rttMs === null ? null : round3(p.rttMs)]),
+        ),
+      ),
+      nvmePathIoShare: JSON.stringify(this.ioShare()),
     };
+  }
+
+  /** Share of this CVM's IO commands sent on each path over the last `SHARE_WINDOW_S` s, %. */
+  ioShare(): Readonly<Record<string, number>> {
+    const n = new Map<string, number>();
+    let total = 0;
+    for (const tick of this.shareWindow) {
+      for (const [id, k] of tick) {
+        n.set(id, (n.get(id) ?? 0) + k);
+        total += k;
+      }
+    }
+    return Object.fromEntries(
+      this.paths.map((p) => [
+        p.id,
+        total === 0 ? 0 : Math.round((1000 * (n.get(p.id) ?? 0)) / total) / 10,
+      ]),
+    );
   }
 
   // ── Internals ─────────────────────────────────────────────────────────────
@@ -533,6 +674,12 @@ export class NvmeTcpInitiator implements StorageBackend {
         lostAt: null,
         nextReconnectAt: null,
         lastDropAt: undefined,
+        lastIoOkAt: 0,
+        rttMs: null,
+        credit: 1,
+        lostHow: null,
+        heldGen: 0,
+        probe: null,
       };
       this.newAssociation(p);
       return p;
@@ -584,6 +731,11 @@ export class NvmeTcpInitiator implements StorageBackend {
       avoid: null,
       delayed: false,
       stuck: false,
+      gen: 0,
+      tries: 0,
+      nextResendAt: 0,
+      silentHeld: false,
+      lastDraft: null,
     };
     this.cmds.set(id, cmd);
     this.dispatch(cmd, asEngineContext(c));
@@ -596,22 +748,47 @@ export class NvmeTcpInitiator implements StorageBackend {
     cmd.wire = null;
     cmd.delayed = true;
     cmd.stuck = false;
+    cmd.silentHeld = false;
+    cmd.tries = 0;
   }
 
   private vdiskOf(cmd: Cmd): string {
     return cmd.body.type === 'io' ? cmd.body.req.vdisk : cmd.body.vdisk;
   }
 
-  /** Round-robin closed loop: the first live path holding a stuck command of `vdisk`. */
+  /**
+   * Closed-loop sink (see the header): a path still believed live whose data plane is dead, i.e.
+   * it holds a stuck command of `vdisk` and has completed no IO since that command went out (a
+   * lossy path that still completes IO is no sink). Round-robin: every new command of the vDisk
+   * goes there. Queue-depth: until the vDisk has one command on each of the path's IO queues;
+   * after that the dead queues are deeper than the live ones and get no more.
+   */
   private sinkFor(vdisk: string): Path | undefined {
+    const perPath = new Map<string, number>();
+    const dead: Path[] = [];
     for (const c of this.cmds.values()) {
-      if (c.state !== 'inflight' || !c.stuck || c.path === null || this.vdiskOf(c) !== vdisk) {
-        continue;
-      }
+      if (c.state !== 'inflight' || c.path === null || this.vdiskOf(c) !== vdisk) continue;
+      perPath.set(c.path, (perPath.get(c.path) ?? 0) + 1);
+      if (!c.stuck) continue;
       const p = this.path(c.path);
-      if (p?.state === 'live') return p;
+      if (p?.state === 'live' && p.lastIoOkAt < c.startedAt && !dead.includes(p)) dead.push(p);
     }
-    return undefined;
+    if (this.selector === 'round-robin') return dead[0];
+    return dead.find((p) => (perPath.get(p.id) ?? 0) < this.queues);
+  }
+
+  /** Commands of `vdisk` at the initiator that are not held (queued or in flight). */
+  private outstandingOf(vdisk: string): number {
+    let n = 0;
+    for (const c of this.cmds.values()) {
+      if (c.state !== 'held' && this.vdiskOf(c) === vdisk) n++;
+    }
+    return n;
+  }
+
+  /** Path latency the queue-depth selector weighs (network + array service), ms. */
+  private latencyOf(p: Path, fallback: number): number {
+    return Math.max(0.001, p.rttMs ?? fallback);
   }
 
   /** Outstanding (in-flight) commands per path, all vDisks (SPDK counts per qpair). */
@@ -632,18 +809,40 @@ export class NvmeTcpInitiator implements StorageBackend {
       const i = this.rr.get(vdisk) ?? hash(vdisk);
       this.rr.set(vdisk, i + 1);
       if (this.selector === 'queue-depth') {
-        // Fewest outstanding commands; ties go to the next path in turn.
+        // A dead queue at depth 0 ties with the live ones, so the guest's re-issued IO lands on
+        // each dead queue within moments (sub-millisecond closed loop). A guest whose outstanding
+        // IO fits in the dead queues ends up with every slot there; a deeper one keeps IO
+        // flowing on the live paths every tick while the dead queues fill.
+        const tally = this.tally.get(vdisk) ?? { sink: 0, live: 0 };
+        this.tally.set(vdisk, tally);
+        const sink = this.sinkFor(vdisk);
+        if (sink && ok(sink) && (tally.live > 0 || this.outstandingOf(vdisk) <= this.queues)) {
+          tally.sink++;
+          return sink;
+        }
+        tally.live++;
+        // Fewest outstanding commands; ties go to the next path in turn. A slower path drains
+        // its queue more slowly, so it holds more commands and gets proportionally less new IO
+        // (Little's law): it is eligible only every (its latency ÷ fastest latency)-th turn.
+        const known = live.flatMap((p) => (p.rttMs === null ? [] : [p.rttMs]));
+        const base = known.length > 0 ? Math.min(...known) : 1;
+        const fastest = Math.min(...live.map((p) => this.latencyOf(p, base)));
+        for (const p of live) p.credit = Math.min(1, p.credit + fastest / this.latencyOf(p, base));
         const load = this.loadByPath();
         let best: Path | null = null;
         let bestN = Number.POSITIVE_INFINITY;
-        for (let k = 0; k < live.length; k++) {
-          const p = live[(i + k) % live.length] as Path;
-          const n = load.get(p.id) ?? 0;
-          if (ok(p) && n < bestN) {
-            best = p;
-            bestN = n;
+        for (const weighted of [true, false]) {
+          for (let k = 0; k < live.length; k++) {
+            const p = live[(i + k) % live.length] as Path;
+            const n = load.get(p.id) ?? 0;
+            if (ok(p) && (!weighted || p.credit >= 1 - 1e-9) && n < bestN) {
+              best = p;
+              bestN = n;
+            }
           }
+          if (best !== null) break;
         }
+        if (best !== null) best.credit = Math.max(0, best.credit - 1);
         return best;
       }
       // Round-robin across every live (ANA Optimized) path; a closed-loop guest's slots all end
@@ -688,6 +887,7 @@ export class NvmeTcpInitiator implements StorageBackend {
         ? {
             type: 'io',
             key: `${cmd.id}#${cmd.attempt}`,
+            gen: p.gen,
             host: this.cvm,
             vdisk,
             op: cmd.body.req.op,
@@ -696,6 +896,7 @@ export class NvmeTcpInitiator implements StorageBackend {
         : {
             type: 'resv',
             key: `${cmd.id}#${cmd.attempt}`,
+            gen: p.gen,
             host: this.cvm,
             vdisk,
             action: cmd.body.action,
@@ -715,7 +916,12 @@ export class NvmeTcpInitiator implements StorageBackend {
     cmd.startedAt = ctx.now;
     cmd.avoid = null;
     cmd.stuck = false;
+    cmd.gen = p.gen;
+    cmd.tries = 0;
+    cmd.nextResendAt = 0;
+    cmd.lastDraft = draft;
     cmd.wire = { msgId: ctx.send(draft), sentAt: ctx.now, draft, resend: false };
+    if (cmd.body.type === 'io') this.shareNow.set(p.id, (this.shareNow.get(p.id) ?? 0) + 1);
     this.noteUsage(cmd, ctx);
   }
 
@@ -756,62 +962,102 @@ export class NvmeTcpInitiator implements StorageBackend {
       : 'dropped';
   }
 
-  private lose(p: Path, ctx: EngineTickContext<Profile>, how: 'silent' | 'refused'): void {
+  /**
+   * Declare a path lost. What happens to its in-flight commands depends on how (SPEC §6.4c):
+   * - `silent` (keep-alive timeout): held until k × KATO + CQT after the last exchange (NVMe 2.1
+   *   §9.6.2–9.6.3), while the old connection is probed; a target reset releases them early.
+   * - `refused` (the target closed the connection): held CQT (§9.6.2 step 2c).
+   * - `reset` (the target reset a connection it had already torn down): retried after
+   *   `targetResetRetryS`.
+   * - `io-timeout` (the host's own error recovery after an IO timeout): retried at once.
+   */
+  private lose(
+    p: Path,
+    ctx: EngineTickContext<Profile>,
+    how: LossHow,
+    extraCauses: readonly string[] = [],
+  ): void {
     if (p.state !== 'live') return;
     const now = ctx.now;
     p.state = 'lost';
     p.lostAt = now;
+    p.lostHow = how;
     p.nextReconnectAt = now + this.reconnectDelay;
     p.ka = null;
     p.connect = null;
     const silent = how === 'silent';
-    // NVMe 2.1 §9.6.2–9.6.3: before retrying elsewhere, wait until the controller must have seen
-    // the loss (k × KATO after the last exchange), then CQT. A target-closed connection skips the
-    // first wait (step 2c).
     const holdUntil = silent
       ? Math.max(now + 1, p.lastOkAt + this.silentHoldS)
-      : now + Math.max(1, this.cqt);
+      : how === 'refused'
+        ? now + Math.max(1, this.cqt)
+        : now + this.es.targetResetRetryS.value;
     let held = 0;
+    let retried = 0;
+    let tries = 0;
     for (const cmd of this.cmds.values()) {
-      if (cmd.state === 'inflight' && cmd.path === p.id) {
-        // Round-robin closed loop: a vDisk whose slots migrated here has none left to issue from.
-        if (this.selector === 'round-robin' && cmd.stuck) {
-          this.blocked.set(this.vdiskOf(cmd), holdUntil);
-        }
-        cmd.state = 'held';
-        cmd.holdUntil = holdUntil;
-        cmd.wire = null;
-        cmd.delayed = true;
-        cmd.stuck = false;
-        held++;
+      if (cmd.state !== 'inflight' || cmd.path !== p.id) continue;
+      if (how === 'io-timeout' || (how === 'reset' && holdUntil <= now)) {
+        this.requeue(cmd, p.id);
+        retried++;
+        continue;
       }
+      // Round-robin closed loop: a vDisk whose slots migrated here has none left to issue from.
+      if (this.selector === 'round-robin' && cmd.stuck) {
+        this.blocked.set(this.vdiskOf(cmd), holdUntil);
+      }
+      tries = Math.max(tries, cmd.tries);
+      cmd.state = 'held';
+      cmd.holdUntil = holdUntil;
+      cmd.wire = null;
+      cmd.delayed = true;
+      cmd.stuck = false;
+      cmd.silentHeld = silent;
+      held++;
     }
+    if (silent && held > 0) {
+      p.heldGen = p.gen;
+      p.probe = { nextAt: now + this.rto(tries), tries: tries + 1, wire: null };
+    } else p.probe = null;
     const remoteOwner = ctx.net.endpoint(p.remote)?.owner;
-    const causeIds = this.causes.causeOf(p.lastDropAt, remoteOwner, p.remote);
+    const causeIds = [...extraCauses, ...this.causes.causeOf(p.lastDropAt, remoteOwner, p.remote)];
     const rule = silent
-      ? `${this.es.lostPathHoldKatoMultiplier.value} × KATO + CQT after the last exchange`
+      ? `${this.es.lostPathHoldKatoMultiplier.value} × KATO + CQT after the last exchange, or earlier if the target resets the old connection`
       : 'CQT';
     const heldText = held
       ? `; ${held} in-flight command(s) held until t=${holdUntil} (${rule})`
-      : '';
+      : retried
+        ? `; ${retried} in-flight command(s) retried on another path now`
+        : '';
+    const text: Record<LossHow, string> = {
+      silent: `${p.id} lost: no keep-alive response for ${this.kato}s${heldText}`,
+      refused: `${p.id} lost: connection refused by the target${heldText}`,
+      reset: `${p.id} lost: the target reset the connection (it had already dropped the association)${heldText}; reconnecting`,
+      'io-timeout': `${p.id} reset after an IO timeout${heldText}; reconnect in ${this.reconnectDelay}s`,
+    };
+    const cite: Record<LossHow, readonly string[]> = {
+      silent: [
+        ...new Set([
+          ...this.es.keepAliveTimeoutS.cite,
+          ...this.es.lostPathHoldKatoMultiplier.cite,
+          ...this.es.commandQuiesceTimeS.cite,
+        ]),
+      ],
+      refused: ['nvme-base-spec-2.1', 'nvme-tcp-spec'] satisfies KnownCitationId[],
+      reset: this.es.targetResetRetryS.cite,
+      'io-timeout': this.es.ioTimeoutS.cite,
+    };
     const ev = ctx.emit({
       severity: 'warn',
       deviceId: this.cvm,
       code: 'nvme.path.lost',
-      text: silent
-        ? `${p.id} lost: no keep-alive response for ${this.kato}s${heldText}`
-        : `${p.id} lost: connection refused by the target${heldText}`,
+      text: text[how],
       causeIds,
-      cite: silent
-        ? [
-            ...new Set([
-              ...this.es.keepAliveTimeoutS.cite,
-              ...this.es.lostPathHoldKatoMultiplier.cite,
-              ...this.es.commandQuiesceTimeS.cite,
-            ]),
-          ]
-        : (['nvme-base-spec-2.1', 'nvme-tcp-spec'] satisfies KnownCitationId[]),
-      confidence: silent ? this.es.keepAliveTimeoutS.confidence : 'inferred',
+      cite: cite[how],
+      confidence: silent
+        ? this.es.keepAliveTimeoutS.confidence
+        : how === 'reset'
+          ? this.es.targetResetRetryS.confidence
+          : 'inferred',
     });
     if (this.liveCount() === 0 && !this.allLostAnnounced) {
       this.allLostAnnounced = true;
@@ -827,8 +1073,70 @@ export class NvmeTcpInitiator implements StorageBackend {
     }
   }
 
+  /** TCP reset from the target on `p` (a frame of an association it no longer has). */
+  private onReset(p: Path, gen: number, ctx: EngineTickContext<Profile>): void {
+    // A reset of the current association loses the path; one of an older association (a probe
+    // on the connection a reconnect replaced) only releases the commands still held on it.
+    if (p.state === 'live' && gen === p.gen) {
+      this.lose(p, ctx, 'reset');
+      return;
+    }
+    const n = this.releaseHeld(p, ctx.now);
+    if (n === 0) return;
+    ctx.emit({
+      severity: 'info',
+      deviceId: this.cvm,
+      code: 'nvme.io.released',
+      text: `${p.id}: the target reset the old connection, so it holds none of the ${n} stuck command(s); retried on another path now instead of waiting out the hold`,
+      causeIds: this.causes.causeOf(p.remote, ctx.net.endpoint(p.remote)?.owner),
+      cite: this.es.targetResetRetryS.cite,
+      confidence: this.es.targetResetRetryS.confidence,
+    });
+  }
+
+  /** Retry the commands held after a silent loss of `p` (`targetResetRetryS` from now). */
+  private releaseHeld(p: Path, now: SimTime): number {
+    const retryAt = now + this.es.targetResetRetryS.value;
+    let n = 0;
+    for (const cmd of this.cmds.values()) {
+      if (cmd.state !== 'held' || !cmd.silentHeld || cmd.path !== p.id) continue;
+      n++;
+      if (this.blocked.has(this.vdiskOf(cmd))) this.blocked.set(this.vdiskOf(cmd), retryAt);
+      if (retryAt <= now) this.requeue(cmd, p.id);
+      else {
+        cmd.holdUntil = Math.min(cmd.holdUntil, retryAt);
+        cmd.silentHeld = false;
+      }
+    }
+    p.probe = null;
+    return n;
+  }
+
+  /** An IO completed on `p`: its data plane works; remember its latency for the selector. */
+  private noteIoOk(
+    p: Path,
+    resp: CommandRespPayload,
+    trace: EngineTrace | undefined,
+    ctx: EngineTickContext<Profile>,
+  ): void {
+    p.lastIoOkAt = ctx.now;
+    p.rttMs = resp.latencyMs + (trace?.latencyMs ?? 0);
+    // Traffic-based keep-alive (NVMe 2.1 §3.9.3.1.2; the same mode the lost-path hold assumes):
+    // a completed command restarts the keep-alive timer, so a lossy path that still completes IO
+    // is not declared lost even when a keep-alive goes astray.
+    p.lastOkAt = Math.max(p.lastOkAt, ctx.now);
+  }
+
   private restore(p: Path, ctx: EngineTickContext<Profile>): void {
     p.state = 'live';
+    p.lostHow = null;
+    p.credit = 1;
+    // The reconnect replaced the old association at the target: probe the old connection at once,
+    // so the target's reset releases any commands still held from a silent loss.
+    if (p.probe !== null) {
+      p.probe.nextAt = ctx.now;
+      p.probe.wire = null;
+    }
     p.lastOkAt = ctx.now;
     p.nextKaAt = ctx.now + this.kato / 2;
     p.lostAt = null;
@@ -957,6 +1265,7 @@ export class NvmeTcpInitiator implements StorageBackend {
     let due = Number.POSITIVE_INFINITY;
     for (const p of this.paths) {
       if (p.state === 'live') due = Math.min(due, p.lastOkAt + this.kato, Math.ceil(p.nextKaAt));
+      if (p.probe !== null && p.probe.wire === null) due = Math.min(due, p.probe.nextAt);
       if (p.state === 'lost') {
         if (p.nextReconnectAt !== null) due = Math.min(due, p.nextReconnectAt);
         if (p.lostAt !== null && this.ctrlLoss !== RECONNECT_FOREVER) {
@@ -968,6 +1277,7 @@ export class NvmeTcpInitiator implements StorageBackend {
     for (const c of this.cmds.values()) {
       if (c.state === 'held') due = Math.min(due, c.holdUntil);
       if (c.state === 'inflight') due = Math.min(due, c.startedAt + this.ioTimeout);
+      if (c.state === 'inflight' && c.wire?.resend) due = Math.min(due, c.nextResendAt);
     }
     const at = Math.max(ctx.now + 1, due);
     if (!Number.isFinite(at)) return;
@@ -988,6 +1298,10 @@ export class NvmeTcpInitiator implements StorageBackend {
       },
     );
   }
+}
+
+function round3(x: number): number {
+  return Math.round(x * 1000) / 1000;
 }
 
 function splitKey(key: string): [string, number] {

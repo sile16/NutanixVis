@@ -93,6 +93,27 @@ export function faActions(model: FlashArrayModel): ActionDefinition[] {
     },
     {
       spec: {
+        kind: 'fa.interface.flap',
+        label: 'Flap FA port (link down, then up)',
+        description:
+          'The array port behind this IP loses link for a short time. The target drops its connections on it, so when the port returns the hosts’ stuck IO is reset and retried at once.',
+        appliesTo: kindIs(
+          'fa-interface',
+          (d) => d.fields.service === 'nvme-tcp' && d.fields.floating !== true,
+        ),
+        params: { durationS: { label: 'Outage (s)', choices: [3, 10, 20, 60] } },
+      },
+      apply: (req, ctx) => {
+        const f = model.facts.interfaces.find((i) => i.id === req.target);
+        const link = f === undefined ? undefined : model.facts.linkOfNic.get(f.nic);
+        if (link === undefined) throw new ActionError(`${req.target}: no FA port cable`);
+        const n = Number(req.params?.durationS);
+        if (!Number.isFinite(n) || n < 1) throw new ActionError(`bad duration ${String(n)}`);
+        ctx.net.flapLink(link, n);
+      },
+    },
+    {
+      spec: {
         kind: 'fa.interface.enable',
         label: 'Enable FA interface',
         appliesTo: kindIs('fa-interface', (d) => d.fields.enabled === false),

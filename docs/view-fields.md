@@ -43,12 +43,15 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `stargate` | `up` \| `down` \| `unhealthy` | The Stargate process. `unhealthy`: running but failing (for example, ZK or metadata unavailable). |
 | `nvmePathsUp` | number \| null | T1: count of `live` paths. `null` outside T1. |
 | `nvmePathsTotal` | number \| null | T1: count of configured paths, live or not. |
-| `nvmePaths` | JSON Record<pathId, `live` \| `lost` \| `removed`> | T1: per-path state. `lost`: keep-alive expired and reconnecting every `reconnectDelayS`. `removed`: the controller was deleted after `controllerLossTimeoutS`. |
+| `nvmePaths` | JSON Record<pathId, `live` \| `lost` \| `removed`> | T1: per-path state. `lost`: keep-alive expired, the target reset the connection, or an IO timeout reset the path; reconnecting every `reconnectDelayS`. `removed`: the controller was deleted after `controllerLossTimeoutS`. |
+| `nvmePathLatencyMs` | JSON Record<pathId, number \| null> | T1: latest IO completion latency seen on each path (network + array service, illustrative); `null` before any. The queue-depth selector weighs it (SPEC §6.4c "Slow link"). |
+| `nvmePathIoShare` | JSON Record<pathId, number> | T1: share (%) of this CVM's IO commands sent on each path over the last 30 s. |
 | `zkMember` | boolean | It holds a Zookeeper ensemble seat. |
 | `zkQuorum` | boolean | It is in a partition that has a ZK majority. |
 | `zkPartition` | string \| null | Stable id of its network partition (for example, the lowest CVM id reachable). The "unique quorum side" invariant groups by this. |
-| `ringState` | `normal` \| `down` \| `detached` | Cassandra ring membership. `detached`: auto-removed after `cassandraRingDetachS`. |
-| `hades` | `ok` \| `maintenance` \| `restarting` | T1 Hades state (SPEC §6.2). `maintenance`: the CVM lost its service volumes past `hades.externalStorageErrorThresholdS`, so its services are stopped (`stargate` is `down`). `restarting`: a re-map found the volumes and the services are settling (`cluster.cvmBootS`). Always `ok` outside T1, or with `hades-maintenance-on-storage-error: off`. |
+| `ringState` | `normal` \| `down` \| `detached` \| `forwarding` | Cassandra ring membership. `detached`: auto-removed after `cassandraRingDetachS`. `forwarding`: Degraded Node Detection disabled its metadata store (it holds no live replica). |
+| `dndState` | `ok` \| `scoring` \| `degraded` | Degraded Node Detection (SPEC §6.2). `scoring`: its peers found it unresponsive and the `dnd.scoringWindowS` window is running. `degraded`: marked Degraded until `dnd.autoResolveHealthyS` of health or `cvm.mark-fixed`. |
+| `hades` | `ok` \| `maintenance` \| `restarting` | T1 Hades state (SPEC §6.2). `maintenance`: the CVM's service-volume check IO was abandoned at `externalStorage.ioTimeoutS` and the error lasted `hades.externalStorageErrorThresholdS`, so its services are stopped (`stargate` is `down`). `restarting`: a re-map found the volumes and the services are settling (`cluster.cvmBootS`). Always `ok` outside T1, or with `hades-maintenance-on-storage-error: off`. |
 
 ### `cvm-interface` (schema fields, echoed into the view)
 
@@ -150,6 +153,7 @@ All of these are scalars.
 | `prismCentralAlert` | string \| null | `A200000` ("Cluster Connectivity Status", PC Alert Reference pc.7.6) while Prism Element is unreachable; `null` otherwise. |
 | `faultToleranceByComponent` | JSON Record<`ZOOKEEPER` \| `METADATA` \| `EXTENT_GROUPS`, number \| null> | Data Resiliency widget rows: additional node failures each component tolerates now. `null` where the array owns it (T1 `METADATA`, `EXTENT_GROUPS`). |
 | `blockAwareness` | `met` \| `not-met` \| `off` | Block fault-tolerance rule (Bible 4i). |
+| `degradedNodes` | JSON string[] | CVMs Degraded Node Detection currently marks Degraded. |
 
 ## Event codes
 
@@ -167,7 +171,10 @@ All of these are scalars.
 | `net.bond.mode-changed` | vswitch | The runtime bond mode changed. |
 | `net.mtu.mismatch` | link or switch | A large frame was dropped for MTU. Emit it once per link, not per frame. |
 | `switch.flow-control.unsupported` | switch | Flow control other than `off` is set (Everpure NET KB). |
-| `nvme.path.lost` | cvm | The keep-alive on one path expired. |
+| `nvme.path.lost` | cvm | One path was lost: its keep-alive expired, the target refused or reset the connection, or an IO timeout reset it. The text says which. |
+| `nvme.io.timeout` | cvm | Commands on a live path got no completion in `ioTimeoutS`: retried elsewhere, and the path is reset. |
+| `nvme.io.released` | cvm | After a silent loss, the target's TCP reset of the old connection released the held commands before the hold expired. |
+| `nvme.path.restored` | cvm | A lost path reconnected. |
 | `nvme.all-paths.lost` | cvm | That CVM has no live path left. |
 | `fa.claim.expired` | the controller that saw it | The primary's drive-quorum claim expired. |
 | `fa.promotion.start` / `fa.promotion.complete` | the promoting controller | |
@@ -177,6 +184,7 @@ All of these are scalars.
 | `fa.ndu.start` / `fa.ndu.complete` | `fa` | |
 | `mgmt.task.failed` / `mgmt.task.succeeded` | the VM (or object) the task was for | An array-management task finished. |
 | `stargate.up` | cvm | Stargate became healthy, for example after the CVM booted. |
+| `stargate.vdisk.handover` / `stargate.vdisk.taken-over` | the CVM taking over | T1: a remote Stargate starts / completes taking over a vDisk whose owner CVM is in Hades maintenance (`vdiskHandoverS`); its IO waits in between. |
 | `redirector.unhealthy` | host | The local (or current) Stargate missed its NOPs. |
 | `redirector.redirect` | host | iSCSI sessions moved to another Stargate. |
 | `redirector.failback` | host | Sessions returned to the local Stargate. |
@@ -187,11 +195,15 @@ All of these are scalars.
 | `ha.vm.restarted` | vm | HA restarted it, on the host in `vm.host`. |
 | `vm.io.guest-timeout` | vm | An IO stayed pending longer than the guest disk timeout. |
 | `vm.force-shutdown` | vm | The per-VM path-loss force-shutdown fired. |
+| `vm.crashed` | vm | The VM went down: with its host, or (T1, `whole-array-loss-vm-behavior: crash-and-restart`) its IO stalled past `guest.ioStallCrashS` with the whole array unreachable ("VM shut down unexpectedly"). |
+| `cvm.network.blackout` | cvm | `cvm.network-flap`: its inter-CVM interface stops answering for a while. |
+| `dnd.node.degraded` / `dnd.node.cleared` | cvm | Degraded Node Detection marked the node Degraded, or cleared it (auto-resolve or `cvm.mark-fixed`). |
 | `cassandra.node.detached` | cvm | Auto ring-repair detached the node. |
 | `curator.rebuild.start` | — or the CVM that lost data | |
 | `disk.offline` | disk | |
 | `cluster.services.down` / `cluster.services.up` | — | Quorum or metadata missing for the ZK session timeout (text names A3032 / A200000); back up. |
 | `hades.maintenance.enter` | cvm | T1: the CVM lost its service volumes; Hades put the node in maintenance mode (alerts A3032, A1030). |
+| `hades.maintenance.refused` | cvm | T1: the node should enter maintenance, but the nodes already out use up the cluster's N−2 / N−3 tolerance; Hades keeps retrying. |
 | `hades.volumes.remapped` | cvm | T1: a periodic re-map found the service volumes; the services restart (then `stargate.up`). |
 | `zk.seat.migrated` | the CVM receiving the seat | T1: a lost active node's ZK/Cassandra service volumes were mounted here after `serviceVolumeMigrationDelayS`. |
 | `zk.not-active` | the first seat that is not live | A ZK seat is down or off the quorum side (alert A111009). Raised only while a quorum side exists. |

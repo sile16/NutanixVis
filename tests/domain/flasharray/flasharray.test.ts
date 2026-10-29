@@ -477,11 +477,13 @@ describe('scenario-shaped checks', () => {
     expect(w.maxPending).toBeLessThanOrEqual(HOLD);
   });
 
-  it('T1-12: MTU mismatch keeps every path up while large IO never completes', () => {
+  it('T1-12: MTU mismatch keeps keep-alive up while large IO never completes', () => {
     const r = loadWithStubs(T1, { mtu: '1500-mismatch' });
     runTo(r, 70);
     expect(allLive(r)).toBe(true);
-    expect(r.events('nvme.path.lost')).toHaveLength(0);
+    // Small keep-alives pass, so no path is lost to KATO; an IO timeout only resets a path, which
+    // reconnects (SPEC §6.4c item 3).
+    expect(r.events('nvme.path.lost').every((e) => e.text.includes('IO timeout'))).toBe(true);
     expect(r.cvm(1).maxPendingS(70)).toBeGreaterThanOrEqual(69);
     expect(r.cvm(1).errors()).toHaveLength(0);
     expect(r.events('nvme.io.timeout').length).toBeGreaterThan(0);

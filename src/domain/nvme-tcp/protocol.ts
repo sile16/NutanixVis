@@ -23,6 +23,8 @@ export const NVME_MSG = {
   ioResp: 'nvme-io-resp',
   resv: 'nvme-resv',
   resvResp: 'nvme-resv-resp',
+  /** TCP reset from the target: the frame arrived on an association it has torn down. */
+  reset: 'nvme-tcp-reset',
   mgmt: 'fa-mgmt',
 } as const;
 
@@ -34,6 +36,7 @@ export const NVME_TRAFFIC: Readonly<Record<string, string>> = {
   [NVME_MSG.keepAliveResp]: 'nvme-keepalive',
   [NVME_MSG.resv]: 'nvme-keepalive',
   [NVME_MSG.resvResp]: 'nvme-keepalive',
+  [NVME_MSG.reset]: 'nvme-keepalive',
   [NVME_MSG.io]: 'nvme-io',
   [NVME_MSG.ioResp]: 'nvme-io',
   [NVME_MSG.mgmt]: 'mgmt',
@@ -51,11 +54,15 @@ export interface ConnectRespPayload extends AdminPayload {
   readonly ok: boolean;
 }
 
-/** One NVMe command on an IO queue. `key` is unique per attempt (`<cmd>#<attempt>`). */
+/**
+ * One NVMe command on an IO queue. `key` is unique per attempt (`<cmd>#<attempt>`); `gen` is the
+ * association (path generation) it was sent on, so the target can reset frames of a torn-down one.
+ */
 export type CommandPayload =
   | {
       readonly type: 'io';
       readonly key: string;
+      readonly gen: number;
       readonly host: DeviceId;
       readonly vdisk: string;
       readonly op: IoOp;
@@ -65,6 +72,7 @@ export type CommandPayload =
   | {
       readonly type: 'resv';
       readonly key: string;
+      readonly gen: number;
       readonly host: DeviceId;
       readonly vdisk: string;
       /** Reservation Acquire (preempt) or Release (NVMe base spec, Reservations). */
@@ -72,6 +80,12 @@ export type CommandPayload =
     };
 
 export type CommandStatus = 'ok' | 'reservation-conflict';
+
+/** TCP reset (`NVME_MSG.reset`): the target no longer has the association `gen`. */
+export interface ResetPayload {
+  readonly host: DeviceId;
+  readonly gen: number;
+}
 
 export interface CommandRespPayload {
   readonly key: string;

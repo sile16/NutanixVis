@@ -20,8 +20,13 @@ import s18 from './18-lacp-rate-hung-switch';
 import s19 from './19-flow-control';
 import s20 from './20-hung-switch-vs0';
 import s21 from './21-hung-switch-alternate';
+import s22 from './22-qd-bound-silent-loss';
+import s23 from './23-fa-port-flap';
+import s24 from './24-lossy-link';
+import s25 from './25-slow-link';
+import s26 from './26-whole-array-loss-vms';
 
-/** T1 (AHV + FlashArray): SPEC §7.2 items 1–21 (19: flow-control misconfiguration). */
+/** T1 (AHV + FlashArray): SPEC §7.2 items 1–26 (19: flow-control misconfiguration). */
 export const t1Scenarios: readonly ScenarioDef[] = [
   s01,
   s02,
@@ -44,4 +49,9 @@ export const t1Scenarios: readonly ScenarioDef[] = [
   s19,
   s20,
   s21,
+  s22,
+  s23,
+  s24,
+  s25,
+  s26,
 ].flat();

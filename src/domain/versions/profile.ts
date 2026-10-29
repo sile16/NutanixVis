@@ -12,6 +12,12 @@ export type MultipathPolicy = 'active-active' | 'active-passive';
  * with the fewest outstanding commands; `round-robin`: the next live path in turn.
  */
 export type PathSelector = 'queue-depth' | 'round-robin';
+/**
+ * What VMs do when the whole array is lost (SPEC §6.4 "T1 full array loss"): `stall` keeps IO
+ * retrying in place until the array returns; `crash-and-restart` lets a VM whose IO has stalled
+ * past `guest.ioStallCrashS` crash (QEMU exits), and AHV HA restarts it once the array is back.
+ */
+export type WholeArrayLossVmBehavior = 'stall' | 'crash-and-restart';
 
 export interface Profile {
   readonly id: string;
@@ -48,6 +54,18 @@ export interface Profile {
     readonly missWindowS: Cited<number>;
     readonly failbackStableS: Cited<number>;
     readonly redirectStallS: Cited<number>;
+  };
+
+  /**
+   * Degraded Node Detection (SPEC §6.2 "Degraded Node Detection"): peers score each CVM's
+   * responsiveness; a CVM that was partly unresponsive within a scoring window is marked Degraded.
+   */
+  readonly dnd: {
+    readonly enabled: Cited<boolean>;
+    /** A CVM unresponsive to its peers at some point is judged at the end of this window. */
+    readonly scoringWindowS: Cited<number>;
+    /** A Degraded node is cleared automatically after it has been healthy this long. */
+    readonly autoResolveHealthyS: Cited<number>;
   };
 
   readonly cluster: {
@@ -177,6 +195,24 @@ export interface Profile {
      * Must be at least the lost-path hold, or a command could be retried while still in flight.
      */
     readonly ioTimeoutS: Cited<number>;
+    /**
+     * TCP retransmission backoff cap: a data frame lost again and again is resent after 1, 1, 1,
+     * 2, 4, … seconds, doubling up to this (RFC 6298 §5.5). Keep-alives are small and resent
+     * every second.
+     */
+    readonly tcpRtoMaxS: Cited<number>;
+    /**
+     * Commands stuck on a connection the target has reset (it already tore the association down,
+     * e.g. its port lost link) are retried this long after the reset arrives.
+     */
+    readonly targetResetRetryS: Cited<number>;
+    /**
+     * A remote Stargate taking over a vDisk whose owner CVM went into Hades maintenance waits this
+     * long (ownership and NVMe reservation handover) before it serves the vDisk's IO.
+     */
+    readonly vdiskHandoverS: Cited<number>;
+    /** Default for the `whole-array-loss-vm-behavior` topology option. */
+    readonly wholeArrayLossVmBehavior: Cited<WholeArrayLossVmBehavior>;
   };
 
   /** Everpure FlashArray controller HA (Purity HA KBs). */
@@ -197,6 +233,11 @@ export interface Profile {
 
   readonly guest: {
     readonly linuxScsiTimeoutS: Cited<number>;
+    /**
+     * With `whole-array-loss-vm-behavior: crash-and-restart`: a VM whose IO has been stalled this
+     * long by a whole-array loss crashes (QEMU exits, "VM shut down unexpectedly").
+     */
+    readonly ioStallCrashS: Cited<number>;
   };
 }
 

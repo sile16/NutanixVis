@@ -3,14 +3,13 @@ import {
   allCvms,
   allPathsLive,
   allVms,
-  always,
   at,
   atCtx,
   baseInvariants,
   by,
   droppedThisTick,
   eventSeen,
-  neverSeen,
+  eventsMatching,
   T0,
 } from '../helpers';
 import { T1 } from '../ids';
@@ -27,9 +26,8 @@ export default defineScenario({
   durationS: END,
   timeline: [],
   expect: [
-    always(
-      'NVMe paths stay up: keep-alives are small frames',
-      (s) => s.simTime < T0 || allCvms(s, allPathsLive),
+    at(P.externalStorage.ioTimeoutS - 1, 'keep-alives are small frames: every path is up', (s) =>
+      allCvms(s, allPathsLive),
     ),
     at(T0 + 5, 'large frames are being dropped for MTU', (s) => droppedThisTick(s, 'mtu') > 0),
     atCtx(T0 + 5, 'the mismatch is reported', (_s, ctx) => eventSeen(ctx, 'net.mtu.mismatch')),
@@ -37,11 +35,18 @@ export default defineScenario({
       allVms(s, (v) => v.ioPendingS >= T0),
     ),
     atCtx(END, 'guests hit their SCSI timeout', (_s, ctx) => eventSeen(ctx, 'vm.io.guest-timeout')),
-    neverSeen(END, 'nvme.path.lost'),
+    atCtx(
+      END,
+      'no path is lost to keep-alive; the IO timeout only resets paths, which reconnect',
+      (_s, ctx) =>
+        eventsMatching(ctx, 'nvme.path.lost').every((e) => e.text.includes('IO timeout')) &&
+        eventSeen(ctx, 'nvme.io.timeout') &&
+        eventSeen(ctx, 'nvme.path.restored'),
+    ),
     ...baseInvariants(),
   ],
   narrative:
-    'The switches are left at MTU 1500 while the hosts and array use jumbo frames. Keep-alives and other small frames get through, so every NVMe path looks healthy, but large IO frames are dropped, so small IO completes while large IO never does. Guests eventually hit their 60 s SCSI timeout with no path failure to point at, which makes this misconfiguration hard to spot.',
+    'The switches are left at MTU 1500 while the hosts and array use jumbo frames. Keep-alives and other small frames get through, so every NVMe path looks healthy, but large IO frames are dropped, so small IO completes while large IO never does. The NVMe IO timeout resets a path now and then and it reconnects at once, and guests hit their 60 s SCSI timeout with no lasting path failure to point at, which makes this misconfiguration hard to spot.',
   cite: ['everpure-nutanix-net-bp', 'ntnx-ncp-everpure-deploy-7.6', 'ntnx-ahv-admin-11.2'],
   status: 'active',
 });

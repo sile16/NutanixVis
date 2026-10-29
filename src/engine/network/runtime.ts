@@ -103,6 +103,10 @@ export interface LinkInfo {
   readonly status: 'up' | 'down';
   readonly mtu: number;
   readonly latencyMs: number;
+  /** Injected packet loss, percent (0 = none). */
+  readonly lossPct: number;
+  /** A `link.flap` in progress brings the link back up at this time; null otherwise. */
+  readonly flapUntil: SimTime | null;
   readonly allowedVlans: readonly number[] | null;
 }
 
@@ -153,6 +157,8 @@ interface LinkState {
   adminUp: boolean;
   hung: boolean;
   latencyMs: number;
+  lossPct: number;
+  flapUntil: SimTime | null;
   allowed: Set<number> | null;
 }
 interface EndpointState {
@@ -202,6 +208,8 @@ export class NetworkRuntime implements NetworkQuery {
   private reconciling = false;
   /** Elements that already reported `net.mtu.mismatch` (once each, not per frame). */
   private readonly mtuReported = new Set<string>();
+  /** Frames checked against each lossy link (deterministic loss draws). */
+  private readonly lossSeq = new Map<LinkId, number>();
 
   constructor(
     spec: NetworkSpec,
@@ -242,6 +250,8 @@ export class NetworkRuntime implements NetworkQuery {
         adminUp: true,
         hung: false,
         latencyMs: l.latencyMs ?? 0,
+        lossPct: 0,
+        flapUntil: null,
         allowed: l.allowedVlans ? new Set(l.allowedVlans) : null,
       });
       for (const end of [l.a, l.b]) {
@@ -359,6 +369,8 @@ export class NetworkRuntime implements NetworkQuery {
       status: this.computeLinkStatus(id),
       mtu: l.mtu,
       latencyMs: l.latencyMs,
+      lossPct: l.lossPct,
+      flapUntil: l.flapUntil,
       allowedVlans: l.allowed ? [...l.allowed].sort((x, y) => x - y) : null,
     };
   }
@@ -405,8 +417,36 @@ export class NetworkRuntime implements NetworkQuery {
   // ── Failure injection and runtime configuration ───────────────────────────
 
   setLinkUp(id: LinkId, up: boolean): void {
-    this.requireLink(id).adminUp = up;
+    const l = this.requireLink(id);
+    l.adminUp = up;
+    l.flapUntil = null;
     this.reconcile();
+  }
+
+  /**
+   * `link.flap`: carrier drops now and returns `seconds` later (applied at the start of that
+   * tick, before any traffic).
+   */
+  flapLink(id: LinkId, seconds: number): void {
+    if (!Number.isFinite(seconds) || seconds < 1) {
+      throw new NetworkError(`flap duration must be >= 1 s, got ${seconds}`);
+    }
+    const l = this.requireLink(id);
+    l.adminUp = false;
+    l.flapUntil = this.host.now() + seconds;
+    this.reconcile();
+  }
+
+  /**
+   * `link.set-loss` (grey failure): carrier and forwarding stay up, but each frame crossing the
+   * link is dropped with probability `pct`% per packet it stands for (`largeFrameSegments` for a
+   * large frame). The draw is a deterministic hash of the link and a per-link frame counter.
+   */
+  setLinkLoss(id: LinkId, pct: number): void {
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+      throw new NetworkError(`loss must be within 0..100 %, got ${pct}`);
+    }
+    this.requireLink(id).lossPct = pct;
   }
 
   setNicUp(id: string, up: boolean): void {
@@ -570,6 +610,15 @@ export class NetworkRuntime implements NetworkQuery {
     this.util.clear();
     // LACP detections due this tick apply before any of its traffic (see BondRuntime).
     const now = this.host.now();
+    let flapped = false;
+    for (const l of this.links.values()) {
+      if (l.flapUntil !== null && now >= l.flapUntil) {
+        l.adminUp = true;
+        l.flapUntil = null;
+        flapped = true;
+      }
+    }
+    if (flapped) this.reconcile();
     for (const b of this.sortedBonds()) b.fireDueLacp(now);
   }
 
@@ -730,7 +779,9 @@ export class NetworkRuntime implements NetworkQuery {
       const linkId = path.links[i] as LinkId;
       const node = path.nodes[i + 1] as string;
       const fault =
-        this.linkFault(linkId, vlan, need, STRICT) ?? this.nodeFault(node, vlan, need, STRICT);
+        this.linkFault(linkId, vlan, need, STRICT) ??
+        this.lossFault(linkId, req.size) ??
+        this.nodeFault(node, vlan, need, STRICT);
       if (fault) {
         return withEgress(drop(path.links.slice(0, i + 1), path.links.slice(0, i), fault), egress);
       }
@@ -829,6 +880,17 @@ export class NetworkRuntime implements NetworkQuery {
     }
     if (!relax.mtu && need > l.mtu) return { reason: 'mtu', at: id };
     return null;
+  }
+
+  /** Grey failure: a deterministic per-frame draw against the link's injected loss. */
+  private lossFault(id: LinkId, size: MsgSize): Fault | null {
+    const l = this.links.get(id);
+    if (!l || l.lossPct <= 0) return null;
+    const segments = size === 'large' ? Math.max(1, this.config.largeFrameSegments) : 1;
+    const p = 1 - (1 - l.lossPct / 100) ** segments;
+    const seq = (this.lossSeq.get(id) ?? 0) + 1;
+    this.lossSeq.set(id, seq);
+    return unitHash(`${id}#${seq}`) < p ? { reason: 'loss', at: id, detail: 'packet-loss' } : null;
   }
 
   private nodeFault(id: string, vlan: number, need: number, relax: Relax): Fault | null {
@@ -955,6 +1017,7 @@ export class NetworkRuntime implements NetworkQuery {
         status: this.computeLinkStatus(id),
         mtu: l.mtu,
         latencyMs: l.latencyMs,
+        ...(l.lossPct > 0 ? { lossPct: l.lossPct } : {}),
         util: this.utilization(id),
       }));
   }
@@ -1050,6 +1113,20 @@ function drop(links: readonly LinkId[], carried: readonly LinkId[], f: Fault): R
 
 function withEgress(r: RouteResult, egress: string): RouteResult {
   return { ...r, egress };
+}
+
+/** FNV-1a hash of `s`, mapped to [0, 1). */
+function unitHash(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  // One extra avalanche round so consecutive counters spread evenly.
+  h = (h ^ (h >>> 16)) >>> 0;
+  h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h = (h ^ (h >>> 13)) >>> 0;
+  return h / 0x1_0000_0000;
 }
 
 function cmp(a: string, b: string): number {

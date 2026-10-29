@@ -231,16 +231,25 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
     h.run(10);
     const b = h.backends.get('node-1.cvm');
     if (b) b.state = 'unavailable';
-    const limit = HADES.volumeMonitorIntervalS.value + HADES.externalStorageErrorThresholdS.value;
+    // The mount check's IO is abandoned at the NVMe IO timeout, then the error must last the
+    // threshold (SPEC §6.2 "Hades service volumes").
+    const ioTimeout = P.externalStorage.ioTimeoutS.value;
+    const limit =
+      ioTimeout + HADES.volumeMonitorIntervalS.value + HADES.externalStorageErrorThresholdS.value;
     const entered = h.until(
       () => h.firstAt('hades.maintenance.enter', 'node-1.cvm') !== null,
       limit,
     );
     expect(entered).not.toBeNull();
-    expect(entered ?? 0).toBeGreaterThanOrEqual(T + HADES.externalStorageErrorThresholdS.value);
+    expect(entered ?? 0).toBeGreaterThanOrEqual(
+      T + ioTimeout + HADES.externalStorageErrorThresholdS.value,
+    );
     expect(h.f('node-1.cvm', 'hades')).toBe('maintenance');
     expect(h.f('node-1.cvm', 'stargate')).toBe('down');
+    // Redirected at once, but IO waits for the remote Stargate's vDisk handover.
     h.run(10);
+    expect(vmState(h, 'node-1.vm-1')).toBe('io-stalled');
+    h.run(P.externalStorage.vdiskHandoverS.value);
     expect(vmState(h, 'node-1.vm-1')).toBe('running');
     expect(vmHost(h, 'node-1.vm-1')).toBe('node-1');
     expect(h.f('node-1.vm-1', 'ownerCvm')).not.toBe('node-1.cvm');

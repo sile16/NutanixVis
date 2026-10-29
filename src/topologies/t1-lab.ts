@@ -33,6 +33,8 @@ export const t1LabOptions = {
   pathSelector: t1Options.pathSelector,
   pathLossForceShutdownS: t1Options.pathLossForceShutdownS,
   hadesMaintenance: t1Options.hadesMaintenance,
+  guestQueueDepth: t1Options.guestQueueDepth,
+  wholeArrayLossVmBehavior: t1Options.wholeArrayLossVmBehavior,
 } as const;
 
 export type T1LabParams = ParamsOf<typeof t1LabOptions>;

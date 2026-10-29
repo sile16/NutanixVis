@@ -11,8 +11,9 @@ import s09 from './09-ft2-two-failures';
 import s10 from './10-block-failure';
 import s11 from './11-partition-3-2';
 import s12 from './12-total-partition';
+import s13 from './13-degraded-node';
 
-/** T2 (Nutanix HCI on AHV): SPEC §7.2 items 1–12. */
+/** T2 (Nutanix HCI on AHV): SPEC §7.2 items 1–13. */
 export const t2Scenarios: readonly ScenarioDef[] = [
   s01,
   s02,
@@ -26,4 +27,5 @@ export const t2Scenarios: readonly ScenarioDef[] = [
   s10,
   s11,
   s12,
+  s13,
 ].flat();

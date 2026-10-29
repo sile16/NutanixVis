@@ -2,7 +2,7 @@
 
 Living status page: where the project stands, what is left, which behavior still needs checking against a real lab, and lessons learned along the way. Update it at the end of each work session.
 
-**Last updated:** 2026-10-28 (research round merged)
+**Last updated:** 2026-10-28 (behavior mechanisms: stall shapes, flaps, grey failures, DND)
 
 ## Where things stand
 
@@ -12,7 +12,7 @@ Living status page: where the project stands, what is left, which behavior still
   - T1-lab: the single-NIC mirror of the test drive.
   - T2: Nutanix HCI.
   - T3: compute-only plus storage-only, and compute-only plus HCI.
-- **Scenarios:** 67 run as automated tests against the real models. All are `active`, so a behavior change that breaks one fails CI.
+- **Scenarios:** 77 run as automated tests against the real models. All are `active`, so a behavior change that breaks one fails CI.
 - **Tests:**
   - About 930 unit, contract, architecture and property tests (Vitest and fast-check).
   - 29 browser tests (Playwright), including the T1 visual baseline.
@@ -27,6 +27,15 @@ Living status page: where the project stands, what is left, which behavior still
 - **Behavior data:** every timer and policy lives in `src/domain/versions/profiles/current.ts` as a cited field with a confidence label. Lab results become data changes, not code changes. `docs/research/profile-coverage.md` lists them all.
 
 ### Recent changes
+
+- **2026-10-28: behavior mechanisms.** The model now shows the sequence and rough scale of several behaviors it lacked, with values that are cited profile fields or labeled `assumption`s chosen to keep a sensible order (SPEC §14 #12):
+  - A queue-depth-bound guest stalls completely on one silent path loss when its queue depth fits in the dead path's IO queues, even under the queue-depth selector (T1-22).
+  - A short FA port flap: the target resets the stale connections, so stuck IO is retried at once (T1-23).
+  - Grey failures: `link.set-loss` (latency outliers, then an IO timeout resets the path, T1-24) and added latency (queue-depth shifts share away but keeps using the path, T1-25).
+  - Hades maintenance follows the abandoned check IO; only N−2 nodes are admitted at once; a remote Stargate needs a vDisk handover before IO resumes (T1-09).
+  - Whole-array loss: VMs crash after minutes of stalled IO and AHV HA restarts them after the array returns, or stall in place (`whole-array-loss-vm-behavior`, T1-26).
+  - Redirector failback after 300 s stable (Odgers 2015), much slower than the failover.
+  - Degraded Node Detection, and its effect on a second CVM outage (T2-13).
 
 - **2026-10-28: research round.** Four research passes (HCI rebuild, NVMe/TCP, cluster quorum and Prism, AHV networking) answered or narrowed Q1–Q13, and four streams applied them: NVMe hold timing and path selectors, Hades service volumes and ZK seat migration, HCI rebuild and detection timing, vs0 active member and hung-switch scenarios, LACP fallback, and Prism alert IDs. 67 scenarios, about 930 tests.
 - **2026-10-28: traffic dots.** Dots now stream slowly and continuously along every active cable, at about one cable per 2–5 s, as in ActiveClusterVis. They run on wall-clock time, so they keep moving while paused and no longer race at ×20 or ×60. Streams fade as traffic ages out of the activity window. Drops still burst once or show a steady ×. Code: `src/ui/diagram/link-flow.ts`.
@@ -61,15 +70,15 @@ Research round 2026-10-28: public docs, KBs, Command Reference gflags, SPDK/Linu
 | # | Question | Model today (after research) | Where | Lab |
 |---|---|---|---|---|
 | Q1 | HCI rebuild time after a node failure | Rebuild starts 60 s after the Stargate is declared down (`inferred`, KB titles), 0.5 GiB/s per surviving node (`assumption`, fits Odgers 2018 tests and "1 to 2 hours" all-flash): ≈ 64 min for 4-node T2 at 20 % fill | `hci.rebuildStartDelayS`, `rebuildGiBpsPerNode` | needs an HCI lab |
-| Q2 | Can a guest's whole queue stall on a silently dead NVMe path? | Yes with round-robin (full stall ≈ 3 × KATO + CQT ≈ 45 s); partial with the queue-depth selector (default). Detection at KATO; in-flight IO held 3 × KATO + CQT (NVMe 2.1 §9.6) | SPEC §6.4c, `lostPathHoldKatoMultiplier`, `pathSelector` | L5, L12 |
+| Q2 | Can a guest's whole queue stall on a silently dead NVMe path? | Yes with round-robin at any queue depth, and with the queue-depth selector (default) when the guest's queue depth is at most the dead path's IO queues (full stall ≈ 3 × KATO + CQT ≈ 45 s); deeper queues stall partially. Detection at KATO (traffic-based); in-flight IO held 3 × KATO + CQT (NVMe 2.1 §9.6) unless the target resets the old connection | SPEC §6.4c, `lostPathHoldKatoMultiplier`, `pathSelector` | L5, L12 |
 | Q3 | NVMe IO timeout in the integration | 45 s (`inferred`: must be ≥ 3 × KATO + CQT) | `externalStorage.ioTimeoutS` | L5 |
-| Q4 | ZK session timeout; services with both switches down / array lost | ZK session 20 s (`inferred`, public CVM logs) delays "services down" and Prism Element; quorum effects immediate. T1: a CVM without array connectivity goes to Hades maintenance mode after 5–10 s (`verified` gflag text), its VMs redirect; whole-array loss takes services down, IO retries, recovery at the next 300 s volume re-map. HCI total partition: VMs self-terminate 45 s after first failed IO and restart when quorum returns (`anecdotal`). Stargate hung-op threshold: not public | `cluster.zkSessionTimeoutS`, `hades.*`, `ahvHa.selfTerminateWithoutQuorum` | L1, L9 |
+| Q4 | ZK session timeout; services with both switches down / array lost | ZK session 20 s (`inferred`, public CVM logs) delays "services down" and Prism Element; quorum effects immediate. T1: a CVM without array connectivity goes to Hades maintenance mode once its check IO is abandoned at the NVMe IO timeout plus 5–10 s (`verified` gflag text, `inferred` trigger); its VMs redirect and resume after a vDisk handover (`assumption`). Whole-array loss takes services down; only N−2 nodes enter maintenance; VMs crash after minutes and restart after the array returns (`assumption`, option `whole-array-loss-vm-behavior`). HCI total partition: VMs self-terminate 45 s after first failed IO and restart when quorum returns (`anecdotal`). Stargate hung-op threshold: not public | `cluster.zkSessionTimeoutS`, `hades.*`, `ahvHa.selfTerminateWithoutQuorum` | L1, L9 |
 | Q5 | Prism status without quorum | Prism Element unreachable once services are down; Prism Central raises A200000; partial failures name the real alert IDs (A1001, A1006, A1030, A3032, A111009, A1145, A130068) | ClusterView `prismElement`, `prismCentralAlert` | L9 |
 | Q6 | Hung switch with active-backup vs0 | Never detected by active-backup / MAC pinning / no-bond (verified OVS behavior); recovery only by carrier loss. Scenarios T1-20 (all hosts on Switch A: cluster-wide write stall) and T1-21 (`vs0-active-member: alternate`: minority fenced) | `bond.ts`, `vs0-active-member` | bonded lab |
 | Q7 | `network_segment_status --last_task` | Bare command documented (AOS Security Guide); `--last_task` flag still unverified — run `--help` in the lab | `docs/commands.md` | any lab |
 | Q8 | Multipath policy, queues per path | Active-active (`assumption`) + queue-depth selector (`inferred`); 4 IO queues (`inferred`, Hades gflag) | `multipathPolicy`, `pathSelector`, `ioQueuesPerPath` | L12 |
 | Q9 | Reconnect delay | 10 s (Linux default, `assumption`) | `externalStorage.reconnectDelayS` | L5 |
-| Q10 | Redirect pause and failback | 3 s pause (`assumption`); failback after 30 s stable (`inferred`, Genesis `def_stargate_stable_interval`; one 2015 AHV blog says 300 s); 2-miss rule is a pre-AHV `assumption` | `redirector.*` | L3 |
+| Q10 | Redirect pause and failback | 3 s pause (`assumption`); failback after 300 s stable (`unverified`, Odgers 2015 AHV post; Genesis `def_stargate_stable_interval` 30 s is a different path); 2-miss rule is a pre-AHV `assumption` | `redirector.*` | L3 |
 | Q11 | CVM boot, host reboot, Cassandra rejoin | 180 s (≤ 420 s `svm_reboot_timeout`), 300 s, rejoin after 30 min stable (`inferred`, KB-1256) | `cluster.cvmBootS`, `hostRebootS`, `cassandraRejoinStableS` | L7 |
 | Q12 | SMART check, replica ack, remote Stargate down | SMART short test 120 s (`assumption`); replica ack 2 s for a live peer; a silently dead remote Stargate takes 20 s to detect (`inferred`), a clean stop ≈ 1 s | `hci.diskSmartCheckS`, `replicaAckTimeoutS`, `stargateDownDetectS` | needs an HCI lab |
 | Q13 | FA controller reboot during upgrade | 300 s (`assumption`); a rebooting controller closes its TCP connections, so its paths drop at once, and in-flight IO waits CQT | `flasharray.controllerRebootS` | L6 |

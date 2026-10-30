@@ -87,6 +87,14 @@ export class Cvm implements Device<Profile> {
   /** `cvm.internal-link-down` / `-up`: requested state, and whether the link is down now. */
   private internalLinkRequest: boolean | null = null;
   private internalLinkDown = false;
+  /**
+   * Planned shutdown (`cvm.planned-shutdown`, the upgrade / LCM path): `preparing` while the
+   * cluster forwards traffic away and stops services, `off` once powered off; it stays off (no
+   * automatic boot) until `cvm.planned-start`.
+   */
+  private planned: 'none' | 'requested' | 'preparing' | 'off' = 'none';
+  private plannedStartRequested = false;
+  private plannedTimer: TimerHandle | null = null;
 
   constructor(
     readonly facts: CvmFacts,
@@ -185,6 +193,20 @@ export class Cvm implements Device<Profile> {
    */
   requestStargate(cmd: 'stop' | 'start' | 'crash' | 'hang' | 'resume'): void {
     this.stargateCmd = cmd;
+  }
+
+  /** `cvm.planned-shutdown`: the caller already granted this CVM the cluster's shutdown token. */
+  requestPlannedShutdown(): void {
+    if (this.planned === 'none') this.planned = 'requested';
+  }
+
+  /** `cvm.planned-start`: power a CVM that was shut down in a planned way back on. */
+  requestPlannedStart(): void {
+    if (this.planned === 'off') this.plannedStartRequested = true;
+  }
+
+  plannedState(): 'none' | 'preparing' | 'off' {
+    return this.planned === 'requested' ? 'preparing' : this.planned;
   }
 
   /** `cvm.network-flap`: the CVM's inter-CVM interface goes dark for `seconds`, then returns. */
@@ -453,7 +475,17 @@ export class Cvm implements Device<Profile> {
       this.stopCause = 'silent';
       this.noteDown('silent', ctx.now);
       this.goDown(ctx, true);
-    } else if (hostUp && this.engineUp && this.power === 'off') this.boot(ctx);
+    } else if (hostUp && this.engineUp && this.power === 'off' && this.planned !== 'off') {
+      this.boot(ctx);
+    }
+    if (this.planned === 'requested') this.beginPlannedShutdown(ctx);
+    if (this.plannedStartRequested) {
+      this.plannedStartRequested = false;
+      if (this.planned === 'off') {
+        this.planned = 'none';
+        if (hostUp && this.engineUp) this.boot(ctx);
+      }
+    }
     if (this.rebootRequested) {
       this.rebootRequested = false;
       if (this.power !== 'off') {
@@ -496,6 +528,7 @@ export class Cvm implements Device<Profile> {
 
   onFail(ctx: Ctx): void {
     this.engineUp = false;
+    this.cancelPlanned(ctx);
     this.stopCause = 'silent';
     this.noteDown('silent', ctx.now);
     this.stargate.setHung(false);
@@ -514,6 +547,8 @@ export class Cvm implements Device<Profile> {
 
   onRecover(ctx: Ctx): void {
     this.engineUp = true;
+    // A generic power-on also ends a planned shutdown.
+    this.planned = 'none';
     if (this.reg.hostAlive(this.hostId)) this.boot(ctx);
   }
 
@@ -555,6 +590,8 @@ export class Cvm implements Device<Profile> {
       hades: this.hades.state,
       // Host-internal link between the AHV host and this CVM (up | down).
       internalLink: this.internalLinkDown ? 'down' : 'up',
+      // Planned shutdown (`cvm.planned-shutdown`): none | preparing | off.
+      plannedShutdown: this.plannedState(),
     };
     for (const c of this.components) Object.assign(fields, c.viewFields?.() ?? {});
     const badges: string[] = [];
@@ -638,10 +675,72 @@ export class Cvm implements Device<Profile> {
         this.power = 'running';
         this.runningSince = ctx.now;
         this.stargate.setProcess(true);
+        if (this.reg.plannedShutdownToken === this.id) this.reg.plannedShutdownToken = null;
         for (const c of this.components) c.onRecover?.(ctx);
         this.emitStargateUp(ctx, `${this.label} booted; Stargate is serving`);
       },
     );
+  }
+
+  // ── Planned shutdown (upgrade / LCM path) ──────────────────────────────
+
+  /**
+   * Planned shutdown, the documented node-shutdown path (AHV Admin Guide "Shutting Down a Node"): with the
+   * shutdown token granted, traffic is forwarded away and services stop in an orderly way, then the
+   * CVM powers off (`cluster.plannedShutdownPrepS`). An orderly Stargate stop resets its connections
+   * and releases its vDisk leadership at once, so the VMs' sessions log in to peers and IO resumes
+   * after the re-login, with no silent-CVM pause. The CVM stays off until `cvm.planned-start`.
+   */
+  private beginPlannedShutdown(ctx: Ctx): void {
+    if (this.power !== 'running') {
+      this.planned = 'none';
+      if (this.reg.plannedShutdownToken === this.id) this.reg.plannedShutdownToken = null;
+      return;
+    }
+    const W = ctx.profile.cluster.plannedShutdownPrepS;
+    this.planned = 'preparing';
+    const cite: KnownCitationId[] = ['ntnx-ahv-admin-11.2'];
+    ctx.emit({
+      severity: 'info',
+      deviceId: this.id,
+      code: 'cvm.planned-shutdown.start',
+      text: `${this.label}: planned shutdown: the cluster grants the shutdown token (one CVM at a time), forwards its traffic away and stops its services in an orderly way; it powers off in about ${W.value} s`,
+      causeIds: this.reg.causes.get(this.id) ?? [],
+      cite,
+      confidence: W.confidence,
+    });
+    if (this.plannedTimer) ctx.timers.cancel(this.plannedTimer);
+    this.plannedTimer = ctx.timers.set(
+      `${this.id} planned shutdown`,
+      W.value,
+      { cite: W.cite, confidence: W.confidence },
+      () => {
+        this.plannedTimer = null;
+        if (this.planned !== 'preparing' || this.power === 'off') return;
+        this.stopCause = 'clean-stop';
+        if (this.stargateServing()) this.noteDown('orderly', ctx.now);
+        this.goDown(ctx, true);
+        this.planned = 'off';
+        ctx.emit({
+          severity: 'warn',
+          deviceId: this.id,
+          code: 'cvm.planned-shutdown.off',
+          text: `${this.label} is powered off after an orderly shutdown: its Stargate released its vDisks first, so its VMs' IO moved to other Stargates without waiting for a Zookeeper expiry`,
+          causeIds: this.reg.causes.get(this.id) ?? [],
+          cite,
+          confidence: W.confidence,
+        });
+      },
+    );
+  }
+
+  private cancelPlanned(ctx: Ctx): void {
+    if (this.plannedTimer) ctx.timers.cancel(this.plannedTimer);
+    this.plannedTimer = null;
+    if (this.planned === 'requested' || this.planned === 'preparing') this.planned = 'none';
+    if (this.planned === 'none' && this.reg.plannedShutdownToken === this.id) {
+      this.reg.plannedShutdownToken = null;
+    }
   }
 
   // ── Hades (T1) ──────────────────────────────────────────────────────────

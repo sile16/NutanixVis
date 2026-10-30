@@ -60,6 +60,18 @@ export const current: Profile = {
       ['ntnx-bible-5b', 'reddit-nutanix-all-nodes-network-loss'],
       'HCI only. Bible 5b ties the 45 s self-termination to IO failure, not to a quorum side existing; a field report on a total partition says VMs "fence" and the cluster returns to its previous state once the network is back (anecdotal). T1 keeps retrying IO (DEPLOY-GUIDE).',
     ),
+    liveMigrationPauseS: c(
+      1,
+      'assumption',
+      ['ntnx-ahv-admin-11.2'],
+      "Not published. A live migration copies memory while the VM runs and stuns it only for the final switchover: about a second of paused IO. The VM's disks log in to the destination host's local Stargate.",
+    ),
+    maintenanceReturnS: c(
+      20,
+      'assumption',
+      ['ntnx-ahv-admin-11.2'],
+      'Not published. When a host exits maintenance mode, Acropolis migrates the VMs it moved off back to it after a short delay.',
+    ),
   },
 
   redirector: {
@@ -165,6 +177,12 @@ export const current: Profile = {
       'assumption',
       ['ntnx-cmdref-aos-7.6'],
       'No published figure for CVM power-on to Stargate serving. Upper bound: Genesis --svm_reboot_timeout = 420 s, "Maximum time expected for SVM to reboot/shutdown" (Command Ref 7.6). Hades maintenance exit uses the shorter hades.servicesRestartS.',
+    ),
+    plannedShutdownPrepS: c(
+      5,
+      'assumption',
+      ['ntnx-ahv-admin-11.2'],
+      "Not published. A planned CVM shutdown (the upgrade and maintenance path) first takes the cluster's shutdown token (one CVM at a time), forwards traffic away and stops services in an orderly way, then powers the CVM off: seconds.",
     ),
     stargateSelfRestartS: c(
       5,

@@ -112,6 +112,8 @@ export class Vm implements Device<Profile> {
   private state: VmState = 'running';
   private pendingS = { all: 0, read: 0, write: 0 };
   private latencyMs = 0;
+  /** Live migration: IO is held until the switchover stun ends. */
+  private migrationPauseUntil = Number.NEGATIVE_INFINITY;
 
   constructor(
     spec: VmSpec,
@@ -200,6 +202,38 @@ export class Vm implements Device<Profile> {
     });
   }
 
+  /**
+   * Live migration to `host` (AHV host maintenance mode): the process keeps running; its IO pauses
+   * for the switchover stun (`ahvHa.liveMigrationPauseS`) and outstanding IO is re-issued over the
+   * destination host's sessions. The caller logs the vDisks in on the destination first.
+   */
+  migrateTo(host: string, ctx: Ctx, causeIds: readonly string[], why: string): string | null {
+    const from = this.hostId;
+    if (from === null || from === host) return null;
+    const P = ctx.profile.ahvHa.liveMigrationPauseS;
+    this.hostId = host;
+    this.home = host;
+    this.migrationPauseUntil = ctx.now + P.value;
+    for (const p of this.pending.values()) {
+      p.needsSend = true;
+      p.sentTo = null;
+      p.session = null;
+      p.msgId = null;
+    }
+    this.uplinks = new Set();
+    this.shownUplinks = [];
+    this.shownPaths = [];
+    return ctx.emit({
+      severity: 'info',
+      deviceId: this.id,
+      code: 'vm.migrated',
+      text: `${this.label} live-migrated from ${from} to ${host} (${why}); its IO paused about ${P.value} s at the switchover`,
+      causeIds,
+      cite: P.cite,
+      confidence: P.confidence,
+    });
+  }
+
   powerOff(): void {
     if (this.lifecycle === 'off') return;
     this.kill('off', 'none', 0);
@@ -225,6 +259,7 @@ export class Vm implements Device<Profile> {
   emit(ctx: Ctx): void {
     const host = this.hostId;
     if (host === null || this.lifecycle !== 'running') return;
+    if (ctx.now < this.migrationPauseUntil) return;
     for (const vdisk of this.vdisks) this.issue(vdisk, ctx);
     let noPath = false;
     for (const [ioId, p] of this.pending) {

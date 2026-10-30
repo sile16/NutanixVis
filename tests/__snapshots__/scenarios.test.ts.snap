@@ -1637,6 +1637,50 @@ exports[`scenario acceptance > t1-30-internal-link-lost: T1: host–CVM internal
 ]
 `;
 
+exports[`scenario acceptance > t1-31-maintenance-abrupt: T1: abrupt CVM reboot — the contrast to a planned shutdown 1`] = `
+[
+  "11	action.reboot@node-2.cvm",
+  "11	zk.not-active@node-2.cvm",
+  "11	redirector.parked@node-2",
+  "11	redirector.redirect@node-2",
+  "21	redirector.redirect@node-2",
+  "31	redirector.redirect@node-2",
+]
+`;
+
+exports[`scenario acceptance > t1-31-maintenance-planned: T1: planned CVM shutdown — IO moves with only a brief re-login 1`] = `
+[
+  "11	action.cvm.planned-shutdown@node-2.cvm",
+  "11	cvm.planned-shutdown.start@node-2.cvm",
+  "16	cvm.planned-shutdown.off@node-2.cvm",
+  "16	zk.not-active@node-2.cvm",
+  "16	redirector.redirect@node-2",
+]
+`;
+
+exports[`scenario acceptance > t1-31-maintenance-rolling: T1: rolling maintenance — host maintenance mode, planned CVM shutdown, return 1`] = `
+[
+  "11	action.host.enter-maintenance@node-2",
+  "11	host.maintenance.enter@node-2",
+  "11	vm.migrated@node-2.vm-1",
+  "11	vm.migrated@node-2.vm-2",
+  "21	action.cvm.planned-shutdown@node-2.cvm",
+  "21	cvm.planned-shutdown.start@node-2.cvm",
+  "26	cvm.planned-shutdown.off@node-2.cvm",
+  "26	zk.not-active@node-2.cvm",
+  "41	action.cvm.planned-start@node-2.cvm",
+  "221	stargate.up@node-2.cvm",
+  "222	nvme.path.restored@node-2.cvm",
+  "222	nvme.path.restored@node-2.cvm",
+  "222	nvme.path.restored@node-2.cvm",
+  "222	nvme.path.restored@node-2.cvm",
+  "251	action.host.exit-maintenance@node-2",
+  "251	host.maintenance.exit@node-2",
+  "271	vm.migrated@node-2.vm-1",
+  "271	vm.migrated@node-2.vm-2",
+]
+`;
+
 exports[`scenario acceptance > t1lab-01-disable-one-fa-ip: T1-lab: disable one FlashArray data IP 1`] = `
 [
   "11	action.fa.interface.disable@fa.ct0.eth10.v10",

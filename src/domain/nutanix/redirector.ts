@@ -154,6 +154,11 @@ export class Redirector {
     return this.session(vdisk).target;
   }
 
+  /** The VM migrated away: its sessions on this host end. */
+  logout(vdisk: string): void {
+    this.sessions.delete(vdisk);
+  }
+
   // ── Hooks (called by the host device while it is alive) ─────────────────
 
   emit(ctx: Ctx): void {

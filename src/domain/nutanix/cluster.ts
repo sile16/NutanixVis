@@ -60,6 +60,8 @@ export class ClusterDevice implements Device<Profile> {
   private readonly dndDead = new Set<string>();
   /** DND: the current scoring window is a partial-unresponsiveness one (`dnd.partialConvictionS`). */
   private readonly dndPartial = new Map<string, boolean>();
+  /** Hosts that left maintenance mode, and when (their evacuated VMs return after a delay). */
+  private readonly maintenanceExitAt = new Map<string, number>();
   private derivedCache: Record<string, ViewField> = {};
 
   constructor(private readonly reg: Registry) {
@@ -77,7 +79,101 @@ export class ClusterDevice implements Device<Profile> {
     this.evalRing(ctx);
     this.evalLeader(ctx);
     this.evalHa(ctx);
+    this.maintenance(ctx);
     this.powerOns(ctx);
+  }
+
+  /**
+   * AHV host maintenance mode (AHV Admin Guide 11.2, "Putting a Node into Maintenance Mode"):
+   * entering live-migrates every VM on the host to other hosts (least loaded first) and makes it
+   * unschedulable; exiting makes it schedulable again and, after `ahvHa.maintenanceReturnS`,
+   * Acropolis migrates the VMs it moved off back to it. The host's CVM keeps running.
+   */
+  private maintenance(ctx: Ctx): void {
+    const reg = this.reg;
+    const A = ctx.profile.ahvHa;
+    const cite: KnownCitationId[] = ['ntnx-ahv-admin-11.2'];
+    for (const [host, enter] of [...reg.maintenanceRequests].sort(([a], [b]) => nodeOrder(a, b))) {
+      const h = reg.facts.host(host);
+      if (!h) continue;
+      if (enter && !reg.maintenanceHosts.has(host)) {
+        reg.maintenanceHosts.add(host);
+        const ev = ctx.emit({
+          severity: 'info',
+          deviceId: host,
+          code: 'host.maintenance.enter',
+          text: `${h.label} enters maintenance mode: it takes no new VMs and its VMs live-migrate to other hosts`,
+          causeIds: reg.causes.get(host) ?? [],
+          cite,
+          confidence: 'verified',
+        });
+        const load = this.load();
+        for (const vm of [...reg.vms.values()].sort((a, b) => nodeOrder(a.id, b.id))) {
+          if (vm.host !== host) continue;
+          const to = this.pickHost(load);
+          if (to === null) {
+            ctx.emit({
+              severity: 'warn',
+              deviceId: vm.id,
+              code: 'vm.migrate-failed',
+              text: `${vm.label}: no other host can run it, so it stays on ${h.label}`,
+              causeIds: [ev],
+              cite,
+              confidence: 'assumption',
+            });
+            continue;
+          }
+          load.set(to, (load.get(to) ?? 0) + 1);
+          load.set(host, (load.get(host) ?? 1) - 1);
+          this.migrate(vm.id, to, ctx, [ev], `${h.label} entering maintenance mode`);
+          reg.evacuated.set(vm.id, host);
+        }
+      } else if (!enter && reg.maintenanceHosts.has(host)) {
+        reg.maintenanceHosts.delete(host);
+        this.maintenanceExitAt.set(host, ctx.now);
+        ctx.emit({
+          severity: 'info',
+          deviceId: host,
+          code: 'host.maintenance.exit',
+          text: `${h.label} leaves maintenance mode and is schedulable again; the VMs it moved off return in about ${A.maintenanceReturnS.value} s`,
+          causeIds: reg.causes.get(host) ?? [],
+          cite: [...cite, ...A.maintenanceReturnS.cite],
+          confidence: A.maintenanceReturnS.confidence,
+        });
+      }
+    }
+    reg.maintenanceRequests.clear();
+    for (const [host, since] of [...this.maintenanceExitAt].sort(([a], [b]) => nodeOrder(a, b))) {
+      const due = since + A.maintenanceReturnS.value;
+      this.wake(ctx, `${host} maintenance return`, due, A.maintenanceReturnS);
+      if (ctx.now < due) continue;
+      this.maintenanceExitAt.delete(host);
+      if (!this.eligible(host)) continue;
+      for (const [id, origin] of [...reg.evacuated].sort(([a], [b]) => nodeOrder(a, b))) {
+        if (origin !== host) continue;
+        reg.evacuated.delete(id);
+        const vm = reg.vms.get(id);
+        if (!vm || vm.host === null || vm.host === host) continue;
+        this.migrate(id, host, ctx, [], `returning after ${host} left maintenance mode`);
+      }
+    }
+  }
+
+  /** Live migration: fresh logins on the destination (its local Stargate), then the switchover. */
+  private migrate(
+    id: string,
+    to: string,
+    ctx: Ctx,
+    causeIds: readonly string[],
+    why: string,
+  ): void {
+    const vm = this.reg.vms.get(id);
+    const from = vm?.host ?? null;
+    if (!vm || from === null || from === to) return;
+    this.login(vm.vdisks, to);
+    const old = this.reg.hosts.get(from)?.redirector;
+    for (const d of vm.vdisks) old?.logout(d);
+    vm.migrateTo(to, ctx, causeIds, why);
   }
 
   /** `power-on` of a VM: on its last host if it can run VMs, else the least loaded host. */
@@ -698,6 +794,7 @@ export class ClusterDevice implements Device<Profile> {
     const reg = this.reg;
     const h = reg.facts.host(host);
     if (!h || h.role === 'storage-only' || !reg.hostAlive(h.id)) return false;
+    if (reg.maintenanceHosts.has(h.id)) return false;
     if (reg.haOf(h.id).state !== 'connected' || reg.heartbeatMissing(h.id)) return false;
     // A VM's disks need some Stargate to serve them (local or remote, through the redirector):
     // with none serving anywhere it would only crash again at the initiator session timeout.
@@ -742,6 +839,7 @@ export class ClusterDevice implements Device<Profile> {
       (h) =>
         h.role !== 'storage-only' &&
         reg.hostAlive(h.id) &&
+        !reg.maintenanceHosts.has(h.id) &&
         reg.haOf(h.id).state === 'connected' &&
         !reg.heartbeatMissing(h.id),
     ).length;

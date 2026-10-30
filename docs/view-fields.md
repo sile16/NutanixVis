@@ -51,6 +51,7 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `zkPartition` | string \| null | Stable id of its network partition (for example, the lowest CVM id reachable). The "unique quorum side" invariant groups by this. |
 | `ringState` | `normal` \| `down` \| `detached` \| `forwarding` | Cassandra ring membership. `detached`: auto-removed after `cassandraRingDetachS`. `forwarding`: Degraded Node Detection disabled its metadata store (it holds no live replica). |
 | `internalLink` | `up` \| `down` | The host-internal link between the AHV host and this CVM (`cvm.internal-link-down` / `-up`). |
+| `plannedShutdown` | `none` \| `preparing` \| `off` | Planned shutdown (`cvm.planned-shutdown`): `preparing` while traffic is forwarded away and services stop, `off` once powered off; it stays off until `cvm.planned-start`. |
 | `dndState` | `ok` \| `scoring` \| `degraded` | Degraded Node Detection (SPEC §6.2). `scoring`: its peers found it unresponsive and the `dnd.scoringWindowS` window is running. `degraded`: marked Degraded until `dnd.autoResolveHealthyS` of health or `cvm.mark-fixed`. |
 | `hades` | `ok` \| `maintenance` \| `restarting` | T1 Hades state (SPEC §6.2). `maintenance`: every path to the CVM's service volumes was lost and the error lasted `hades.externalStorageErrorThresholdS`, so its services are stopped (`stargate` is `down`). `restarting`: a volume check found the mounts healthy again, the node left maintenance and the services are restarting (`hades.servicesRestartS`). Always `ok` outside T1, or with `hades-maintenance-on-storage-error: off`. |
 
@@ -68,7 +69,8 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `power` | `on` \| `off` | |
 | `role` | `hci` \| `compute-only` \| `storage-only` \| `external-storage-compute` | Schema role. |
 | `haState` | `connected` \| `disconnected` \| `fenced` | The Acropolis leader's view of the host. `disconnected`: heartbeats are missing. `fenced`: Stargates block its IO, from T+60. It returns to `connected` once the host rejoins. |
-| badges | — | The `acropolis-leader` badge appears on the leader host. |
+| `maintenance` | boolean | AHV maintenance mode (`host.enter-maintenance`): unschedulable, its VMs migrated off. |
+| badges | — | The `acropolis-leader` badge appears on the leader host; `maintenance` on a host in maintenance mode. |
 
 ### `vswitch` (engine view kind: `bond`)
 
@@ -194,6 +196,10 @@ All of these are scalars.
 | `redirector.parked` | host | A session logged in to a peer that may not serve the vDisk yet: its leadership is still the silent Stargate's until that Stargate's ZK session expires. The initiator tries again at its next NOP cycle. |
 | `redirector.leader-redirect` | host | A peer sent a session on to the vDisk's leader at its external portal; the leader is alive and answers, so it serves the session over the external network (no handover). |
 | `redirector.path-internal` | host | A session that was on its local CVM's external portal moved back to the host-internal link after `externalPathValidityS`. |
+| `cvm.planned-shutdown.start` / `cvm.planned-shutdown.off` | cvm | A planned shutdown began (token granted, traffic forwarded away, services stopping) / the CVM powered off after it. |
+| `host.maintenance.enter` / `host.maintenance.exit` | host | The host entered / left AHV maintenance mode. |
+| `vm.migrated` | vm | A live migration (host maintenance, or the return after it): IO paused for the switchover. |
+| `vm.migrate-failed` | vm | No other host could take the VM when its host entered maintenance; it stays. |
 | `redirector.failback` | host | One vDisk's session returned to the local Stargate (one per `failbackStepS`, after `failbackStableS`). |
 | `ha.host.disconnected` | host | The text names alert A1006. |
 | `ha.host.fenced` | host | |

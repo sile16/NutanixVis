@@ -46,6 +46,13 @@ export interface Profile {
      * its IO retries until the array responds.
      */
     readonly selfTerminateWithoutQuorum: Cited<boolean>;
+    /** Live migration: the VM's brief stun at the switchover to the destination host. */
+    readonly liveMigrationPauseS: Cited<number>;
+    /**
+     * Host maintenance mode: after the host exits maintenance, Acropolis migrates the VMs it
+     * moved off back to it after this delay.
+     */
+    readonly maintenanceReturnS: Cited<number>;
   };
 
   /**
@@ -102,6 +109,11 @@ export interface Profile {
     readonly minNodes: Cited<number>;
     /** CVM power-on to Stargate up. */
     readonly cvmBootS: Cited<number>;
+    /**
+     * Planned CVM shutdown (the upgrade / LCM path): from the shutdown request to the CVM powering
+     * off, while the cluster grants the shutdown token, forwards traffic away and stops services.
+     */
+    readonly plannedShutdownPrepS: Cited<number>;
     /** A Stargate process that exited (crash, watchdog) is restarted by its self-monitor after this. */
     readonly stargateSelfRestartS: Cited<number>;
     /**

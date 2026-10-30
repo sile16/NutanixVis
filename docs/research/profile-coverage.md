@@ -14,9 +14,9 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | verified | 39 |
 | inferred | 15 |
 | unverified | 1 |
-| assumption | 32 |
+| assumption | 35 |
 | lab-observed | 0 |
-| **Total** | **87** |
+| **Total** | **90** |
 
 | Field | Value | Confidence | Citations | Note |
 |---|---|---|---|---|
@@ -30,6 +30,8 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `ahvHa.vswitchQuickUpdateHaTriggerS` | 30 | verified | `ntnx-ahv-admin-11.2` | Virtual switch quick update > 30 s triggers HA (> 20 s may restart AOS services). |
 | `ahvHa.forceShutdownRestartCycles` | 1 | assumption | `ntnx-ncp-everpure-deploy-7.6` | SPEC §14 #7: restarted through AHV HA at the next HA cycle (one heartbeat interval). |
 | `ahvHa.selfTerminateWithoutQuorum` | true | inferred | `ntnx-bible-5b`, `reddit-nutanix-all-nodes-network-loss` | HCI only. Bible 5b ties the 45 s self-termination to IO failure, not to a quorum side existing; a field report on a total partition says VMs "fence" and the cluster returns to its previous state once the network is back (anecdotal). T1 keeps retrying IO (DEPLOY-GUIDE). |
+| `ahvHa.liveMigrationPauseS` | 1 | assumption | `ntnx-ahv-admin-11.2` | Not published. A live migration copies memory while the VM runs and stuns it only for the final switchover: about a second of paused IO. The VM's disks log in to the destination host's local Stargate. |
+| `ahvHa.maintenanceReturnS` | 20 | assumption | `ntnx-ahv-admin-11.2` | Not published. When a host exits maintenance mode, Acropolis migrates the VMs it moved off back to it after a short delay. |
 | `redirector.nopIntervalS` | 5 | assumption | `ntnx-bible-5b` | Not published. The VM's iSCSI initiator (Frodo / QEMU) NOPs the Stargate its session is logged in to; the redirector only answers logins. A silent Stargate (power loss, hang, isolation) is noticed by these NOPs alone, so detection takes a few NOP intervals: seconds, not one. |
 | `redirector.missesToUnhealthy` | 2 | assumption | `ntnx-blog-cvm-failure`, `ntnx-bible-5b` | Unanswered initiator NOPs before the session is dropped and logged in again through the redirector (Autopath rule: "fails to respond two or more times"). A reset connection (Stargate stopped, or its process exited on a live CVM) is noticed at once, without waiting for NOPs. |
 | `redirector.failbackStableS` | 300 | unverified | `odgers-ahv-io-failover-2015`, `ntnx-bible-5b` | AHV: IO returns to the local Stargate "once the local stargate is back online (and stable for 300 seconds)" (Josh Odgers, 2015). Failback is much slower than the failover, and a Stargate restart starts the stable period again. The Genesis --def_stargate_stable_interval (30 s) is a different path: when Genesis treats a Stargate as stable for HA, not the failback. |
@@ -47,6 +49,7 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `cluster.cassandraRingDetachS` | 1800 | verified | `ntnx-bible-4i`, `ntnx-kb-1256` | A node down for 30 min is removed from the metadata ring; re-added after it is stable. |
 | `cluster.minNodes` | 3 | verified | `ntnx-bible-4i` | FT1 without erasure coding; FT2 needs 5. |
 | `cluster.cvmBootS` | 180 | assumption | `ntnx-cmdref-aos-7.6` | No published figure for CVM power-on to Stargate serving. Upper bound: Genesis --svm_reboot_timeout = 420 s, "Maximum time expected for SVM to reboot/shutdown" (Command Ref 7.6). Hades maintenance exit uses the shorter hades.servicesRestartS. |
+| `cluster.plannedShutdownPrepS` | 5 | assumption | `ntnx-ahv-admin-11.2` | Not published. A planned CVM shutdown (the upgrade and maintenance path) first takes the cluster's shutdown token (one CVM at a time), forwards traffic away and stops services in an orderly way, then powers the CVM off: seconds. |
 | `cluster.stargateSelfRestartS` | 5 | assumption | `ntnx-bible-5b` | Not published. Stargate runs under a self-monitor that restarts its process after it exits (crash, watchdog), without Genesis: seconds, far less than a CVM boot. |
 | `cluster.stargateHungOpS` | 60 | assumption | `ntnx-bible-5b` | Not published. Stargate fails fast (exits, and its self-monitor restarts it) when one of its operations has hung about a minute. Operations that touch the metadata of a half-reachable peer hang, so every peer Stargate fails fast at about the same time and none serves until that peer is isolated. |
 | `cluster.cassandraRejoinStableS` | 1800 | inferred | `ntnx-kb-1256`, `ntnx-bible-4i` | KB-1256: a detached node is "added back to the ring if the node has been stable for 30 minutes". KB text not yet confirmed on the portal. |

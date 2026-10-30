@@ -112,12 +112,15 @@ export class AhvHost implements Device<Profile> {
       cvm: this.facts.cvm,
       rebooting: this.rebooting,
       isolated: this.isolatedLinks.length > 0,
+      // AHV maintenance mode (`host.enter-maintenance`): unschedulable, VMs migrated off.
+      maintenance: this.reg.maintenanceHosts.has(this.id),
       sessions: JSON.stringify(this.redirector.sessionsView()),
       unhealthyStargates: JSON.stringify(this.redirector.unhealthyView()),
       heartbeatLostAt: ha.lostAt,
     };
     const badges: string[] = [];
     if (this.reg.leaderHost === this.id) badges.push('acropolis-leader');
+    if (this.reg.maintenanceHosts.has(this.id)) badges.push('maintenance');
     let status: DeviceStatus = 'healthy';
     if (!this.alive()) status = 'offline';
     else if (ha.state === 'fenced') status = 'fenced';

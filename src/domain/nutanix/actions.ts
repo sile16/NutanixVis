@@ -105,6 +105,80 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
     },
     {
       spec: {
+        kind: 'host.enter-maintenance',
+        label: 'Enter maintenance mode',
+        description:
+          'AHV host maintenance mode: the host takes no new VMs and every VM on it live-migrates to another host (a brief pause at the switchover); its disks follow to the destination host’s local Stargate. The host’s CVM keeps running.',
+        appliesTo: (t) =>
+          isKind(t, 'ahv-host') &&
+          field(t, 'power') === 'on' &&
+          field(t, 'maintenance') !== true &&
+          field(t, 'role') !== 'storage-only',
+      },
+      apply: (req, ctx) => {
+        host(req.target);
+        if (!reg.vmHostAvailable(req.target)) {
+          throw new ActionError('no other host can take its VMs');
+        }
+        reg.causes.set(req.target, ctx.causeIds);
+        reg.maintenanceRequests.set(req.target, true);
+      },
+    },
+    {
+      spec: {
+        kind: 'host.exit-maintenance',
+        label: 'Exit maintenance mode',
+        description:
+          'The host is schedulable again; after a short delay Acropolis migrates the VMs it moved off back to it.',
+        appliesTo: (t) => isKind(t, 'ahv-host') && field(t, 'maintenance') === true,
+      },
+      apply: (req, ctx) => {
+        host(req.target);
+        reg.causes.set(req.target, ctx.causeIds);
+        reg.maintenanceRequests.set(req.target, false);
+      },
+    },
+    {
+      spec: {
+        kind: 'cvm.planned-shutdown',
+        label: 'Planned shutdown (upgrade / maintenance)',
+        description:
+          'The upgrade and maintenance path: the cluster grants a shutdown token (one CVM at a time), forwards traffic away and stops services in an orderly way, then powers the CVM off. Its Stargate releases its vDisks first, so the VMs’ IO moves to other Stargates after a brief re-login, not the long pause of an abrupt reboot. The VMs stay on their host. It stays off until a planned start.',
+        appliesTo: (t) =>
+          isKind(t, 'cvm') &&
+          field(t, 'power') === 'running' &&
+          field(t, 'plannedShutdown') === 'none',
+      },
+      apply: (req, ctx) => {
+        const c = cvm(req.target);
+        const holder = reg.plannedShutdownToken;
+        if (holder !== null && holder !== c.id) {
+          throw new ActionError(
+            `${holder} holds the shutdown token: one planned shutdown at a time`,
+          );
+        }
+        const other = reg.facts.cvms.find((x) => x.id !== c.id && !reg.cvmRunning(x.id));
+        if (other) throw new ActionError(`${other.id} is already down or in maintenance`);
+        reg.plannedShutdownToken = c.id;
+        reg.causes.set(req.target, ctx.causeIds);
+        c.requestPlannedShutdown();
+      },
+    },
+    {
+      spec: {
+        kind: 'cvm.planned-start',
+        label: 'Start CVM (after planned shutdown)',
+        description:
+          'Power the CVM back on: it boots, Stargate serves again, and its host’s sessions fail back after the stability interval, one vDisk at a time.',
+        appliesTo: (t) => isKind(t, 'cvm') && field(t, 'plannedShutdown') === 'off',
+      },
+      apply: (req, ctx) => {
+        reg.causes.set(req.target, ctx.causeIds);
+        cvm(req.target).requestPlannedStart();
+      },
+    },
+    {
+      spec: {
         kind: 'cvm.stop-stargate',
         label: 'Stop Stargate',
         description: 'The Stargate process stops; the CVM stays up.',

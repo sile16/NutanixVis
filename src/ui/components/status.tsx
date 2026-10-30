@@ -19,6 +19,7 @@ import {
   Star,
   TriangleAlert,
   Vote,
+  Wrench,
 } from 'lucide-react';
 import type { Confidence, DeviceStatus } from '../../engine/types';
 
@@ -76,6 +77,7 @@ const BADGES: Readonly<Record<string, { label: string; short: string; Icon: Luci
   'zk-leader': { label: 'ZK leader', short: 'ZK', Icon: Crown },
   zk: { label: 'ZK member', short: 'ZK', Icon: Vote },
   'acropolis-leader': { label: 'Acropolis leader', short: 'Acropolis', Icon: Crown },
+  maintenance: { label: 'Maintenance mode', short: 'Maint.', Icon: Wrench },
   'fa-primary': { label: 'Primary controller', short: 'Primary', Icon: Star },
   'fa-promoting': { label: 'Promoting to primary', short: 'Promoting', Icon: Hourglass },
   'io-paused': { label: 'Array IO paused', short: 'IO paused', Icon: CirclePause },

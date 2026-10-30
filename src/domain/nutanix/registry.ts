@@ -71,6 +71,14 @@ export class Registry implements NutanixClusterView, VmEnv {
   leaderLostAt = 0;
   readonly lastHeard = new Map<string, number>();
   readonly ha = new Map<string, HostHa>();
+  /** Hosts in AHV maintenance mode (unschedulable; their VMs were migrated off). */
+  readonly maintenanceHosts = new Set<string>();
+  /** `host.enter-maintenance` / `host.exit-maintenance` requests (handled by the cluster device). */
+  readonly maintenanceRequests = new Map<string, boolean>();
+  /** VMs migrated off a host entering maintenance → that host (they return when it exits). */
+  readonly evacuated = new Map<string, string>();
+  /** Planned CVM shutdown: the CVM holding the cluster's shutdown token (one at a time). */
+  plannedShutdownToken: string | null = null;
 
   now = 0;
   private readonly vdiskIndex: ReadonlyMap<string, number>;
@@ -212,6 +220,23 @@ export class Registry implements NutanixClusterView, VmEnv {
       if (best === null || l.since < best.since) best = { cvm, since: l.since };
     }
     return best;
+  }
+
+  /**
+   * A host other than `except` can take VMs now: alive, connected, not storage-only, not in
+   * maintenance mode, and (T1) with a CVM that reaches the array (see the cluster's `eligible`).
+   */
+  vmHostAvailable(except: string): boolean {
+    return this.facts.hosts.some(
+      (h) =>
+        h.id !== except &&
+        h.role !== 'storage-only' &&
+        this.hostAlive(h.id) &&
+        this.haOf(h.id).state === 'connected' &&
+        !this.heartbeatMissing(h.id) &&
+        !this.maintenanceHosts.has(h.id) &&
+        !(h.cvm !== null && this.facts.externalStorage && !this.cvmCapable(h.cvm)),
+    );
   }
 
   inQuorum(cvm: string): boolean {

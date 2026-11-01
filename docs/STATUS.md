@@ -14,7 +14,7 @@ Living status page: where the project stands, what is left, which behavior still
   - T3: compute-only plus storage-only, and compute-only plus HCI.
 - **Scenarios:** 89 run as automated tests against the real models. All are `active`, so a behavior change that breaks one fails CI.
 - **Tests:**
-  - About 1,010 unit, contract, architecture and property tests (Vitest and fast-check).
+  - About 1,070 unit, contract, architecture and property tests (Vitest and fast-check).
   - 29 browser tests (Playwright), including the T1 visual baseline.
   - All green.
 - **Models in place:**

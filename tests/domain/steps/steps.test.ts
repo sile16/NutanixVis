@@ -56,11 +56,11 @@ describe('steps derivation', () => {
     expect(r.impact).toBe('none');
   });
 
-  it('partial path loss: stall then retry on another path is two steps', () => {
+  it('partial path loss: the stall is one step, the IO retries on another path in step 2', () => {
     const events = [ev(6, 'nvme.path.lost', 'n1.cvm')];
     const series = run(0, 40, (t) => sample(t, 'running', t >= 4 && t < 30 ? t - 3 : 0));
     const r = deriveVmSteps('v', events, series);
-    expect(r.stalledSteps).toBe(2);
+    expect(r.stalledSteps).toBe(1);
     expect(r.resumeStep).toBe(2);
     expect(r.impact).toBe('brief');
     expect(r.milestones.map((m) => [m.stage, m.step])).toEqual([

@@ -172,7 +172,12 @@ export function deriveVmSteps(
   }
 
   const sorted = [...ms].sort((a, b) => a.step - b.step || a.t - b.t);
-  const stalledSteps = resumeStep ?? lastMs.step;
+  // A lost path whose IO is retried on another path ends the stall within its own step: the
+  // stall is step 1 only, and the IO is already moving again at the reroute step.
+  const stalledSteps =
+    lastMs.stage === 'path-rerouted' && resumeStep !== null
+      ? Math.max(1, resumeStep - 1)
+      : (resumeStep ?? lastMs.step);
   const redirected = redirectT !== undefined && after !== undefined && after.ownerCvm !== cvm;
   const impact: ImpactScale = redirected
     ? 'redirected'

@@ -49,16 +49,20 @@ function dualFabric(): ScenarioDef {
     timeline,
     expect: [
       ...t1Steady(),
-      atCtx(END, 'steps: stall 1, path lost and IO retried on the other fabric 2', (_s, ctx) => {
-        const st = stepsOf(ctx, VM);
-        return (
-          stepOfStage(st, 'stall') === 1 &&
-          stepOfStage(st, 'path-rerouted') === 2 &&
-          st.resumeStep === 2 &&
-          st.stalledSteps === 2 &&
-          st.impact === 'brief'
-        );
-      }),
+      atCtx(
+        END,
+        'steps: stall 1, then the path is lost and IO retried on the other fabric in step 2',
+        (_s, ctx) => {
+          const st = stepsOf(ctx, VM);
+          return (
+            stepOfStage(st, 'stall') === 1 &&
+            stepOfStage(st, 'path-rerouted') === 2 &&
+            st.resumeStep === 2 &&
+            st.stalledSteps === 1 &&
+            st.impact === 'brief'
+          );
+        },
+      ),
       atCtx(
         END,
         'the stall ends when the commands are retried on the surviving fabric',

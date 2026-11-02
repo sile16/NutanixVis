@@ -11,7 +11,7 @@ import { buildTopology, type TopologyId, topologies, topologyIds } from '../../t
 import type { Topology } from '../../topologies/schema';
 
 const TITLES: Readonly<Record<TopologyId, string>> = {
-  't1-ahv-flasharray': 'Two vSwitches, no bond · separate storage networks',
+  't1-ahv-flasharray': 'T1 · two storage vSwitches (vs1, vs2), no bond · separate storage networks',
   't1-lab': 'T1-lab · single-NIC test drive mirror',
   't2-hci-ahv': 'T2 · Nutanix HCI on AHV',
   't3-co-so': 'T3 · Compute-only + storage-only nodes',
@@ -44,9 +44,15 @@ export function absoluteLeafLayout(t: Topology): Topology['layout'] {
 /** The simple view: 3 nodes, 2 test VMs (nodes 1 and 2). */
 const SIMPLE_OPTIONS = { 'node-count': 3, 'vm-layout': 'two' } as const;
 
+/**
+ * Two storage vSwitches: vs1 (eth2, fabric A) and vs2 (eth3, fabric B), no bond, each with one
+ * uplink NIC. The management vSwitch vs0 (eth0 + eth1) is separate and not counted in the "two".
+ */
+const PER_FABRIC_OPTIONS = { ...SIMPLE_OPTIONS, 'storage-vswitch-layout': 'per-fabric' } as const;
+
 const realEntries: CatalogEntry[] = topologyIds.map((id) => {
   const simple = id === 't1-ahv-flasharray';
-  const options = simple ? SIMPLE_OPTIONS : {};
+  const options = simple ? PER_FABRIC_OPTIONS : {};
   return {
     id,
     title: TITLES[id],
@@ -73,14 +79,14 @@ const realEntries: CatalogEntry[] = topologyIds.map((id) => {
  */
 const BONDED_OPTIONS = {
   ...SIMPLE_OPTIONS,
+  'storage-vswitch-layout': 'single-bond',
   'storage-vlans': 'single',
   'vlan-placement': 'tagged-both',
   'isl-storage-vlans': 'allowed',
-  'array-data-ports': 'first-only',
 } as const;
 const bondedEntry: CatalogEntry = {
   id: 't1-bonded-single',
-  title: 'One vSwitch, single subnet · active/active MAC-pinning bond',
+  title: 'T1 · one storage vSwitch (vs1), bonded NICs · single subnet, MAC pinning',
   hasFlashArray: true,
   layout: absoluteLeafLayout(buildTopology('t1-ahv-flasharray', BONDED_OPTIONS)),
   createSimulation: (versions) =>

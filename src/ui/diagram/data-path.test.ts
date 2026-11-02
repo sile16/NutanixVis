@@ -108,7 +108,7 @@ describe('I/O data path (T1)', () => {
     expect(hop(m, 'node-1.redirector', 'node-1.host-mgmt')?.redirected).toBe(true);
   });
 
-  it('bonded single-network variant: two live array paths per CVM, the other portals not connected', () => {
+  it('bonded single-network variant: four live array paths per CVM, the far-side ones cross the ISL', () => {
     const entry = catalog.find((e) => e.id === 't1-bonded-single');
     expect(entry).toBeDefined();
     if (!entry) throw new Error('catalog entry missing');
@@ -120,12 +120,24 @@ describe('I/O data path (T1)', () => {
       string,
       string
     >;
-    expect(Object.values(paths)).toEqual(['live', 'live']);
+    expect(Object.values(paths)).toEqual(['live', 'live', 'live', 'live']);
     const m = buildDataPath(s);
-    expect(m.notes.get('fa.ct0.eth11.v10')?.text).toBe('not connected (by design)');
-    expect(m.notes.get('fa.ct1.eth11.v10')?.text).toBe('not connected (by design)');
-    expect(m.notes.get('fa.ct0.eth10.v10')?.text).not.toBe('not connected (by design)');
-    // the unconnected portals are expected: no path was ever lost, no VM is affected
+    for (const id of [
+      'fa.ct0.eth10.v10',
+      'fa.ct1.eth10.v10',
+      'fa.ct0.eth11.v10',
+      'fa.ct1.eth11.v10',
+    ]) {
+      expect(m.notes.get(id)?.text).not.toBe('not connected (by design)');
+    }
+    // half of the paths end on Switch B's array ports, so they traverse the switch interconnect
+    let islStorage = 0;
+    for (let i = 0; i < 20; i++) {
+      for (const t of sim.tick(1).traces) {
+        if (t.links.includes('l-sw-a--sw-b') && t.category.startsWith('nvme')) islStorage++;
+      }
+    }
+    expect(islStorage).toBeGreaterThan(0);
     expect(sim.eventLog().some((e) => e.code === 'nvme.path.lost')).toBe(false);
     expect(buildImpact(steps.view(), s).steps).toBe(0);
     // both storage NICs down: every remaining path is lost, the VM stalls then is redirected
@@ -135,5 +147,60 @@ describe('I/O data path (T1)', () => {
     const after = sim.getSnapshot();
     const impact = buildImpact(steps.view(), after);
     expect(impact.rows.some((r) => r.vm === 'node-1.vm-1')).toBe(true);
+  });
+});
+
+describe('I/O data path with a failed CVM', () => {
+  const PER_FABRIC = { 'storage-vswitch-layout': 'per-fabric' };
+  const carrying = (m: ReturnType<typeof buildDataPath>, cvm: string) =>
+    m.hops.filter(
+      (h) =>
+        (h.from.startsWith(cvm) || h.to.startsWith(cvm)) &&
+        (h.state === 'active' || h.state === 'stalled'),
+    );
+
+  for (const [name, kind] of [
+    ['CVM failed', 'fail'],
+    ['planned shutdown', 'cvm.planned-shutdown'],
+    ['Stargate crash', 'cvm.crash-stargate'],
+    ['Stargate stopped', 'cvm.stop-stargate'],
+  ] as const) {
+    it(`${name}: nothing is drawn running through the CVM, then the remote CVM carries it`, () => {
+      for (const options of [PER_FABRIC, {}]) {
+        const { sim } = run(options);
+        sim.applyAction({ kind, target: 'node-1.cvm' });
+        let sawRemote = false;
+        for (let i = 0; i < 60; i++) {
+          const snap = sim.tick(1);
+          const m = buildDataPath(snap);
+          const c = snap.devices['node-1.cvm'];
+          if (c?.status === 'healthy' || c?.fields.stargate === 'up') continue; // not down yet, or back
+          // Behind the dead CVM: no active or stalled hop, so no dots.
+          expect(carrying(m, 'node-1.cvm'), `${name} t+${i}`).toEqual([]);
+          expect(hop(m, 'node-1.redirector', 'node-1.cvm.stargate')?.state).toBe('down');
+          expect(hop(m, 'node-1.redirector', 'node-1.cvm.stargate')?.reason).toMatch(
+            /CVM down|Stargate is/,
+          );
+          const out = hop(m, 'node-1.redirector', 'node-1.host-mgmt');
+          if (out?.state === 'active') {
+            sawRemote = true;
+            expect(out.vms.length).toBeGreaterThan(0);
+          }
+        }
+        expect(sawRemote).toBe(true);
+        const m = buildDataPath(sim.getSnapshot());
+        expect(carrying(m, 'node-2.cvm').length).toBeGreaterThan(0);
+      }
+    });
+  }
+
+  it('CVM failed with the host NICs and links fine: still no I/O through its interfaces', () => {
+    const { sim } = run(PER_FABRIC);
+    sim.applyAction({ kind: 'fail', target: 'node-1.cvm' });
+    const s = sim.tick(50);
+    expect(s.devices['node-1.eth2']?.status).not.toBe('failed');
+    const m = buildDataPath(s);
+    expect(hop(m, 'node-1.cvm.storage-a', 'node-1.vs1')?.state).toBe('down');
+    expect(hop(m, 'node-1.vs1', 'node-1.eth2')?.vms).toEqual([]);
   });
 });

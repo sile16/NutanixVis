@@ -5,7 +5,7 @@
  * Topologies come from `src/topologies` via the loader (`./catalog`), plus fixture demo entries
  * with scripted traffic; versions come from the real version matrix.
  */
-import { Eye, EyeOff, Move, RotateCcw } from 'lucide-react';
+import { Move, RotateCcw } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { matrix as versionMatrix } from '../../domain/versions';
 import type { CatalogEntry } from '../../fixtures/catalog';
@@ -64,8 +64,6 @@ function PlaybackDriver() {
 function Header({ entry }: { entry: CatalogEntry }) {
   const setTopology = useUi((s) => s.setTopology);
   const resetSim = useUi((s) => s.resetSim);
-  const showPackets = useUi((s) => s.showPackets);
-  const togglePackets = useUi((s) => s.togglePackets);
   const activityTicks = useUi((s) => s.activityTicks);
   const setActivityTicks = useUi((s) => s.setActivityTicks);
   const layoutEdit = useUi((s) => s.layoutEdit);
@@ -111,21 +109,6 @@ function Header({ entry }: { entry: CatalogEntry }) {
         <Button variant="ghost" size="sm" onClick={resetSim} title="Reset the simulation">
           <RotateCcw size={15} aria-hidden="true" />
           <span className="sr-only">Reset simulation</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-pressed={showPackets}
-          onClick={togglePackets}
-          data-testid="toggle-packets"
-          title={showPackets ? 'Hide packet animation' : 'Show packet animation'}
-        >
-          {showPackets ? (
-            <Eye size={15} aria-hidden="true" />
-          ) : (
-            <EyeOff size={15} aria-hidden="true" />
-          )}
-          Packets
         </Button>
         <Select
           label="Recent activity"
@@ -176,10 +159,13 @@ export function App() {
   const resolved = resolveVersions(matrix, versions);
   const selection = toVersionSelection(matrix, resolved, entry.hasFlashArray);
   // biome-ignore lint/correctness/useExhaustiveDependencies: rebuild on topology/version/reset only
-  const sim = useMemo(
-    () => entry.createSimulation(selection),
-    [entry.id, scenarioId, selection.nutanix, selection.flasharray, simEpoch],
-  );
+  const sim = useMemo(() => {
+    const created = entry.createSimulation(selection);
+    // Steady-state IO is already flowing when the page loads: run the first tick so the
+    // first frame carries traffic. It is not a step; the step counter still starts at 0.
+    created.tick(1);
+    return created;
+  }, [entry.id, scenarioId, selection.nutanix, selection.flasharray, simEpoch]);
 
   return (
     <SimProvider sim={sim}>

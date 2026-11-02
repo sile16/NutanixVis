@@ -11,12 +11,21 @@ for (const id of topologyIds) {
     // The UI builds T1 as the simple view: 3 nodes, 2 test VMs.
     const t =
       id === 't1-ahv-flasharray'
-        ? buildTopology(id, { 'node-count': 3, 'vm-layout': 'two' })
+        ? buildTopology(id, {
+            'node-count': 3,
+            'vm-layout': 'two',
+            'storage-vswitch-layout': 'per-fabric',
+          })
         : topologies[id];
     // One Stargate box per CVM, plus a redirector box on every host that runs VMs.
     const derived = t.devices.some((d) => d.kind === 'fa-array')
       ? t.devices.filter((d) => d.kind === 'cvm').length +
-        new Set(t.devices.filter((d) => d.kind === 'vm').map((d) => d.parent)).size
+        new Set(t.devices.filter((d) => d.kind === 'vm').map((d) => d.parent)).size +
+        // A host with a CVM and no VMs draws an empty "no VMs" spacer instead of a redirector.
+        t.devices.filter(
+          (d) =>
+            d.kind === 'cvm' && !t.devices.some((v) => v.kind === 'vm' && v.parent === d.parent),
+        ).length
       : 0;
     await page.goto(`./#topology=${id}`);
     await expect(page.getByTestId('node-sw-a')).toBeVisible();
@@ -79,6 +88,99 @@ test('real T1: both storage NICs down, step by step: stall, maintenance, redirec
   );
 });
 
+test('real T1: Step keeps counting past step 4, and a restore shows later steps', async ({
+  page,
+}) => {
+  test.slow();
+  await page.goto('./#topology=t1-ahv-flasharray');
+  await expect(page.getByTestId('node-node-1.vs2')).toBeVisible();
+  await page.getByTestId('step').click();
+  for (const nic of ['node-1.eth2', 'node-1.eth3']) {
+    await page.getByRole('tab', { name: 'Inspector' }).click();
+    if ((await page.getByTestId('inspector-empty').count()) === 0) {
+      await page.locator('.react-flow__pane').click({ position: { x: 5, y: 5 } });
+    }
+    await page.getByTestId('device-picker').selectOption(nic);
+    await page.getByTestId('action-fail').click();
+  }
+  const clock = page.getByTestId('sim-clock');
+  for (let i = 0; i < 10; i++) await page.getByTestId('step').click();
+  const atTen = Number(await clock.getAttribute('data-step'));
+  expect(atTen).toBeGreaterThanOrEqual(8);
+  let prev = atTen;
+  for (const nic of ['node-1.eth2', 'node-1.eth3']) {
+    await page.getByRole('tab', { name: 'Inspector' }).click();
+    if ((await page.getByTestId('inspector-empty').count()) === 0) {
+      await page.locator('.react-flow__pane').click({ position: { x: 5, y: 5 } });
+    }
+    await page.getByTestId('device-picker').selectOption(nic);
+    await page.getByTestId('action-recover').click();
+  }
+  const row = page.locator('[data-testid="impact-row"][data-vm="node-1.vm-1"]');
+  for (let i = 0; i < 40; i++) {
+    await page.getByTestId('step').click();
+    const now = Number(await clock.getAttribute('data-step'));
+    expect(now).toBeGreaterThanOrEqual(prev);
+    prev = now;
+  }
+  expect(prev).toBeGreaterThan(atTen);
+  await expect(row.locator('[data-kind="recovered"]').first()).toBeVisible();
+});
+
+test('real T1: a failed CVM carries no I/O; a remote CVM serves the VM; failback after restore', async ({
+  page,
+}) => {
+  test.slow();
+  await page.goto('./#topology=t1-ahv-flasharray');
+  const hop = (a: string, b: string) => page.locator(`.react-flow__edge[data-id="io:${a}>${b}"]`);
+  await page.getByTestId('step').click();
+  await expect(hop('node-1.redirector', 'node-1.cvm.stargate')).toHaveAttribute(
+    'aria-label',
+    /active/,
+  );
+  await page.getByRole('tab', { name: 'Inspector' }).click();
+  if ((await page.getByTestId('inspector-empty').count()) === 0) {
+    await page.locator('.react-flow__pane').click({ position: { x: 5, y: 5 } });
+  }
+  await page.getByTestId('device-picker').selectOption('node-1.cvm');
+  await page.getByTestId('action-fail').click();
+  const clock = page.getByTestId('sim-clock');
+  // The path through the failed CVM is down at every step, never in use.
+  for (let i = 0; i < 6; i++) {
+    await page.getByTestId('step').click();
+    await expect(hop('node-1.redirector', 'node-1.cvm.stargate')).toHaveAttribute(
+      'aria-label',
+      /down/,
+    );
+    await expect(hop('node-1.cvm.storage-a', 'node-1.vs1')).toHaveAttribute('aria-label', /down/);
+    await expect(hop('node-1.vs1', 'node-1.eth2')).not.toHaveAttribute('aria-label', /active/);
+  }
+  // Redirected: the remote CVM carries the I/O through its own NICs.
+  await expect(hop('node-1.redirector', 'node-1.host-mgmt')).toHaveAttribute(
+    'aria-label',
+    /active/,
+  );
+  await expect(hop('node-2.vs1', 'node-2.eth2')).toHaveAttribute('aria-label', /active/);
+  const row = page.locator('[data-testid="impact-row"][data-vm="node-1.vm-1"]');
+  await expect(row.locator('[data-kind="redirected"]').first()).toContainText('via CVM 2');
+  const atFail = Number(await clock.getAttribute('data-step'));
+
+  await page.getByRole('tab', { name: 'Inspector' }).click();
+  if ((await page.getByTestId('inspector-empty').count()) === 0) {
+    await page.locator('.react-flow__pane').click({ position: { x: 5, y: 5 } });
+  }
+  await page.getByTestId('device-picker').selectOption('node-1.cvm');
+  await page.getByTestId('action-recover').click();
+  // Keep stepping: the CVM comes back, then the sessions fail back to the local CVM.
+  for (let i = 0; i < 80; i++) await page.getByTestId('step').click();
+  expect(Number(await clock.getAttribute('data-step'))).toBeGreaterThan(atFail);
+  await expect(hop('node-1.redirector', 'node-1.host-mgmt')).toHaveCount(0);
+  await expect(hop('node-1.redirector', 'node-1.cvm.stargate')).toHaveAttribute(
+    'aria-label',
+    /active/,
+  );
+});
+
 test('bonded single-network topology: a member loss is a 0-step, no-interruption event', async ({
   page,
 }) => {
@@ -94,19 +196,25 @@ test('bonded single-network topology: a member loss is a 0-step, no-interruption
   await expect(page.getByTestId('node-node-1.eth2').getByTestId('node-note')).toHaveText('down');
 });
 
-test('bonded single-network variant: two live array paths, other portals not connected, both NICs down', async ({
+test('bonded single-network variant: all four array ports connected, both NICs down', async ({
   page,
 }) => {
   test.slow();
   await page.goto('./#topology=t1-bonded-single');
   await expect(page.getByTestId('node-node-1.vs1')).toBeVisible();
   await page.getByTestId('step').click();
-  for (const id of ['fa.ct0.eth11.v10', 'fa.ct1.eth11.v10']) {
-    await expect(page.getByTestId(`node-${id}`)).toHaveAttribute(
+  // All four array ports are cabled: none is marked as not connected.
+  for (const id of [
+    'fa.ct0.eth10.v10',
+    'fa.ct1.eth10.v10',
+    'fa.ct0.eth11.v10',
+    'fa.ct1.eth11.v10',
+  ]) {
+    await expect(page.getByTestId(`node-${id}`)).not.toHaveAttribute(
       'title',
       /not connected \(by design\)/,
     );
-    await expect(page.getByTestId(`node-${id}`)).toHaveAttribute('data-status', 'offline');
+    await expect(page.getByTestId(`node-${id}`)).not.toHaveAttribute('data-status', 'offline');
   }
   for (const nic of ['node-1.eth2', 'node-1.eth3']) {
     await page.getByRole('tab', { name: 'Inspector' }).click();

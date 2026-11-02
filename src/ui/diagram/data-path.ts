@@ -18,7 +18,7 @@
  * Only the view fields documented in `docs/view-fields.md` are read. No simulation state is changed.
  */
 import type { DeviceView, LinkView, TrafficCategory } from '../../engine/types';
-import { DATA_PATH_BAND } from '../../topologies/layout';
+import { DATA_PATH_BAND, VM_ROW, VM_TO_IFACE_ROW } from '../../topologies/layout';
 import type { LayoutMap } from './layout';
 import type { LinkFlow } from './link-flow';
 
@@ -68,6 +68,7 @@ export const EMPTY_DATA_PATH: DataPathModel = {
 export const IO_PREFIX = 'io:';
 export const isIoLink = (id: string): boolean => id.startsWith(IO_PREFIX);
 export const stargateId = (cvm: string): string => `${cvm}.stargate`;
+export const vmSpacerId = (host: string): string => `${host}.vm-spacer`;
 export const redirectorId = (host: string): string => `${host}.redirector`;
 
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
@@ -116,6 +117,13 @@ export function buildDataPath(s: Input): DataPathModel {
   const vswitches = all.filter((d) => d.kind === 'bond' || d.kind === 'vswitch');
   const hostCvm = new Map<string, DeviceView>();
   for (const c of cvms) if (c.parent) hostCvm.set(c.parent, c);
+  // A CVM that is down, or whose Stargate has exited, carries no I/O: nothing is drawn as running
+  // through it, whatever its NICs and links still look like ("nobody home").
+  const cvmDead = (c: DeviceView | undefined): boolean =>
+    !c || DOWN_STATUS.has(c.status) || (str(c.fields.stargate) ?? 'up') === 'down';
+  const cvmWhy = (c: DeviceView): string =>
+    DOWN_STATUS.has(c.status) ? 'CVM down' : `Stargate is ${str(c.fields.stargate) ?? 'down'}`;
+  const stranded = new Set<string>();
 
   const linkOfNic = (nic: string): LinkView | undefined => nicLink(s, nic);
   const nicDown = (nic: string): boolean => nicIsDown(s, nic);
@@ -134,7 +142,15 @@ export function buildDataPath(s: Input): DataPathModel {
     const host = hostOf(vm);
     if (!owner || !host || (state !== 'running' && state !== 'io-stalled')) continue;
     if (state === 'io-stalled') stalledBy.add(vm.id);
-    if (hostCvm.get(host)?.id === owner) push(localDemand, owner, vm.id);
+    const ownerCvm = s.devices[owner];
+    const localOwner = hostCvm.get(host)?.id === owner;
+    // The VM still points at a CVM that cannot serve it (or cannot be reached): it waits there,
+    // and no hop behind that CVM carries its I/O until the redirector logs in elsewhere.
+    if (cvmDead(ownerCvm) || (localOwner && ownerCvm?.fields.internalLink === 'down')) {
+      stranded.add(vm.id);
+      continue;
+    }
+    if (localOwner) push(localDemand, owner, vm.id);
     else {
       push(remoteDemand, owner, vm.id);
       push(remoteOut, host, vm.id);
@@ -163,6 +179,19 @@ export function buildDataPath(s: Input): DataPathModel {
     const here = vms.filter((v) => hostOf(v) === host.id);
     const cvm = hostCvm.get(host.id);
     if (here.length === 0 && !cvm) continue;
+    if (here.length === 0 && cvm && typeof cvm.fields.nvmePaths === 'string') {
+      // Keeps the VM row (and so the CVM) at the same height as on hosts that run VMs.
+      const sid = vmSpacerId(host.id);
+      devices[sid] = {
+        id: sid,
+        kind: 'vm-spacer',
+        label: 'no VMs',
+        parent: host.id,
+        status: 'healthy',
+        badges: [],
+        fields: { note: 'No VMs run on this node; the area is kept so every node lines up.' },
+      };
+    }
     const rid = redirectorId(host.id);
     const out = remoteOut.get(host.id) ?? [];
     if (here.length > 0) {
@@ -194,6 +223,9 @@ export function buildDataPath(s: Input): DataPathModel {
       if (state === 'io-stalled') {
         hop = 'stalled';
         reason = 'I/O is outstanding and none completes: waiting for a Stargate to serve the disk';
+      } else if (state === 'running' && stranded.has(vm.id)) {
+        hop = 'stalled';
+        reason = `${short(s.devices[owner ?? ''], owner ?? 'its CVM')} cannot serve this VM: ${cvm && owner === cvm.id ? cvmWhy(cvm) : 'CVM down'}`;
       } else if (state === 'running' && owner) {
         hop = 'active';
         reason = `virtual disk I/O to ${short(s.devices[owner], owner)}`;
@@ -216,7 +248,6 @@ export function buildDataPath(s: Input): DataPathModel {
       const local =
         localDemand.get(cvm.id)?.filter((v) => hostOf(s.devices[v] as DeviceView) === host.id) ??
         [];
-      const sg = str(cvm.fields.stargate) ?? 'up';
       let state: HopState = stateOfDemand(local);
       let reason = local.length
         ? 'IO over the host-internal link to the local Stargate'
@@ -224,9 +255,9 @@ export function buildDataPath(s: Input): DataPathModel {
       if (cvm.fields.internalLink === 'down') {
         state = 'down';
         reason = 'host-CVM internal link is down';
-      } else if (sg !== 'up' && local.length === 0 && here.length > 0) {
+      } else if (cvmDead(cvm) && local.length === 0) {
         state = 'down';
-        reason = `local Stargate is ${sg}: the redirector moves its VMs to another CVM`;
+        reason = `${cvmWhy(cvm)}: no I/O goes through it, the redirector moves its VMs to another CVM`;
       }
       addHop({
         from: rid,
@@ -269,8 +300,9 @@ export function buildDataPath(s: Input): DataPathModel {
       kind: 'stargate',
       label: 'Stargate',
       parent: cvm.id,
-      status:
-        sg === 'up'
+      status: DOWN_STATUS.has(cvm.status)
+        ? 'failed'
+        : sg === 'up'
           ? 'healthy'
           : sg === 'hung'
             ? 'stalled'
@@ -297,9 +329,9 @@ export function buildDataPath(s: Input): DataPathModel {
       let lane: HopLane = 'nvme';
       if (service === 'external-storage') {
         const live = mine.filter(([, st]) => st === 'live').length;
-        if (sg !== 'up') {
+        if (sg !== 'up' || DOWN_STATUS.has(cvm.status)) {
           state = 'down';
-          reason = `Stargate is ${sg}: no I/O leaves through ${iface.label}`;
+          reason = `${cvmWhy(cvm)}: no I/O leaves through ${iface.label}`;
         } else if (mine.length === 0) {
           reason = 'no array paths configured on this interface';
         } else if (live === 0) {
@@ -313,9 +345,9 @@ export function buildDataPath(s: Input): DataPathModel {
         }
       } else {
         lane = 'iscsi';
-        if (sg !== 'up') {
+        if (sg !== 'up' || DOWN_STATUS.has(cvm.status)) {
           state = 'down';
-          reason = `Stargate is ${sg}`;
+          reason = cvmWhy(cvm);
         } else if (remote.length > 0) {
           state = stateOfDemand(remote);
           reason = `serves ${remote.length} VM session(s) redirected from other hosts over this interface`;
@@ -377,14 +409,19 @@ export function buildDataPath(s: Input): DataPathModel {
         : iface.parent
           ? (remoteOut.get(iface.parent) ?? [])
           : [];
-    const state: HopState = up.length === 0 ? 'down' : own.length > 0 ? stateOfDemand(own) : 'idle';
+    const ifaceCvm =
+      iface.kind === 'cvm-interface' && iface.parent ? s.devices[iface.parent] : undefined;
+    const gone = ifaceCvm !== undefined && cvmDead(ifaceCvm);
+    const state: HopState =
+      up.length === 0 || gone ? 'down' : own.length > 0 ? stateOfDemand(own) : 'idle';
     addHop({
       from: iface.id,
       to: vs,
       name: `${iface.label} to ${vsDev.label}`,
       state,
-      reason:
-        up.length === 0
+      reason: gone
+        ? `${cvmWhy(ifaceCvm as DeviceView)}: nothing enters ${vsDev.label} from ${iface.label}`
+        : up.length === 0
           ? `${vsDev.label} has no member NIC with link: nothing leaves this host`
           : own.length > 0
             ? `traffic enters ${vsDev.label} and leaves on its member NIC`
@@ -573,6 +610,18 @@ export function placeDataPath(
       const { h, gap } = DATA_PATH_BAND.stargate;
       outDevices[d.id] = d;
       outLayout[d.id] = { x: x0, y: top - gap - h, w: x1 - x0, h };
+    } else if (d.kind === 'vm-spacer') {
+      const ifaces = boxes(
+        Object.values(devices)
+          .filter((x) => x.kind === 'cvm-interface' && x.parent === `${parent}.cvm`)
+          .map((x) => x.id),
+      );
+      if (ifaces.length === 0) continue;
+      const x0 = Math.min(...ifaces.map((b) => b.x));
+      const x1 = Math.max(...ifaces.map((b) => b.x + (b.w ?? 0)));
+      const top = Math.min(...ifaces.map((b) => b.y));
+      outDevices[d.id] = d;
+      outLayout[d.id] = { x: x0, y: top - VM_TO_IFACE_ROW, w: x1 - x0, h: VM_ROW.h };
     } else {
       const own = Object.values(devices).filter((x) => x.kind === 'vm' && x.parent === parent);
       const vmBoxes = boxes(own.map((x) => x.id));

@@ -59,7 +59,7 @@ test('Step and Next event advance time; the next scheduled event fires', async (
   await expect(page.getByTestId('node-sw-a')).toHaveAttribute('data-status', 'failed');
 });
 
-test('version selector shows the real matrix and filters FlashArray releases', async ({ page }) => {
+test('version selector shows the Nutanix release and Purity 6.11.8+', async ({ page }) => {
   // Multi-release filtering is unit-tested against the fixture matrix (src/ui/app/app-logic.test.ts);
   // here we check the live matrix (src/domain/versions/matrix.ts) end to end.
   await open(page);
@@ -67,13 +67,7 @@ test('version selector shows the real matrix and filters FlashArray releases', a
   const fa = page.getByTestId('flasharray-version');
   await expect(nutanix).toHaveValue('aos-7.6');
   await expect(fa).toHaveValue('purity-6.12');
-  await expect(fa.locator('option')).toHaveText([
-    'Purity//FA 6.12.x (6.12.1+ recommended)',
-    'Purity//FA 6.11.8+',
-  ]);
-
-  await fa.selectOption('purity-6.11');
-  await expect(fa).toHaveValue('purity-6.11');
+  await expect(fa.locator('option')).toHaveText(['6.11.8+']);
 
   // Topologies without an array hide the FlashArray select.
   await page.evaluate(() => {
@@ -101,16 +95,15 @@ test('right-click quick menu fails a device; manual mode queues actions', async 
   await expect(page.getByTestId('node-sw-b')).toHaveAttribute('data-status', 'healthy');
 });
 
-test('events tab shows the causal chain and Explain renders it', async ({ page }) => {
+test('events tab shows the causal chain; there is no Explain tab', async ({ page }) => {
   await open(page);
   await page.getByTestId('fast-forward').click(); // → Switch A fails
   await page.getByTestId('step').click(); // → bonds fail over, paths lost (a quiet Step runs a few ticks)
   await page.getByRole('tab', { name: 'Events' }).click();
   const row = page.locator('[data-testid="event-row"][data-code="nvme.io.redistributed"]').first();
   await expect(row).toContainText('caused by nvme.path.lost');
-  await row.getByRole('button', { name: /Explain/ }).click();
-  await expect(page.getByTestId('explain-step')).toHaveCount(3);
-  await expect(page.getByTestId('explain-panel')).toContainText('Assumption');
+  await expect(page.getByRole('tab', { name: 'Explain' })).toHaveCount(0);
+  await expect(row.getByRole('button', { name: /Explain/ })).toHaveCount(0);
 });
 
 test('visual baseline: T1 steady state (animation off)', async ({ page }, testInfo) => {

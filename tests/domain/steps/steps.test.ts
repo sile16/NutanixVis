@@ -10,6 +10,7 @@ import {
   STAGES,
   stepAt,
   type VmSample,
+  vmSeries,
 } from '../../../src/domain/steps';
 import type { SimEvent } from '../../../src/engine/types';
 import { loadSimulation } from '../../../src/loader/simulation';
@@ -203,5 +204,45 @@ describe('ioChain view field', () => {
     }
     expect(everRerouted).toBe(false);
     expect(peak).toBeGreaterThanOrEqual(3);
+  });
+
+  it('CVM failure: stall (1), redirect (2), IO resumes (3); failback comes after the CVM returns', () => {
+    for (const [kind, back] of [
+      ['fail', 'recover'],
+      ['cvm.planned-shutdown', 'cvm.planned-start'],
+    ] as const) {
+      const sim = loadSimulation({
+        topologyId: 't1-ahv-flasharray',
+        options: { 'node-count': 3, 'vm-layout': 'two', 'storage-vswitch-layout': 'per-fabric' },
+        seed: 1,
+      }).sim;
+      const hist = [sim.getSnapshot()];
+      const run = (n: number): void => {
+        for (let i = 0; i < n; i++) hist.push(sim.tick(1));
+      };
+      run(10);
+      sim.applyAction({ kind, target: 'node-1.cvm' });
+      run(100);
+      const chainNow = ioChainOf(sim.getSnapshot().devices['node-1.vm-1']);
+      expect(chainNow?.remote).toBe(true);
+      expect(chainNow?.hops.some((h) => h.ids.includes('node-1.cvm'))).toBe(false);
+      let r = deriveVmSteps('node-1.vm-1', sim.eventLog(), vmSeries(hist, 'node-1.vm-1'));
+      expect(r.milestones.map((m) => [m.stage, m.step])).toEqual([
+        ['stall', 1],
+        ['redirected', 2],
+        ['resumed', 3],
+      ]);
+      expect(r.impact).toBe('redirected');
+      sim.applyAction({ kind: back, target: 'node-1.cvm' });
+      run(1500);
+      r = deriveVmSteps('node-1.vm-1', sim.eventLog(), vmSeries(hist, 'node-1.vm-1'));
+      expect(r.milestones.map((m) => [m.stage, m.step])).toEqual([
+        ['stall', 1],
+        ['redirected', 2],
+        ['resumed', 3],
+        ['services-restarted', 4],
+        ['failed-back', 5],
+      ]);
+    }
   });
 });

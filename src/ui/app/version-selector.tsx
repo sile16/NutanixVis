@@ -1,8 +1,11 @@
-/** Two-level version selector (SPEC §2.1): Nutanix release, then supported FlashArray releases. */
+/** Two-level version selector (SPEC §2.1): Nutanix release, then the Purity release (shown as 6.11.8+). */
 import type { VersionMatrix } from '../../domain/versions/profile';
 import { Select } from '../components/controls';
 import { useUi, type VersionChoice } from '../store/ui-store';
 import { resolveVersions, selectNutanix, supportedFlashArray } from './versions';
+
+/** The single Purity label the UI shows. */
+const PURITY_LABEL = '6.11.8+';
 
 export function VersionSelector({
   matrix,
@@ -45,17 +48,20 @@ export function VersionSelector({
       </Select>
       {hasFlashArray ? (
         <Select
-          label="FlashArray"
+          label="Purity"
           value={choice.flasharray ?? ''}
           onChange={(e) => change({ nutanix: choice.nutanix, flasharray: e.target.value })}
           data-testid="flasharray-version"
           disabled={fa.length === 0}
         >
-          {fa.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.label}
-            </option>
-          ))}
+          {/* One Purity version is offered: 6.11.8 and later (display label only). */}
+          {fa
+            .filter((r) => r.id === choice.flasharray)
+            .map((r) => (
+              <option key={r.id} value={r.id}>
+                {PURITY_LABEL}
+              </option>
+            ))}
         </Select>
       ) : null}
     </div>

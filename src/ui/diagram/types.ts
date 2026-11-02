@@ -17,6 +17,7 @@ import {
   StargateNode,
   SwitchNode,
   VmNode,
+  VmSpacerNode,
   VswitchNode,
 } from './nodes/device-nodes';
 
@@ -33,6 +34,7 @@ export const nodeTypes = {
   disk: DiskNode,
   stargate: StargateNode,
   redirector: RedirectorNode,
+  'vm-spacer': VmSpacerNode,
   generic: GenericNode,
 } satisfies NodeTypes;
 

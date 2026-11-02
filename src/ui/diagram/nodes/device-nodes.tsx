@@ -278,6 +278,20 @@ export function RedirectorNode({ data, selected }: P) {
   );
 }
 
+/** Empty VM area of a node that runs no VMs: keeps its CVM aligned with the other nodes. */
+export function VmSpacerNode({ data }: P) {
+  return (
+    <div
+      className="flex size-full items-center justify-center rounded-md border border-dashed border-border text-[10px] text-ink-muted"
+      data-testid={`node-${data.device.id}`}
+      role="img"
+      aria-label="no VMs on this node"
+    >
+      no VMs
+    </div>
+  );
+}
+
 export function GenericNode({ data, selected }: P) {
   if (data.isGroup) {
     return (

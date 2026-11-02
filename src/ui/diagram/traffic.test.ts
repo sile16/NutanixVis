@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   categoryOrder,
+  DEFAULT_TRAFFIC,
   isCategoryVisible,
   isShowAll,
   parseTrafficFilter,
@@ -58,8 +59,9 @@ describe('traffic filter', () => {
   it('round-trips through storage and rejects junk', () => {
     const f = toggleCategory(presetFilter('storage'), 'zk');
     expect(parseTrafficFilter(JSON.stringify(f))).toEqual(f);
-    expect(parseTrafficFilter('not json')).toEqual(SHOW_ALL);
-    expect(parseTrafficFilter('{"preset":"bogus"}')).toEqual(SHOW_ALL);
-    expect(parseTrafficFilter(null)).toEqual(SHOW_ALL);
+    expect(parseTrafficFilter('not json')).toEqual(DEFAULT_TRAFFIC);
+    expect(parseTrafficFilter('{"preset":"bogus"}')).toEqual(DEFAULT_TRAFFIC);
+    expect(parseTrafficFilter(null)).toEqual(DEFAULT_TRAFFIC);
+    expect(DEFAULT_TRAFFIC.preset).toBe('storage');
   });
 });

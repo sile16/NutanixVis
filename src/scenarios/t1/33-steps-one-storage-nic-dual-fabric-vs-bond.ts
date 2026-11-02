@@ -36,9 +36,15 @@ const timeline = [
 function dualFabric(): ScenarioDef {
   return defineScenario({
     id: 't1-33-steps-one-nic-dual-fabric',
-    title: 'T1 steps: one storage NIC down, two unbonded fabrics (multipath, short stall)',
+    title:
+      'T1 steps: one storage NIC down, two storage vSwitches vs1 and vs2, no bond (multipath, short stall)',
     topology: T1.topology,
-    options: { 'node-count': 3, 'vm-layout': 'two', 'vlan-placement': 'strict-ab' },
+    options: {
+      'node-count': 3,
+      'vm-layout': 'two',
+      'storage-vswitch-layout': 'per-fabric',
+      'vlan-placement': 'strict-ab',
+    },
     durationS: END,
     timeline,
     expect: [
@@ -90,7 +96,7 @@ function dualFabric(): ScenarioDef {
       ...baseInvariants(),
     ],
     narrative:
-      'Two unbonded storage fabrics: when one NIC fails, the commands queued on its paths wait (step 1) until the paths are declared lost and multipath retries them on the other fabric (step 2). Stargate stays up and nothing is redirected, so this is a short interruption. When the NIC returns its paths reconnect without a new stall.',
+      'Two storage vSwitches (vs1 on eth2, vs2 on eth3, no bond): when one NIC fails, the commands queued on its paths wait (step 1) until the paths are declared lost and multipath retries them on the other fabric (step 2). Stargate stays up and nothing is redirected, so this is a short interruption. When the NIC returns its paths reconnect without a new stall.',
     cite: [
       'spdk-nvme-multipath',
       'nvme-base-spec-2.1',
@@ -108,7 +114,8 @@ function dualFabric(): ScenarioDef {
 function bond(): ScenarioDef {
   return defineScenario({
     id: 't1-33-steps-one-nic-bond',
-    title: 'T1 steps: one storage NIC down, one MAC-pinning bond (no interruption)',
+    title:
+      'T1 steps: one storage NIC down, one storage vSwitch vs1 with a MAC-pinning bond (no interruption)',
     topology: T1.topology,
     options: {
       'node-count': 3,

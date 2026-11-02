@@ -125,6 +125,9 @@ export interface TrafficFilter {
 
 export const SHOW_ALL: TrafficFilter = { preset: 'all', overrides: {} };
 
+/** The default view: storage I/O only (VM reads/writes to the array), no control traffic. */
+export const DEFAULT_TRAFFIC: TrafficFilter = { preset: 'storage', overrides: {} };
+
 export function isCategoryVisible(f: TrafficFilter, category: string): boolean {
   const o = f.overrides[category];
   if (o !== undefined) return o;
@@ -142,20 +145,20 @@ export const presetFilter = (preset: TrafficPreset): TrafficFilter => ({ preset,
 export const isShowAll = (f: TrafficFilter): boolean =>
   f.preset === 'all' && Object.values(f.overrides).every(Boolean);
 
-/** Parse a stored filter, falling back to "show all" on anything unexpected. */
+/** Parse a stored filter, falling back to the storage-only default on anything unexpected. */
 export function parseTrafficFilter(raw: string | null): TrafficFilter {
-  if (!raw) return SHOW_ALL;
+  if (!raw) return DEFAULT_TRAFFIC;
   try {
     const v: unknown = JSON.parse(raw);
-    if (typeof v !== 'object' || v === null) return SHOW_ALL;
+    if (typeof v !== 'object' || v === null) return DEFAULT_TRAFFIC;
     const { preset, overrides } = v as { preset?: unknown; overrides?: unknown };
-    if (preset !== 'all' && preset !== 'storage' && preset !== 'none') return SHOW_ALL;
+    if (preset !== 'all' && preset !== 'storage' && preset !== 'none') return DEFAULT_TRAFFIC;
     const o: Record<string, boolean> = {};
     if (typeof overrides === 'object' && overrides !== null) {
       for (const [k, b] of Object.entries(overrides)) if (typeof b === 'boolean') o[k] = b;
     }
     return { preset, overrides: o };
   } catch {
-    return SHOW_ALL;
+    return DEFAULT_TRAFFIC;
   }
 }

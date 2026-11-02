@@ -1,15 +1,13 @@
-/** Tabbed right rail (SPEC §8): Inspector, Events, Explain, Scenario. Radix Tabs (keyboard nav). */
+/** Tabbed right rail (SPEC §8): Inspector, Events, Scenario. Radix Tabs (keyboard nav). */
 import { Tabs } from 'radix-ui';
 import { type RailTab, useUi } from '../store/ui-store';
 import { EventsPanel } from './events-panel';
-import { ExplainPanel } from './explain-panel';
 import { Inspector } from './inspector';
 import { ScenarioPanel } from './scenario-panel';
 
 const TABS: readonly { id: RailTab; label: string }[] = [
   { id: 'inspector', label: 'Inspector' },
   { id: 'events', label: 'Events' },
-  { id: 'explain', label: 'Explain' },
   { id: 'scenario', label: 'Scenario' },
 ];
 
@@ -41,9 +39,6 @@ export function RightRail() {
       </Tabs.Content>
       <Tabs.Content value="events" className="min-h-0 flex-1 overflow-hidden">
         <EventsPanel />
-      </Tabs.Content>
-      <Tabs.Content value="explain" className="min-h-0 flex-1 overflow-y-auto">
-        <ExplainPanel />
       </Tabs.Content>
       <Tabs.Content value="scenario" className="min-h-0 flex-1 overflow-y-auto">
         <ScenarioPanel />

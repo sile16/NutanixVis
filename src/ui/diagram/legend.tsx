@@ -29,14 +29,12 @@ export function Legend({
   categories,
   dropped,
   animated,
-  reducedMotion,
   hasPath = false,
 }: {
   /** Categories seen in the activity window (sorted). */
   categories: readonly string[];
   dropped: boolean;
   animated: boolean;
-  reducedMotion: boolean;
   /** The diagram draws the internal I/O data path: show its line key. */
   hasPath?: boolean;
 }) {
@@ -53,11 +51,7 @@ export function Legend({
       <div className="mb-1 font-semibold text-ink-muted">
         Traffic{' '}
         <span className="font-normal">
-          {animated
-            ? '(dots and glow: recent activity)'
-            : reducedMotion
-              ? '(reduced motion: highlighted)'
-              : '(packets off: highlighted)'}
+          {animated ? '(dots and glow: recent activity)' : '(reduced motion: highlighted)'}
         </span>
       </div>
       <fieldset className="m-0 border-0 p-0">
@@ -107,7 +101,6 @@ export function Legend({
               Dropped
             </li>
           ) : null}
-          {categories.length === 0 ? <li className="text-ink-muted">No recent traffic</li> : null}
         </ul>
       </fieldset>
       {hasPath ? (

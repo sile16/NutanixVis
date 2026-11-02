@@ -1,5 +1,5 @@
 /** Events tab (SPEC §8): filterable log by severity and device, with causal links. */
-import { BookOpen, CornerDownRight } from 'lucide-react';
+import { CornerDownRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { Severity } from '../../engine/types';
 import { Select } from '../components/controls';
@@ -17,7 +17,6 @@ export function EventsPanel() {
   const snapshot = useSnapshot();
   const selection = useUi((s) => s.selection);
   const select = useUi((s) => s.select);
-  const explain = useUi((s) => s.explain);
   const [minSeverity, setMinSeverity] = useState<Severity>('info');
   const [scope, setScope] = useState<'all' | 'selected'>('all');
 
@@ -67,9 +66,7 @@ export function EventsPanel() {
         <span className="self-end pb-1.5 text-[11px] text-ink-muted">{rows.length} shown</span>
       </div>
       {rows.length === 0 ? (
-        <p className="px-3 py-3 text-sm text-ink-muted">
-          No events yet. Step time or inject a failure.
-        </p>
+        <ol className="flex-1" />
       ) : (
         <ol className="flex-1 divide-y divide-border overflow-y-auto">
           {rows.map((e) => {
@@ -93,27 +90,17 @@ export function EventsPanel() {
                       {snapshot.devices[e.deviceId]?.label ?? e.deviceId}
                     </button>
                   ) : null}
-                  <button
-                    type="button"
-                    className="ml-auto inline-flex items-center gap-0.5 rounded px-1 text-ink-muted hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-focus"
-                    onClick={() => explain(e.seq)}
-                    aria-label={`Explain event ${e.code}`}
-                  >
-                    <BookOpen size={11} aria-hidden="true" /> Explain
-                  </button>
                 </div>
                 <p className="mt-0.5">{e.text}</p>
                 <div className="font-mono text-[10px] text-ink-muted">{e.code}</div>
                 {causes.map((c) => (
-                  <button
+                  <div
                     key={eventId(c)}
-                    type="button"
-                    onClick={() => explain(c.seq)}
-                    className="mt-0.5 flex items-center gap-1 text-left text-[11px] text-ink-muted hover:text-ink focus-visible:outline-2 focus-visible:outline-focus"
+                    className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-muted"
                   >
                     <CornerDownRight size={11} aria-hidden="true" />
                     caused by <span className="font-mono">{c.code}</span> at <StepTag t={c.t} />
-                  </button>
+                  </div>
                 ))}
               </li>
             );

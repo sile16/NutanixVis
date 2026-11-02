@@ -74,7 +74,7 @@ const isDurationField = (k: string, v: ViewField): boolean =>
 
 function Fields({ fields }: { fields: Readonly<Record<string, ViewField>> }) {
   const entries = Object.entries(fields).filter(([k, v]) => !isDurationField(k, v));
-  if (entries.length === 0) return <p className="text-xs text-ink-muted">No fields.</p>;
+  if (entries.length === 0) return null;
   return (
     <dl
       className="grid grid-cols-[minmax(0,9rem)_1fr] gap-x-3 gap-y-0.5 text-xs"
@@ -480,10 +480,6 @@ function NoSelection({ snapshot }: { snapshot: Snapshot }) {
   const devices = Object.values(snapshot.devices).sort((a, b) => a.id.localeCompare(b.id));
   return (
     <div className="px-3 py-2" data-testid="inspector-empty">
-      <p className="mb-3 text-sm text-ink-muted">
-        Select a device or cable on the diagram (right-click for quick fail/recover), or pick one
-        here.
-      </p>
       <Select
         label="Jump to device"
         value=""

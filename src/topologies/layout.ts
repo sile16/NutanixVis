@@ -23,6 +23,8 @@ const ROW_GAP = 160;
 const HOST_GAP = 40;
 
 const VM = { w: 100, h: 40 };
+/** Height of the VM row and the gap around it, for the UI's "no VMs" spacer. */
+export const VM_ROW = { h: VM.h } as const;
 const DISK = { w: 40, h: 40 };
 const NIC = { w: 60, h: 40 };
 const CVM_IF = { w: 80, h: 20 };
@@ -40,6 +42,9 @@ export const DATA_PATH_BAND = {
 const CVM_H = HEADER + CVM_IF.h + PAD;
 const cvmHeight = (dataPath: boolean | undefined) =>
   CVM_H + (dataPath ? DATA_PATH_BAND.stargate.h + DATA_PATH_BAND.stargate.gap : 0);
+/** Distance from the top of a VM-row box to the top of the CVM interface row (data-path hosts). */
+export const VM_TO_IFACE_ROW =
+  VM.h + GAP + DATA_PATH_BAND.redirector.h + GAP + (cvmHeight(true) - PAD - CVM_IF.h);
 const VSWITCH_H = 40;
 const NIC_GROUP_GAP = 40;
 const SWITCH = { w: 240, h: 60 };
@@ -60,6 +65,11 @@ export interface HostBoxSpec {
   cvm?: { id: string; ifaces: readonly string[] };
   /** Reserve the redirector and Stargate rows (see `DATA_PATH_BAND`). */
   dataPath?: boolean;
+  /**
+   * The host has no VMs but keeps the VM and redirector rows empty, so its CVM, NICs and vswitches
+   * sit at the same height as on hosts that run VMs (the UI draws a "no VMs" spacer there).
+   */
+  reserveVmRow?: boolean;
   disks: readonly string[];
   /** Host IPs (`host-interface`), drawn in a row just above their vswitch. */
   hostIfaces?: readonly { id: string; vswitch: string }[];
@@ -96,8 +106,9 @@ function hostMetrics(h: HostBoxSpec) {
     nicRow,
   );
   let top = HEADER;
-  if (h.vms.length) top += VM.h + GAP;
-  if (h.dataPath && h.vms.length && h.cvm) top += DATA_PATH_BAND.redirector.h + GAP;
+  const vmRow = h.vms.length > 0 || h.reserveVmRow === true;
+  if (vmRow) top += VM.h + GAP;
+  if (h.dataPath && vmRow && h.cvm) top += DATA_PATH_BAND.redirector.h + GAP;
   if (h.cvm) top += cvmHeight(h.dataPath) + GAP;
   if (h.disks.length) top += DISK.h + GAP;
   if (h.hostIfaces?.length) top += HOST_IF.h + GAP;
@@ -114,9 +125,10 @@ function layoutHost(h: HostBoxSpec, w: number, hh: number, nicRow: number, out: 
     h.vms.forEach((id, i) => {
       out[id] = { x: x0 + i * (VM.w + GAP), y, ...VM };
     });
-    y += VM.h + GAP;
   }
-  if (h.dataPath && h.vms.length && h.cvm) y += DATA_PATH_BAND.redirector.h + GAP;
+  if (h.vms.length > 0 || h.reserveVmRow) y += VM.h + GAP;
+  if (h.dataPath && (h.vms.length > 0 || h.reserveVmRow) && h.cvm)
+    y += DATA_PATH_BAND.redirector.h + GAP;
   if (h.cvm) {
     const cw = cvmWidth(h.cvm.ifaces.length);
     const ch = cvmHeight(h.dataPath);

@@ -275,6 +275,9 @@ export function buildHost(p: HostPlan): Part & { layout: HostBoxSpec } {
       vms,
       ...(p.cvm ? { cvm: { id: cvmId, ifaces: p.cvm.map((i) => `${cvmId}.${i.segment}`) } } : {}),
       ...(p.role === 'external-storage-compute' && p.cvm ? { dataPath: true } : {}),
+      ...(p.role === 'external-storage-compute' && p.cvm && vms.length === 0
+        ? { reserveVmRow: true }
+        : {}),
       disks,
       hostIfaces,
       groups: p.vswitches.map((vs) => ({

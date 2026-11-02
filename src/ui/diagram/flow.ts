@@ -24,6 +24,7 @@ export type NodeKind =
   | 'disk'
   | 'stargate'
   | 'redirector'
+  | 'vm-spacer'
   | 'generic';
 
 const KIND_TO_TYPE: Readonly<Record<string, NodeKind>> = {
@@ -44,6 +45,7 @@ const KIND_TO_TYPE: Readonly<Record<string, NodeKind>> = {
   // Derived by `data-path.ts` (not topology devices).
   stargate: 'stargate',
   redirector: 'redirector',
+  'vm-spacer': 'vm-spacer',
 };
 
 export const nodeTypeFor = (kind: string): NodeKind => KIND_TO_TYPE[kind] ?? 'generic';

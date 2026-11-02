@@ -27,16 +27,17 @@ const END = by(HADES_RECOVER + failbackDoneS(4) + P.redirector.nopIntervalS, RES
 
 /**
  * Steps view of "both storage NICs down on one node" (AHV compute, external FlashArray over
- * NVMe/TCP). Ordinal steps, not durations: the VM's IO stalls (step 1), Hades puts the node in
+ * NVMe/TCP; two storage vSwitches vs1 and vs2, no bond). Ordinal steps, not durations: the VM's IO stalls (step 1), Hades puts the node in
  * maintenance mode (2), the services stop and Stargate exits and the AHV redirector sends the
  * vDisks to remote CVMs (3), IO resumes on a remote CVM (4); after the NICs return the node
  * recovers and the sessions fail back much later, with no interruption.
  */
 export default defineScenario({
   id: 't1-32-steps-both-storage-nics-down',
-  title: 'T1 steps: both storage NICs of one node go down (stall, maintenance, redirect, failback)',
+  title:
+    'T1 steps: both storage NICs of one node go down, vs1 and vs2 (stall, maintenance, redirect, failback)',
   topology: T1.topology,
-  options: { 'node-count': 3, 'vm-layout': 'two' },
+  options: { 'node-count': 3, 'vm-layout': 'two', 'storage-vswitch-layout': 'per-fabric' },
   durationS: END,
   timeline: [
     { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth2 fails.' },

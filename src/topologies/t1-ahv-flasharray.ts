@@ -281,7 +281,8 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
     family: 't1',
     description:
       `${p.nodeCount} AHV compute nodes with an external FlashArray//X70 over NVMe/TCP. ` +
-      'vs0 (mgmt/VM) and vs1 (storage) each bond one NIC to each switch; two storage VLANs.',
+      'vs0 (management, eth0 + eth1) is separate from the storage vSwitches: one vs1 with both ' +
+      'storage NICs bonded, or vs1 and vs2 with one NIC each and no bond.',
     vlans: [
       VLANS.storageA,
       ...(p.storageVlans === 'two' ? [VLANS.storageB] : []),

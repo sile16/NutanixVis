@@ -54,6 +54,7 @@ test('a failed host: children and cables drawn failed/down, no repeating drop bu
   page,
 }) => {
   await open(page, 't2-hci-ahv');
+  await page.getByTestId('traffic-preset-all').click(); // drops of control traffic are drawn too
   await step(page, 2);
   await selectDevice(page, 'node-4');
   await applyAction(page, 'fail');
@@ -175,22 +176,16 @@ test('topology hash: picking writes it, editing it switches', async ({ page }) =
   await expect(page.getByTestId('topology-select')).toHaveValue('t1-ahv-flasharray');
 });
 
-test('reset clears the Explain selection (event numbers restart)', async ({ page }) => {
+test('reset clears the event log (event numbers restart)', async ({ page }) => {
   await open(page, 't1-ahv-flasharray');
   await selectDevice(page, 'sw-a');
   await applyAction(page, 'fail');
   await step(page, 2);
   await page.getByRole('tab', { name: 'Events' }).click();
-  await page
-    .getByTestId('event-row')
-    .first()
-    .getByRole('button', { name: /Explain/ })
-    .click();
-  await expect(page.getByTestId('explain-step').first()).toBeVisible();
+  await expect(page.getByTestId('event-row').first()).toBeVisible();
   await page.getByRole('button', { name: 'Reset simulation' }).click();
-  await step(page, 2);
-  await page.getByRole('tab', { name: 'Explain' }).click();
-  await expect(page.getByTestId('explain-panel')).toContainText('Latest');
+  await expect(page.getByRole('tab', { name: 'Explain' })).toHaveCount(0);
+  await expect(page.getByTestId('event-row')).toHaveCount(0);
 });
 
 test('forms show the current value; enabling MLAG pairs an unpaired switch', async ({ page }) => {
@@ -258,3 +253,11 @@ test('traffic dots keep streaming slowly while the simulation is paused', async 
   // Still paused: the clock did not move, only the dots did.
   await expect(page.getByTestId('sim-clock')).toHaveText(clock ?? '');
 });
+
+for (const id of ['t1-ahv-flasharray', 't1-bonded-single']) {
+  test(`${id}: IO is already flowing when the page loads (step 0)`, async ({ page }) => {
+    await open(page, id);
+    await expect(page.getByTestId('sim-clock')).toHaveAttribute('data-step', '0');
+    await expect(page.getByTestId('packet-overlay')).not.toHaveAttribute('data-flows', '0');
+  });
+}

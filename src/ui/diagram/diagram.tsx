@@ -77,7 +77,6 @@ export function Diagram({
   const openContextMenu = useUi((s) => s.openContextMenu);
   const setHoveredLink = useUi((s) => s.setHoveredLink);
   const layoutEdit = useUi((s) => s.layoutEdit);
-  const showPackets = useUi((s) => s.showPackets);
   const bondUtilHost = useUi((s) => s.bondUtilHost);
   const traffic = useUi((s) => s.traffic);
   const reducedMotion = usePrefersReducedMotion();
@@ -158,7 +157,7 @@ export function Diagram({
     return out;
   }, [win, bondUtilHost]);
 
-  const animate = showPackets && !reducedMotion;
+  const animate = !reducedMotion;
   const glow = useMemo(() => {
     // Always on: a steady, fading glow shows which cables carry IO; packets animate on top.
     const out = new Map<string, { color: string; dropped: boolean; opacity: number }>();
@@ -308,7 +307,6 @@ export function Diagram({
             categories={legendCategories}
             dropped={anyDropped}
             animated={animate}
-            reducedMotion={reducedMotion}
             hasPath={model.enabled}
           />
         </Panel>

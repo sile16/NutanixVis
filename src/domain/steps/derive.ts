@@ -122,7 +122,14 @@ export function deriveVmSteps(
   const stopped = ofCvm('hades.services.stopped');
   if (stopped) add('services-stopped', stopped.t, cvm);
   const redirect = hostEvt('redirector.redirect');
-  if (redirect) add('redirected', redirect.t, host);
+  // The VM's vDisk is served by another CVM (the owner changed) even where the redirect event is
+  // not logged (a planned shutdown). With no maintenance step before it, a CVM or Stargate
+  // failure goes straight from the stall to the redirect: step 2, then the IO resumes in step 3.
+  const moved = series
+    .slice(first, last + 2)
+    .find((x) => x.ownerCvm !== null && x.ownerCvm !== cvm);
+  const redirectT = redirect?.t ?? moved?.t;
+  if (redirectT !== undefined) add('redirected', redirectT, host, maint || stopped ? undefined : 2);
   // Every path lost and the paths come back inside the interruption (a short outage, no
   // service stop): the reconnect is what ends it, one step after the stall.
   const reconnected =
@@ -153,13 +160,20 @@ export function deriveVmSteps(
     recover('services-restarted', up);
     const fb = up ? restoredAt('redirector.failback', host, up.t) : undefined;
     recover('failed-back', fb);
+  } else if (redirectT !== undefined) {
+    // CVM or Stargate failure without maintenance mode: Stargate comes back, then the sessions
+    // return to the local CVM much later.
+    const up = restoredAt('stargate.up', cvm, start);
+    recover('services-restarted', up);
+    const fb = restoredAt('redirector.failback', host, up?.t ?? start);
+    recover('failed-back', fb);
   } else if (some && !reconnected) {
     recover('path-restored', restoredAt('nvme.path.restored', cvm, start));
   }
 
   const sorted = [...ms].sort((a, b) => a.step - b.step || a.t - b.t);
   const stalledSteps = resumeStep ?? lastMs.step;
-  const redirected = !!redirect && after !== undefined && after.ownerCvm !== cvm;
+  const redirected = redirectT !== undefined && after !== undefined && after.ownerCvm !== cvm;
   const impact: ImpactScale = redirected
     ? 'redirected'
     : stalledSteps <= 1

@@ -145,7 +145,7 @@ src/
   ui/
     app/             # shell, routing (hash), brand theme
     diagram/         # React Flow node/edge components, geometry.ts, PacketOverlay (canvas)
-    panels/          # actions, time controls, event log, inspector, explain, scenario picker
+    panels/          # actions, time controls, event log, inspector, scenario picker
     store/           # zustand UI store, engine bridge hook
 tests/
   engine/            # unit tests for primitives
@@ -248,7 +248,7 @@ type Trace   = { msgId; kind; links: LinkId[]; result: 'delivered'|'dropped'; dr
   - `vswitch.set-lacp-rate` sets fast or slow.
   - `fabric.set-mlag` turns MLAG on or off.
   - `fabric.set-vlan-placement` switches between tagged on both switches and strict A/B.
-- **How the changes apply.** They take effect at the next tick. The real procedure is noted in the Explain panel. For example, enabling Active-Active (LACP) in Prism performs a rolling host reboot, and a Quick-method uplink update that takes over 30 s triggers HA (AHV Admin Guide). Simulating the rolling procedure itself is a later option.
+- **How the changes apply.** They take effect at the next tick. The real procedure is noted in the action's description. For example, enabling Active-Active (LACP) in Prism performs a rolling host reboot, and a Quick-method uplink update that takes over 30 s triggers HA (AHV Admin Guide). Simulating the rolling procedure itself is a later option.
 - **Build-up and misconfiguration actions.** These are topology options exposed as actions:
   - single storage VLAN
   - strict A/B fabrics vs trunked + ISL
@@ -261,7 +261,7 @@ type Trace   = { msgId; kind; links: LinkId[]; result: 'delivered'|'dropped'; dr
 ### 5.6 Snapshot and event log
 
 - **Snapshot.** `{version, simTime, devices: Record<id, DeviceView>, links: Record<id, LinkView>, traces: Trace[], derived: {...cluster status}}` is plain frozen data. Each device kind defines its `DeviceView`, which holds what the inspector shows.
-- **Event.** An event is `{t, id, severity, deviceId, code, text, causeIds[], cite[]}`. Events form a causal chain: "Switch A failed → CVM-2 lost paths ct0.eth10/ct1.eth10 → after the keep-alive timeout, those NVMe controllers are marked lost → IO continues on fabric B". The Explain panel renders the chain with citations.
+- **Event.** An event is `{t, id, severity, deviceId, code, text, causeIds[], cite[]}`. Events form a causal chain: "Switch A failed → CVM-2 lost paths ct0.eth10/ct1.eth10 → after the keep-alive timeout, those NVMe controllers are marked lost → IO continues on fabric B". The Events panel shows each event's causes.
 
 ---
 
@@ -632,9 +632,10 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 **T1 default: AHV + FlashArray**
 
 - **4 AHV nodes**, which tolerate 2 simultaneous node failures (N−2, DEPLOY-GUIDE). A 5-node variant shows the N−3 regime.
-- Each host has four NICs. `vs0` takes eth0 and eth1; the storage NICs are eth2 and eth3, either both in one storage vswitch (`vs1`) or one each in two storage vswitches (`vs1`, `vs2`, no bond). The UI offers both:
-  - `vs0` carries mgmt, live migration, DR and application traffic, in Active/Backup.
-  - `vs1` (one-vswitch layout) carries NVMe/TCP data only, with eth2 and eth3 bonded.
+- Each host has four NICs. The management vSwitch `vs0` (eth0 + eth1, Active/Backup) is separate and is not counted among the storage vSwitches. The storage NICs are eth2 and eth3, in one of two layouts. The UI offers both:
+  - **Two storage vSwitches, no bond** (`storage-vswitch-layout: per-fabric`): `vs1` carries eth2 (fabric A) and `vs2` carries eth3 (fabric B), one uplink NIC each, and the CVM storage interfaces attach one per vSwitch. This is the default catalog entry ("T1 · two storage vSwitches (vs1, vs2), no bond").
+  - **One storage vSwitch, bonded NICs** (`single-bond`): `vs1` carries eth2 and eth3 bonded ("T1 · one storage vSwitch (vs1), bonded NICs").
+  - `vs0` carries mgmt, live migration, DR and application traffic, and the redirected I/O path to a remote CVM leaves the host through it. `vs1` and `vs2` carry NVMe/TCP data only.
 - **`vs1` bond mode** (see `docs/research/nutanix-flasharray.md` §2a):
   - **Default: Active/Active with MAC pinning.** This is Everpure's recommendation (NET), it is acceptable to Nutanix, and it needs no MLAG.
   - **Option: LACP**, which Nutanix prefers when available (DEPLOY-GUIDE). It needs MLAG/vPC across the two switches and has fast/slow detection timers.
@@ -791,7 +792,7 @@ T1-lab:
 
 - A header carries the brand, the topology picker, the sim clock `T+mm:ss` and the time controls.
 - The **diagram** fills the center.
-- The right rail is tabbed: **Inspector** (selected device's view and actions), **Events** (filterable log with causal links), **Explain** (narrative and citations with confidence badges) and **Scenario** (guided steps).
+- The right rail is tabbed: **Inspector** (selected device's view and actions), **Events** (filterable log with causal links) and **Scenario** (guided steps).
 
 **Diagram**
 
@@ -800,7 +801,7 @@ T1-lab:
 - Status colors come from tokens: healthy, degraded, failed, fenced and unknown.
 - Leaders get badges (ZK, Acropolis, FA primary).
 
-**Packets**
+**Dots (storage I/O only by default)**
 
 - One canvas overlay is driven by `requestAnimationFrame`.
 - Every cable that carried traffic within the activity window shows a continuous stream of dots, one stream per category and direction (`link-flow.ts`). Dots move at a fixed, slow on-screen speed (60 px/s at zoom 1, about one cable per 2–5 s, as in ActiveClusterVis) on wall-clock time, so they keep moving while paused and do not speed up at ×20 or ×60. Streams fade as their traffic ages out of the window, and none is drawn on a cable that is down.
@@ -869,7 +870,7 @@ T1-lab:
 | M3 | UI: React Flow diagram, geometry, packet overlay, inspector, actions, time controls, event log | T1 interactive on Pages. Playwright smoke passes. |
 | M4 | Nutanix cluster services: ZK, Cassandra ring, Acropolis/AHV HA, fencing, cluster status (T1 7–9, 13) | AHV HA timeline tests at T+20/60/120. |
 | M5 | HCI data path: extent groups, RF, Oplog replication, Autopath, Curator rebuild, disks (topology T2) | T2 scenarios pass. |
-| M6 | Explain panel, guided scenarios, share links, polish and branding, visual baselines | Owner review. |
+| M6 | guided scenarios, share links, polish and branding, visual baselines | Owner review. |
 | M7+ | 2-node + Witness, ActiveDR/async, capacity, Metro, and new version profiles as releases ship | — |
 
 ---
@@ -930,7 +931,7 @@ Phase 2 (parallel)    ├──────┬──────────┴�
                       NVMe   └──► G HCI data path (after F's    │
                       │           Stargate contract)            │
                       │                                         │
-Phase 3 (serial-ish)  I integration: engine↔UI bridge, explain panel, share links,
+Phase 3 (serial-ish)  I integration: engine↔UI bridge, share links,
                         enable H's scenarios, Playwright visual baselines, polish
 ```
 
@@ -946,7 +947,7 @@ Phase 3 (serial-ish)  I integration: engine↔UI bridge, explain panel, share li
 | **F** Nutanix services + workload | 2 | `src/domain/nutanix/**` (except `hci/`), `src/domain/workload/**` | CVM, Stargate (interface + T1 NVMe backend), ZK ensemble, Cassandra ring, Acropolis/AHV HA (T+20/60/120, fence, 45 s self-terminate), iSCSI redirector (incl. CO nodes with no local Stargate), node roles (HCI / CO / SO), T1 node-failure tolerance (N−2 / N−3), per-VM path-loss handling, VM and vDisk lifecycle | A, C |
 | **G** HCI data path | 2 | `src/domain/nutanix/hci/**` | extent groups and RF placement (block awareness), Oplog sync replication, Curator rebuild, disks (SMART, 3 offline events per hour), 95% read-only | F's Stargate interface (an early F merge) |
 | **L** Lab validation | 1→3 | `docs/research/lab-validation-plan.md`, lab results, and the `confidence` fields in profiles (coordinated with C) | experiments L1–L13 on the test drive instance; assumptions upgraded to `lab-observed`; golden expectations for H | lab access and owner approval of which disruptive actions are allowed |
-| **I** Integration + polish | 3 | `src/ui/store/**` bridge, `src/app` wiring, explain panel | engine↔UI `useSyncExternalStore` bridge, live diagram, explain panel with citations and confidence badges, guided scenarios, share-link URL state, visual baselines | all |
+| **I** Integration + polish | 3 | `src/ui/store/**` bridge, `src/app` wiring | engine↔UI `useSyncExternalStore` bridge, live diagram, event log with citations and confidence badges, guided scenarios, share-link URL state, visual baselines | all |
 
 **Peak parallelism.** Phase 1 runs 5 streams (A, B, C, D, H) and Phase 2 runs 3 (E, F, G, with G starting once F's interface lands). With an AI orchestrator, each stream is one agent in an isolated worktree, and the integrator merges between phases.
 
@@ -1010,6 +1011,7 @@ Owner-supplied field practice from deployment walkthroughs. The full comparison 
 | `single-bond` + LACP | One vswitch, LACP over MLAG | Nutanix deployment guide ("LACP when available") | The hash moves; LACP fast/slow detection only applies to failures without carrier loss. |
 | `per-fabric` | **One vswitch per fabric, each "No Uplink Bond"** with one NIC and one storage segment (VLAN). Multipathing is left entirely to NVMe. | Field practice, AHV Admin Guide (No Uplink Bond), NET KB (no-bond allowed as an exception) | That fabric's paths are lost after KATO; IO continues on the other fabric. There is no bond layer at all. |
 
+- **Array data ports (`array-data-ports`).** `all` (default) cables both data ports of each controller. `first-only` cables only the first (eth10, Switch A side); the second keeps its address but is not connected, by design, so each CVM has two live array paths and portals that never answer. The bonded catalog entry uses `first-only`.
 - **ISL.** Field practice keeps storage VLANs **off the ISL** (single hop from node to array; the ISL adds latency and can become a bottleneck). The Cisco Validated Design allows storage traffic on the ISL. The option `isl-storage-vlans`: pruned | allowed.
 - **Switch ports.** FA data ports are typically access ports (untagged) on the switch, while node ports are trunks.
 - **MAC pinning + isolated VLANs.** With isolated VLANs, `per-fabric` and VLAN-aware MAC pinning reach the same failure outcome, by different mechanisms.
@@ -1021,4 +1023,4 @@ Owner-supplied field practice from deployment walkthroughs. The full comparison 
 - **Jumbo frames.** Field practice treats MTU 9000 as required on the storage vswitch and interface. The deployment guide calls it recommended, with a 1500 default. The existing `mtu` option covers both; scenario narratives should say that 9000 end to end is the norm.
 - **Pod quota counts provisioned size, not used size** (DEPLOY-GUIDE also warns about quota limits). Add a misconfiguration scenario: VM or disk create fails once provisioned capacity exceeds the quota, while running IO is unaffected.
 - **UI: vDisk → FA volume name.** Prism Central shows each vDisk's backing FA volume name. Show it in the VM and vDisk inspector.
-- **Version notes.** Purity 6.12.0 is the minimum, and **6.12.1+ is recommended** (shown in the selector label). **R3 arrays cannot run 6.12.x**, so they use 6.11.8; backlog: an FA model/generation topology option that filters the FlashArray list. Upgrade Purity first and never upgrade both at once; this is backlog for a guided NDU/upgrade scenario.
+- **Version notes.** The UI shows the Purity version as a single entry, **6.11.8+**, with no other wording (display label only; the version matrix keeps its two profile ids). **R3 arrays cannot run 6.12.x**, so they use 6.11.8; backlog: an FA model/generation topology option that filters the FlashArray list. Upgrade Purity first and never upgrade both at once; this is backlog for a guided NDU/upgrade scenario.

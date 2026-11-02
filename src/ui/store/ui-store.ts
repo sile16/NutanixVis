@@ -11,11 +11,12 @@ import {
   toggleCategory,
 } from '../diagram/traffic';
 
-const TRAFFIC_KEY = 'nutanixvis.traffic';
+// Session storage: the choice lasts for the session; a new session starts at storage I/O only.
+const TRAFFIC_KEY = 'nutanixvis.traffic.session';
 
 function loadTrafficFilter(): TrafficFilter {
   try {
-    return parseTrafficFilter(window.localStorage.getItem(TRAFFIC_KEY));
+    return parseTrafficFilter(window.sessionStorage.getItem(TRAFFIC_KEY));
   } catch {
     return parseTrafficFilter(null);
   }
@@ -23,7 +24,7 @@ function loadTrafficFilter(): TrafficFilter {
 
 function saveTrafficFilter(f: TrafficFilter): TrafficFilter {
   try {
-    window.localStorage.setItem(TRAFFIC_KEY, JSON.stringify(f));
+    window.sessionStorage.setItem(TRAFFIC_KEY, JSON.stringify(f));
   } catch {
     // storage unavailable (private mode): the choice lasts for this page only
   }
@@ -37,7 +38,7 @@ export type Selection =
 export const SPEEDS = [1, 5, 20, 60] as const;
 export type Speed = (typeof SPEEDS)[number];
 
-export type RailTab = 'inspector' | 'events' | 'explain' | 'scenario';
+export type RailTab = 'inspector' | 'events' | 'scenario';
 
 export interface VersionChoice {
   readonly nutanix: string;
@@ -62,13 +63,11 @@ export interface UiState {
   queued: number;
   /** Actions applied since the simulation was (re)built: changing versions asks first. */
   actionsApplied: number;
-  showPackets: boolean;
   /** Ticks of history the diagram's activity views (glow, paths, bond shares) aggregate. */
   activityTicks: number;
   /** Host whose bond member utilization is shown on the diagram. */
   bondUtilHost: string | null;
   layoutEdit: boolean;
-  explainEvent: number | null;
   /** Which traffic categories the overlay, glow and hover card show (kept across topologies). */
   traffic: TrafficFilter;
 
@@ -85,11 +84,9 @@ export interface UiState {
   loadScenario(id: string | null, topology?: string): void;
   setVersions(v: VersionChoice): void;
   resetSim(): void;
-  togglePackets(): void;
   setActivityTicks(n: number): void;
   setBondUtilHost(id: string | null): void;
   setLayoutEdit(on: boolean): void;
-  explain(seq: number | null): void;
   toggleTraffic(category: string): void;
   setTrafficPreset(preset: TrafficPreset): void;
 }
@@ -108,15 +105,13 @@ function initialTopology(): string {
 }
 
 /**
- * State reset whenever the simulation is rebuilt. Event sequence numbers restart with a new
- * simulation, so a remembered `explainEvent` would point at an unrelated event; hover and context
- * menus refer to elements of the old run.
+ * State reset whenever the simulation is rebuilt. Hover and context menus refer to elements of
+ * the old run.
  */
 const freshRun = (s: UiState) => ({
   simEpoch: s.simEpoch + 1,
   queued: 0,
   actionsApplied: 0,
-  explainEvent: null,
   hoveredLink: null,
   contextMenu: null,
 });
@@ -135,12 +130,10 @@ export const useUi = create<UiState>()((set) => ({
   manual: false,
   queued: 0,
   actionsApplied: 0,
-  showPackets: true,
   activityTicks: 10,
   bondUtilHost: null,
   layoutEdit: false,
-  explainEvent: null,
-  traffic: typeof window === 'undefined' ? presetFilter('all') : loadTrafficFilter(),
+  traffic: typeof window === 'undefined' ? presetFilter('storage') : loadTrafficFilter(),
 
   select: (selection) => set({ selection, contextMenu: null }),
   setHoveredLink: (hoveredLink) => set({ hoveredLink }),
@@ -172,12 +165,9 @@ export const useUi = create<UiState>()((set) => ({
     })),
   setVersions: (versions) => set((s) => ({ ...freshRun(s), versions })),
   resetSim: () => set((s) => ({ ...freshRun(s), playing: false })),
-  togglePackets: () => set((s) => ({ showPackets: !s.showPackets })),
   setActivityTicks: (activityTicks) => set({ activityTicks }),
   setBondUtilHost: (bondUtilHost) => set({ bondUtilHost }),
   setLayoutEdit: (layoutEdit) => set({ layoutEdit }),
-  explain: (explainEvent) =>
-    set(explainEvent === null ? { explainEvent } : { explainEvent, tab: 'explain' }),
   toggleTraffic: (category) =>
     set((s) => ({ traffic: saveTrafficFilter(toggleCategory(s.traffic, category)) })),
   setTrafficPreset: (preset) => set({ traffic: saveTrafficFilter(presetFilter(preset)) }),

@@ -1706,18 +1706,18 @@ exports[`scenario acceptance > t1-31-maintenance-rolling: T1: rolling maintenanc
 ]
 `;
 
-exports[`scenario acceptance > t1-32-steps-both-storage-nics-down: T1 steps: both storage NICs of one node go down (stall, maintenance, redirect, failback) 1`] = `
+exports[`scenario acceptance > t1-32-steps-both-storage-nics-down: T1 steps: both storage NICs of one node go down, vs1 and vs2 (stall, maintenance, redirect, failback) 1`] = `
 [
   "11	action.fail@node-1.eth2",
   "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
-  "11	net.bond.vlan-stranded@node-1.vs1",
+  "11	net.bond.down@node-1.vs1",
   "11	action.fail@node-1.eth3",
   "11	device.failed@node-1.eth3",
   "11	net.link.down",
-  "11	net.bond.member-down@node-1.vs1",
-  "11	net.bond.down@node-1.vs1",
+  "11	net.bond.member-down@node-1.vs2",
+  "11	net.bond.down@node-1.vs2",
   "15	nvme.path.lost@node-1.cvm",
   "15	nvme.path.lost@node-1.cvm",
   "15	nvme.path.lost@node-1.cvm",
@@ -1739,7 +1739,7 @@ exports[`scenario acceptance > t1-32-steps-both-storage-nics-down: T1 steps: bot
   "191	action.recover@node-1.eth3",
   "191	device.recovered@node-1.eth3",
   "191	net.link.up",
-  "191	net.bond.member-up@node-1.vs1",
+  "191	net.bond.member-up@node-1.vs2",
   "192	nvme.path.restored@node-1.cvm",
   "192	nvme.path.restored@node-1.cvm",
   "192	nvme.path.restored@node-1.cvm",
@@ -1750,7 +1750,7 @@ exports[`scenario acceptance > t1-32-steps-both-storage-nics-down: T1 steps: bot
 ]
 `;
 
-exports[`scenario acceptance > t1-33-steps-one-nic-bond: T1 steps: one storage NIC down, one MAC-pinning bond (no interruption) 1`] = `
+exports[`scenario acceptance > t1-33-steps-one-nic-bond: T1 steps: one storage NIC down, one storage vSwitch vs1 with a MAC-pinning bond (no interruption) 1`] = `
 [
   "11	action.fail@node-1.eth2",
   "11	device.failed@node-1.eth2",
@@ -1764,13 +1764,13 @@ exports[`scenario acceptance > t1-33-steps-one-nic-bond: T1 steps: one storage N
 ]
 `;
 
-exports[`scenario acceptance > t1-33-steps-one-nic-dual-fabric: T1 steps: one storage NIC down, two unbonded fabrics (multipath, short stall) 1`] = `
+exports[`scenario acceptance > t1-33-steps-one-nic-dual-fabric: T1 steps: one storage NIC down, two storage vSwitches vs1 and vs2, no bond (multipath, short stall) 1`] = `
 [
   "11	action.fail@node-1.eth2",
   "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
-  "11	net.bond.vlan-stranded@node-1.vs1",
+  "11	net.bond.down@node-1.vs1",
   "15	nvme.path.lost@node-1.cvm",
   "15	nvme.path.lost@node-1.cvm",
   "101	action.recover@node-1.eth2",

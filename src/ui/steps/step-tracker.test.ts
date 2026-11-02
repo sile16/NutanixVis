@@ -67,3 +67,36 @@ describe('step counter past the last stage', () => {
     expect(vm?.milestones.some((m) => m.step > 4)).toBe(true);
   });
 });
+
+describe('failback span', () => {
+  it('the long wait for the sessions to fail back is about four steps, then the counter stops', () => {
+    const { sim, tracker } = setup();
+    sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
+    sim.applyAction({ kind: 'fail', target: 'node-1.eth3' });
+    let restored = false;
+    let restartedAt = -1;
+    let failedBackAt = -1;
+    for (let t = 0; t < 900; t++) {
+      sim.tick(1);
+      const v = tracker.view();
+      const ms = v.vms.get('node-1.vm-1')?.milestones ?? [];
+      if (!restored && ms.some((m) => m.stage === 'resumed')) {
+        sim.applyAction({ kind: 'recover', target: 'node-1.eth2' });
+        sim.applyAction({ kind: 'recover', target: 'node-1.eth3' });
+        restored = true;
+      }
+      if (restartedAt < 0 && ms.some((m) => m.stage === 'services-restarted')) {
+        restartedAt = v.current;
+      }
+      if (failedBackAt < 0 && ms.some((m) => m.stage === 'failed-back')) {
+        failedBackAt = v.current;
+        break;
+      }
+    }
+    expect(restartedAt).toBeGreaterThan(0);
+    expect(failedBackAt - restartedAt).toBe(4);
+    // Once failed back, the counter no longer climbs.
+    sim.tick(600);
+    expect(tracker.view().current).toBe(failedBackAt);
+  });
+});

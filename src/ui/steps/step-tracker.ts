@@ -16,7 +16,7 @@ import type { SimEvent, Simulation, Snapshot } from '../../engine/types';
  * pending (every VM running, no IO queued). It is a pacing unit for the counter, not a statement
  * about real time. Defined here and nowhere else.
  */
-export const STEP_QUANTUM_TICKS = 30;
+export const STEP_QUANTUM_TICKS = 75;
 
 export interface StepSample {
   readonly t: number;
@@ -93,6 +93,7 @@ export class StepTracker {
       return last === undefined || (last.state === 'running' && last.ioPendingS <= 0);
     });
     if (!quiet || this.lastTick - this.boundary < STEP_QUANTUM_TICKS) return;
+    if (this.failedBack()) return;
     const derived = this.derivedAt(this.lastTick);
     if (derived > this.derivedPeak) {
       this.derivedPeak = derived;
@@ -101,6 +102,16 @@ export class StepTracker {
       this.marks.push(this.lastTick);
       this.boundary = this.lastTick;
     }
+  }
+
+  /** The sessions have failed back to the local CVM: the run is over, the counter stops. */
+  private failedBack(): boolean {
+    const events = this.source.eventLog();
+    for (const [id, series] of this.samples) {
+      const v = deriveVmSteps(id, events, series as readonly VmSample[]);
+      if (v.milestones.some((m) => m.stage === 'failed-back' && m.t <= this.lastTick)) return true;
+    }
+    return false;
   }
 
   private derivedAt(t: number): number {

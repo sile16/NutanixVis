@@ -22,6 +22,7 @@ import { trafficStyle } from '../diagram/traffic';
 import { useSim, useSimControls, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import { currentChoice, initialParams, rejectionReason } from './action-params';
+import { isOfferedAction } from './offered-actions';
 
 function formatField(v: ViewField): string {
   if (v === null) return '—';
@@ -177,7 +178,10 @@ function Actions({ target, view }: { target: string; view: DeviceView | LinkView
   const sim = useSim();
   const snapshot = useSnapshot();
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-query when the snapshot changes
-  const specs = useMemo(() => sim.availableActions(target), [sim, target, snapshot.version]);
+  const specs = useMemo(
+    () => sim.availableActions(target).filter(isOfferedAction),
+    [sim, target, snapshot.version],
+  );
   return (
     <Section title="Actions" testId="inspector-actions">
       {specs.length === 0 ? (

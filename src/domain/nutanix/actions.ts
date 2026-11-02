@@ -36,7 +36,7 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
     {
       spec: {
         kind: 'power-off',
-        label: 'Power off',
+        label: 'Hard stop (power off)',
         description: 'Host or CVM: hard power off. VM: guest powered off (no HA restart).',
         appliesTo: (t) =>
           (isKind(t, 'ahv-host', 'cvm') && t.status !== 'failed') ||
@@ -141,7 +141,7 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
     {
       spec: {
         kind: 'cvm.planned-shutdown',
-        label: 'Planned shutdown (upgrade / maintenance)',
+        label: 'Maintenance mode (planned CVM shutdown)',
         description:
           'The upgrade and maintenance path: the cluster grants a shutdown token (one CVM at a time), forwards traffic away and stops services in an orderly way, then powers the CVM off. Its Stargate releases its vDisks first, so the VMs’ IO moves to other Stargates after a brief re-login, not the long pause of an abrupt reboot. The VMs stay on their host. It stays off until a planned start.',
         appliesTo: (t) =>
@@ -167,7 +167,7 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
     {
       spec: {
         kind: 'cvm.planned-start',
-        label: 'Start CVM (after planned shutdown)',
+        label: 'End maintenance (start CVM)',
         description:
           'Power the CVM back on: it boots, Stargate serves again, and its host’s sessions fail back after the stability interval, one vDisk at a time.',
         appliesTo: (t) => isKind(t, 'cvm') && field(t, 'plannedShutdown') === 'off',

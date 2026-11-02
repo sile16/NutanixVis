@@ -11,6 +11,12 @@ import { Button, Select } from '../components/controls';
 import { useSimControls } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 
+/** The scenario name without its "T1" / "T1 steps:" prefix, first letter capitalised. */
+export function displayTitle(title: string): string {
+  const t = title.replace(/^T1 (steps: )?/, '');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
 export const isGuided = (s: ScenarioDef): boolean =>
   s.status === 'active' && s.id.includes('-steps-');
 
@@ -47,7 +53,7 @@ export function ScenarioPanel() {
         <option value="">Free play (use the Inspector)</option>
         {guided.map((s) => (
           <option key={s.id} value={s.id}>
-            {s.title}
+            {displayTitle(s.title)}
           </option>
         ))}
       </Select>

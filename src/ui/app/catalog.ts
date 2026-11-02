@@ -11,7 +11,7 @@ import { buildTopology, type TopologyId, topologies, topologyIds } from '../../t
 import type { Topology } from '../../topologies/schema';
 
 const TITLES: Readonly<Record<TopologyId, string>> = {
-  't1-ahv-flasharray': 'T1 · two storage vSwitches (vs1, vs2), no bond · separate storage networks',
+  't1-ahv-flasharray': 'Two storage vSwitches (vs1, vs2), no bond · separate storage networks',
   't1-lab': 'T1-lab · single-NIC test drive mirror',
   't2-hci-ahv': 'T2 · Nutanix HCI on AHV',
   't3-co-so': 'T3 · Compute-only + storage-only nodes',
@@ -86,7 +86,7 @@ const BONDED_OPTIONS = {
 } as const;
 const bondedEntry: CatalogEntry = {
   id: 't1-bonded-single',
-  title: 'T1 · one storage vSwitch (vs1), bonded NICs · single subnet, MAC pinning',
+  title: 'One storage vSwitch (vs1), bonded NICs · single subnet, MAC pinning',
   hasFlashArray: true,
   layout: absoluteLeafLayout(buildTopology('t1-ahv-flasharray', BONDED_OPTIONS)),
   createSimulation: (versions) =>

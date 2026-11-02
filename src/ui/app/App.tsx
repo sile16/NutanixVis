@@ -18,7 +18,7 @@ import { ImpactStrip } from '../steps/impact-strip';
 import { SimProvider } from '../store/sim-context';
 import { type ThemePref, topologyFromHash, useUi } from '../store/ui-store';
 import { usePlayback } from '../store/use-playback';
-import { catalog, scenarioEntry } from './catalog';
+import { catalog, fullCatalog, scenarioEntry } from './catalog';
 import { loadThemePref, saveThemePref, useResolvedTheme } from './theme';
 import { SimClock, TimeControls } from './time-controls';
 import { VersionSelector } from './version-selector';
@@ -53,7 +53,7 @@ function useTopologyHash(topologyId: string) {
   useEffect(() => {
     const onHash = () => {
       const id = topologyFromHash(window.location.hash);
-      if (id && id !== useUi.getState().topologyId && catalog.some((t) => t.id === id)) {
+      if (id && id !== useUi.getState().topologyId && fullCatalog.some((t) => t.id === id)) {
         setTopology(id);
       }
     };
@@ -113,7 +113,7 @@ function Header({ entry, themePref }: { entry: CatalogEntry; themePref: ThemePre
         onChange={(e) => setTopology(e.target.value)}
         data-testid="topology-select"
       >
-        {catalog.map((t) => (
+        {(catalog.some((t) => t.id === entry.id) ? catalog : [...catalog, entry]).map((t) => (
           <option key={t.id} value={t.id}>
             {t.title}
           </option>
@@ -189,7 +189,7 @@ export function App() {
     () =>
       scenarioId
         ? scenarioEntry(getScenario(scenarioId))
-        : (catalog.find((t) => t.id === topologyId) ?? catalog[0]),
+        : (fullCatalog.find((t) => t.id === topologyId) ?? catalog[0]),
     [scenarioId, topologyId],
   );
   if (!entry) throw new Error('fixture catalog is empty');

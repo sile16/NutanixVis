@@ -11,7 +11,7 @@ import { buildTopology, type TopologyId, topologies, topologyIds } from '../../t
 import type { Topology } from '../../topologies/schema';
 
 const TITLES: Readonly<Record<TopologyId, string>> = {
-  't1-ahv-flasharray': 'T1 · AHV + Everpure FlashArray',
+  't1-ahv-flasharray': 'Two vSwitches, no bond · separate storage networks',
   't1-lab': 'T1-lab · single-NIC test drive mirror',
   't2-hci-ahv': 'T2 · Nutanix HCI on AHV',
   't3-co-so': 'T3 · Compute-only + storage-only nodes',
@@ -74,7 +74,7 @@ const BONDED_OPTIONS = {
 } as const;
 const bondedEntry: CatalogEntry = {
   id: 't1-bonded-single',
-  title: 'T1 · single storage network, bonded NICs',
+  title: 'One vSwitch, single subnet · active/active MAC-pinning bond',
   hasFlashArray: true,
   layout: absoluteLeafLayout(buildTopology('t1-ahv-flasharray', BONDED_OPTIONS)),
   createSimulation: (versions) =>
@@ -88,14 +88,24 @@ const bondedEntry: CatalogEntry = {
     }).sim,
 };
 
-/** Fixture demos (scripted traffic) keep distinct ids and say so in their titles. */
-const demoEntries: CatalogEntry[] = fixtureCatalog.map((e) => ({
+/** Fixture demos (scripted traffic); not offered while the simulator covers two configurations. */
+export const demoEntries: CatalogEntry[] = fixtureCatalog.map((e) => ({
   ...e,
   id: `demo-${e.id}`,
   title: `${e.title} (demo traffic)`,
 }));
 
-export const catalog: readonly CatalogEntry[] = [...realEntries, bondedEntry, ...demoEntries];
+/** Every topology the loader can build, for tests and tooling. */
+export const fullCatalog: readonly CatalogEntry[] = [...realEntries, bondedEntry, ...demoEntries];
+
+/**
+ * What the UI offers: the two storage-network configurations being compared. Other topologies
+ * (T1-lab, HCI, T3) and the demo entries stay buildable through `fullCatalog`.
+ */
+export const catalog: readonly CatalogEntry[] = [
+  ...realEntries.filter((e) => e.id === 't1-ahv-flasharray'),
+  bondedEntry,
+];
 
 /** A guided scenario as a catalog entry: its topology built with the scenario's own options. */
 export function scenarioEntry(def: ScenarioDef): CatalogEntry {

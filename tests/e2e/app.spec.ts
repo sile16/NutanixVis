@@ -76,7 +76,9 @@ test('version selector shows the real matrix and filters FlashArray releases', a
   await expect(fa).toHaveValue('purity-6.11');
 
   // Topologies without an array hide the FlashArray select.
-  await page.getByTestId('topology-select').selectOption('t2-hci-ahv');
+  await page.evaluate(() => {
+    window.location.hash = 'topology=t2-hci-ahv';
+  });
   await expect(page.getByTestId('node-node-1.disk-1')).toBeVisible();
   await expect(fa).toHaveCount(0);
 });

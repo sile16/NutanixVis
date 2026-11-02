@@ -153,22 +153,26 @@ test('traffic filter: toggles hide glow, presets, persists across topology switc
   await expect(zk).toHaveAttribute('title', /Zookeeper/);
   await expect(page.getByTestId('legend-iscsi-nop')).toHaveAttribute('title', /Autopath/);
 
-  await page.getByTestId('topology-select').selectOption('t3-co-so');
+  await page.evaluate(() => {
+    window.location.hash = 'topology=t3-co-so';
+  });
   await step(page, 2);
   await expect(page.getByTestId('legend-zk')).toHaveAttribute('data-visible', 'false');
   await page.getByTestId('traffic-preset-all').click();
 });
 
 test('topology hash: picking writes it, editing it switches', async ({ page }) => {
-  await open(page, 't1-lab');
-  await page.getByTestId('topology-select').selectOption('t2-hci-ahv');
-  await expect(page).toHaveURL(/#topology=t2-hci-ahv$/);
+  await open(page, 't1-ahv-flasharray');
+  // The dropdown offers the two storage-network configurations only.
+  await expect(page.getByTestId('topology-select').locator('option')).toHaveCount(2);
+  await page.getByTestId('topology-select').selectOption('t1-bonded-single');
+  await expect(page).toHaveURL(/#topology=t1-bonded-single$/);
   await page.reload();
-  await expect(page.getByTestId('topology-select')).toHaveValue('t2-hci-ahv');
+  await expect(page.getByTestId('topology-select')).toHaveValue('t1-bonded-single');
   await page.evaluate(() => {
-    window.location.hash = 'topology=t3-co-hci';
+    window.location.hash = 'topology=t1-ahv-flasharray';
   });
-  await expect(page.getByTestId('topology-select')).toHaveValue('t3-co-hci');
+  await expect(page.getByTestId('topology-select')).toHaveValue('t1-ahv-flasharray');
 });
 
 test('reset clears the Explain selection (event numbers restart)', async ({ page }) => {

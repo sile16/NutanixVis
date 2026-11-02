@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { matrix } from '../../domain/versions';
 import { loadSimulation } from '../../loader/simulation';
-import { catalog } from '../app/catalog';
+import { fullCatalog as catalog } from '../app/catalog';
 import { defaultVersions, toVersionSelection } from '../app/versions';
 import { bondMoves, buildImpact } from '../steps/impact';
 import { StepTracker } from '../steps/step-tracker';

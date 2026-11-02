@@ -5,27 +5,41 @@
 import { clsx } from 'clsx';
 import { FastForward, Hand, Pause, Play, StepForward } from 'lucide-react';
 import { Button } from '../components/controls';
-import { useSimControls, useSnapshot } from '../store/sim-context';
+import { useSimControls, useSnapshot, useSteps } from '../store/sim-context';
 import { SPEEDS, useUi } from '../store/ui-store';
-import { formatSimTime } from './format';
 
+/**
+ * The step counter. Time is shown as steps (an ordinal on a relative scale), never as seconds:
+ * 0 while nothing is interrupted, then the highest step any VM's interruption has reached.
+ */
 export function SimClock() {
-  const snapshot = useSnapshot();
+  const steps = useSteps();
+  const stalled = [...steps.vms.values()].filter(
+    (v) => v.stalledSteps > 0 || v.resumeStep === null,
+  );
+  const note =
+    steps.current === 0
+      ? 'steady'
+      : stalled.some((v) => v.resumeStep === null)
+        ? 'VM I/O interrupted'
+        : 'recovering';
   return (
     <output
-      className="rounded-md border border-border bg-panel-2 px-2 py-1 font-mono text-base font-semibold tabular-nums"
+      className="flex min-w-[6.5rem] flex-col rounded-md border border-border bg-panel-2 px-2 py-0.5 leading-tight"
       data-testid="sim-clock"
+      data-step={steps.current}
       aria-live="off"
-      aria-label={`Simulated time ${formatSimTime(snapshot.simTime)}`}
+      aria-label={`Step ${steps.current}, ${note}`}
     >
-      {formatSimTime(snapshot.simTime)}
+      <span className="font-mono text-base font-semibold tabular-nums">Step {steps.current}</span>
+      <span className="text-[10px] text-ink-muted">{note}</span>
     </output>
   );
 }
 
 export function TimeControls() {
   const snapshot = useSnapshot();
-  const { step, fastForward } = useSimControls();
+  const { stepForward, fastForward } = useSimControls();
   const playing = useUi((s) => s.playing);
   const setPlaying = useUi((s) => s.setPlaying);
   const speed = useUi((s) => s.speed);
@@ -38,10 +52,10 @@ export function TimeControls() {
   return (
     <div className="flex items-center gap-1.5" data-testid="time-controls">
       <Button
-        onClick={() => step()}
+        onClick={() => stepForward()}
         disabled={playing}
         data-testid="step"
-        title="Advance one simulated second"
+        title="Advance to the next step"
       >
         <StepForward size={15} aria-hidden="true" />
         Step
@@ -105,12 +119,10 @@ export function TimeControls() {
         onClick={fastForward}
         disabled={playing || next === null}
         data-testid="fast-forward"
-        title={
-          next === null ? 'No pending timer' : `Jump to the next timer at ${formatSimTime(next)}`
-        }
+        title={next === null ? 'Nothing pending' : 'Run until the next scheduled event fires'}
       >
         <FastForward size={15} aria-hidden="true" />
-        {next === null ? 'Next timer' : formatSimTime(next)}
+        Next event
       </Button>
     </div>
   );

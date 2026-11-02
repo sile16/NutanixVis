@@ -13,8 +13,10 @@ import {
   HardDrive,
   History,
   Network,
+  Route,
   Server,
   SquareStack,
+  Waypoints,
 } from 'lucide-react';
 import { EverpureMark } from '../../components/brand';
 import { StatusIcon, StatusPill } from '../../components/status';
@@ -26,6 +28,8 @@ import {
   frameStyle,
   GroupFrame,
   LeafCard,
+  NOTE_TONE,
+  NoteLine,
   nodeAttrs,
   Ports,
 } from './parts';
@@ -152,7 +156,10 @@ export function NicNode({ data, selected }: P) {
   }
   return (
     <LeafCard data={data} selected={selected} className="justify-center px-1">
-      <span className="truncate font-mono text-[10px] font-medium">{data.device.label}</span>
+      <span className="flex min-w-0 flex-col items-center leading-tight">
+        <span className="truncate font-mono text-[10px] font-medium">{data.device.label}</span>
+        <NoteLine note={data.note} />
+      </span>
       {data.utilLabel ? (
         <span className="rounded bg-accent/15 px-0.5 font-mono text-[9px] text-accent-ink">
           {data.utilLabel}
@@ -178,13 +185,18 @@ export function IfaceNode({ data, selected, width }: P) {
       className="nv-node relative flex h-full w-full items-center gap-1 overflow-hidden rounded bg-panel-2 px-1"
       style={frameStyle(device)}
       {...attrs}
-      title={ip ? `${attrs.title} · ${ip}` : attrs.title}
+      title={[attrs.title, ip, data.note?.text].filter(Boolean).join(' · ')}
     >
       <span
         className={clsx('truncate font-mono', (width ?? 100) < 70 ? 'text-[8px]' : 'text-[9px]')}
       >
         {device.label}
         {showIp ? <span className="text-ink-muted"> {ip}</span> : null}
+        {data.note ? (
+          <span className={clsx('ml-1 font-sans', NOTE_TONE[data.note.tone])}>
+            {data.note.text}
+          </span>
+        ) : null}
       </span>
       {typeof vlan === 'number' && device.kind === 'cvm-interface' ? (
         <span className="sr-only">VLAN {vlan}</span>
@@ -204,9 +216,12 @@ export function VswitchNode({ data, selected, width }: P) {
   const label = (width ?? 200) < 110 ? (BOND_MODE_SHORT[mode] ?? full) : full;
   return (
     <LeafCard data={data} selected={selected} className="bg-panel-2">
-      <span className="truncate text-[10px]" title={`${data.device.label} · ${full}`}>
-        <span className="font-semibold">{data.device.label}</span>
-        <span className="text-ink-muted"> · {label}</span>
+      <span className="flex min-w-0 flex-col leading-tight">
+        <span className="truncate text-[10px]" title={`${data.device.label} · ${full}`}>
+          <span className="font-semibold">{data.device.label}</span>
+          <span className="text-ink-muted"> · {label}</span>
+        </span>
+        <NoteLine note={data.note} />
       </span>
     </LeafCard>
   );
@@ -234,6 +249,32 @@ export function DiskNode({ data, selected }: P) {
       </span>
       <Ports ports={data.ports} />
     </div>
+  );
+}
+
+/** Stargate, drawn inside its CVM: the process that serves the vDisks and speaks NVMe/TCP. */
+export function StargateNode({ data, selected }: P) {
+  return (
+    <LeafCard data={data} selected={selected} Icon={Waypoints} className="justify-center">
+      <span className="truncate text-[10px] font-semibold">
+        Stargate
+        {data.device.fields.state !== 'up' ? (
+          <span className="font-mono font-normal text-ink-muted">
+            {' '}
+            · {String(data.device.fields.state)}
+          </span>
+        ) : null}
+      </span>
+    </LeafCard>
+  );
+}
+
+/** The AHV iSCSI redirector (frodo) between the VMs and the CVM. */
+export function RedirectorNode({ data, selected }: P) {
+  return (
+    <LeafCard data={data} selected={selected} Icon={Route} className="justify-center">
+      <span className="truncate text-[10px] font-medium">frodo · iSCSI redirector</span>
+    </LeafCard>
   );
 }
 

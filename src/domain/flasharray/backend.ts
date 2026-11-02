@@ -141,9 +141,14 @@ export class ExternalStorageBackend implements StorageBackend {
     const pathsFor = (eps: readonly EndpointId[]) =>
       eps.flatMap((local) => {
         const vlan = facts.cvmIfaceVlan.get(local);
-        return facts.interfaces
-          .filter((i) => i.service === 'nvme-tcp' && i.vlan === vlan)
-          .map((i) => ({ local, remote: i.id }));
+        return (
+          facts.interfaces
+            // A portal whose port has no cable is not connected (by design): no path to it.
+            .filter(
+              (i) => i.service === 'nvme-tcp' && i.vlan === vlan && facts.linkOfNic.has(i.nic),
+            )
+            .map((i) => ({ local, remote: i.id }))
+        );
       });
     this.nvme = new NvmeTcpInitiator({
       cvm,

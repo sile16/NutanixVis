@@ -5,20 +5,68 @@
  */
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps } from '@xyflow/react';
 import { Unplug } from 'lucide-react';
+import type { IoHop } from '../data-path';
 import type { CableEdge } from '../flow';
 import { DROP_COLOR } from '../traffic';
+
+/** Style of an internal I/O hop by state: the active path is highlighted, the rest is quiet. */
+function hopStyle(state: IoHop['state']): {
+  stroke: string;
+  width: number;
+  dash: string | undefined;
+  opacity: number;
+} {
+  switch (state) {
+    case 'active':
+      return { stroke: 'var(--color-accent)', width: 2.5, dash: undefined, opacity: 1 };
+    case 'stalled':
+      return { stroke: 'var(--color-status-stalled)', width: 2.5, dash: '2 4', opacity: 1 };
+    case 'down':
+      return { stroke: 'var(--color-status-failed)', width: 2, dash: '6 4', opacity: 1 };
+    case 'standby':
+      return { stroke: 'var(--color-cable)', width: 1.5, dash: '3 4', opacity: 0.7 };
+    default:
+      return { stroke: 'var(--color-cable)', width: 1.25, dash: undefined, opacity: 0.55 };
+  }
+}
 
 export function CableEdgeView({ id, data, selected }: EdgeProps<CableEdge>) {
   if (!data) return null;
   const down = data.link.status === 'down';
+  if (data.io) {
+    const h = hopStyle(down ? 'down' : data.io.state);
+    return (
+      <>
+        <BaseEdge
+          id={id}
+          path={data.pathD}
+          interactionWidth={10}
+          className="nv-edge"
+          style={{
+            stroke: selected ? 'var(--color-focus)' : h.stroke,
+            strokeWidth: h.width,
+            strokeDasharray: h.dash,
+            opacity: data.dim ? 0.15 : h.opacity,
+          }}
+        />
+        <path
+          d={data.pathD}
+          fill="none"
+          stroke="none"
+          data-testid={`io-hop-${id}`}
+          data-state={down ? 'down' : data.io.state}
+        />
+      </>
+    );
+  }
   const stroke = selected
     ? 'var(--color-focus)'
     : down
       ? 'var(--color-status-failed)'
-      : data.inPath
+      : data.inPath || data.ioActive
         ? 'var(--color-accent)'
         : 'var(--color-cable)';
-  const width = selected || data.inPath ? 2.5 : 1.5;
+  const width = selected || data.inPath || data.ioActive ? 2.5 : 1.5;
   return (
     <>
       {data.glow ? (

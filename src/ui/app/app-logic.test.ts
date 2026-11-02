@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { VersionMatrix } from '../../domain/versions/profile';
 import { fixtureVersionMatrix } from '../../fixtures/version-matrix';
 import { playbackSchedule } from '../store/playback';
-import { formatSimTime, humanizeKey } from './format';
+import { humanizeKey } from './format';
 import {
   defaultVersions,
   resolveVersions,
@@ -84,14 +84,7 @@ describe('version selector', () => {
   });
 });
 
-describe('formatSimTime', () => {
-  it('formats T+mm:ss and T+h:mm:ss', () => {
-    expect(formatSimTime(0)).toBe('T+00:00');
-    expect(formatSimTime(75)).toBe('T+01:15');
-    expect(formatSimTime(1800)).toBe('T+30:00');
-    expect(formatSimTime(3725)).toBe('T+1:02:05');
-  });
-
+describe('humanizeKey', () => {
   it('humanizes field keys', () => {
     expect(humanizeKey('nvmePathsUp')).toBe('Nvme paths up');
     expect(humanizeKey('bond-mode')).toBe('Bond mode');

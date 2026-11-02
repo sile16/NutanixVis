@@ -111,7 +111,7 @@ test('per-VM path usage: CO VMs on one host show only their own owning CVM', asy
   const usage = page.getByTestId('path-usage');
   await expect(page.getByTestId('path-usage-scope')).toContainText("This VM's own paths");
   // A fresh selection reads the shared 10-tick window, not an empty per-panel buffer.
-  await expect(usage).toContainText('last 10 ticks');
+  await expect(usage).toContainText('recent activity');
   const a = await usage.locator('button').first().textContent();
   await selectDevice(page, 'node-1.vm-2');
   const b = await usage.locator('button').first().textContent();
@@ -186,7 +186,7 @@ test('reset clears the Explain selection (event numbers restart)', async ({ page
   await page.getByRole('button', { name: 'Reset simulation' }).click();
   await step(page, 2);
   await page.getByRole('tab', { name: 'Explain' }).click();
-  await expect(page.getByTestId('explain-panel')).toContainText('Last tick');
+  await expect(page.getByTestId('explain-panel')).toContainText('Latest');
 });
 
 test('forms show the current value; enabling MLAG pairs an unpaired switch', async ({ page }) => {

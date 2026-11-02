@@ -9,20 +9,29 @@ import { Eye, EyeOff, Monitor, Moon, Move, RotateCcw, Sun } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { matrix as versionMatrix } from '../../domain/versions';
 import type { CatalogEntry } from '../../fixtures/catalog';
+import { getScenario } from '../../scenarios';
 import { VendorLogo } from '../components/brand';
 import { Button, Select } from '../components/controls';
 import { Diagram } from '../diagram/diagram';
 import { RightRail } from '../panels/right-rail';
+import { ImpactStrip } from '../steps/impact-strip';
 import { SimProvider } from '../store/sim-context';
 import { type ThemePref, topologyFromHash, useUi } from '../store/ui-store';
 import { usePlayback } from '../store/use-playback';
-import { catalog } from './catalog';
+import { catalog, scenarioEntry } from './catalog';
 import { loadThemePref, saveThemePref, useResolvedTheme } from './theme';
 import { SimClock, TimeControls } from './time-controls';
 import { VersionSelector } from './version-selector';
 import { resolveVersions, toVersionSelection } from './versions';
 
 const matrix = versionMatrix;
+/** Activity windows are named by relative size, not by duration. */
+const ACTIVITY_LABEL: Readonly<Record<number, string>> = {
+  1: 'Latest only',
+  5: 'Short',
+  10: 'Medium',
+  30: 'Long',
+};
 const THEME_NEXT: Readonly<Record<ThemePref, ThemePref>> = {
   system: 'light',
   light: 'dark',
@@ -136,15 +145,15 @@ function Header({ entry, themePref }: { entry: CatalogEntry; themePref: ThemePre
           Packets
         </Button>
         <Select
-          label="Activity"
+          label="Recent activity"
           value={String(activityTicks)}
           onChange={(e) => setActivityTicks(Number(e.target.value))}
           data-testid="activity-window"
-          title="How many recent ticks the cable glow, path highlight and bond shares aggregate"
+          title="How much recent activity the cable glow, path highlight and bond shares aggregate"
         >
           {[1, 5, 10, 30].map((n) => (
             <option key={n} value={n}>
-              {n === 1 ? 'Last tick' : `Last ${n} ticks`}
+              {ACTIVITY_LABEL[n] ?? `Window ${n}`}
             </option>
           ))}
         </Select>
@@ -175,7 +184,14 @@ export function App() {
   useEffect(() => setTheme(loadThemePref()), [setTheme]);
   const theme = useResolvedTheme(themePref);
 
-  const entry = catalog.find((t) => t.id === topologyId) ?? catalog[0];
+  const scenarioId = useUi((s) => s.scenarioId);
+  const entry = useMemo(
+    () =>
+      scenarioId
+        ? scenarioEntry(getScenario(scenarioId))
+        : (catalog.find((t) => t.id === topologyId) ?? catalog[0]),
+    [scenarioId, topologyId],
+  );
   if (!entry) throw new Error('fixture catalog is empty');
   useTopologyHash(entry.id);
   const resolved = resolveVersions(matrix, versions);
@@ -183,7 +199,7 @@ export function App() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: rebuild on topology/version/reset only
   const sim = useMemo(
     () => entry.createSimulation(selection),
-    [entry, selection.nutanix, selection.flasharray, simEpoch],
+    [entry.id, scenarioId, selection.nutanix, selection.flasharray, simEpoch],
   );
 
   return (
@@ -192,8 +208,15 @@ export function App() {
       <div className="flex h-full flex-col">
         <Header entry={entry} themePref={themePref} />
         <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_24rem]">
-          <section aria-label="Topology diagram" className="min-h-0 min-w-0">
-            <Diagram key={`${entry.id}:${simEpoch}`} baseLayout={entry.layout} colorMode={theme} />
+          <section aria-label="Topology diagram" className="flex min-h-0 min-w-0 flex-col">
+            <div className="min-h-0 flex-1">
+              <Diagram
+                key={`${entry.id}:${simEpoch}`}
+                baseLayout={entry.layout}
+                colorMode={theme}
+              />
+            </div>
+            {entry.hasFlashArray ? <ImpactStrip /> : null}
           </section>
           <aside aria-label="Details" className="min-h-0 border-l border-border bg-panel">
             <RightRail />

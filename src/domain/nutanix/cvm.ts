@@ -23,7 +23,7 @@ import type { KnownCitationId } from '../citations';
 import type { Ctx, CvmComponent, StorageBackend } from '../contracts';
 import type { Profile } from '../versions/profile';
 import type { CvmFacts } from './facts';
-import { Hades } from './hades';
+import { HADES_STOP_LAG, Hades } from './hades';
 import type { Registry } from './registry';
 import { AcropolisWorker, CassandraNode, ZkMember } from './services';
 import { Stargate } from './stargate';
@@ -68,6 +68,11 @@ export class Cvm implements Device<Profile> {
   private rebootRequested = false;
   private stargateCmd: 'stop' | 'start' | 'crash' | 'hang' | 'resume' | null = null;
   private hadesWake: TimerHandle | null = null;
+  /**
+   * Hades has put the node in maintenance mode and genesis has not yet stopped its services:
+   * the tick they stop (null otherwise). See `HADES_STOP_LAG` in `./hades.ts`.
+   */
+  private servicesStopAt: number | null = null;
   private stopCause: 'clean-stop' | 'silent' = 'silent';
   /** `cvm.network-flap`: requested blackout length, and when the current one ends. */
   private flapRequest: number | null = null;
@@ -123,7 +128,7 @@ export class Cvm implements Device<Profile> {
 
   /** Services are running: powered on, booted, and not in Hades maintenance mode. */
   running(): boolean {
-    return this.power === 'running' && this.hades.state === 'ok';
+    return this.power === 'running' && (this.hades.state === 'ok' || this.servicesStopAt !== null);
   }
 
   stargateServing(): boolean {
@@ -369,7 +374,7 @@ export class Cvm implements Device<Profile> {
         severity: 'error',
         deviceId: this.id,
         code: 'stargate.hung-op-fail-fast',
-        text: `${this.label}: Stargate operations on ${peer}'s metadata hung for ${H.value} s, so Stargate failed fast; its connections are reset and its vDisks are free. Its self-monitor restarts it, but its operations hang again until ${peer} is marked Degraded or reachable again. Prism alert A1030 "Stargate Temporarily Down"`,
+        text: `${this.label}: Stargate operations on ${peer}'s metadata hung too long, so Stargate failed fast; its connections are reset and its vDisks are free. Its self-monitor restarts it, but its operations hang again until ${peer} is marked Degraded or reachable again. Prism alert A1030 "Stargate Temporarily Down"`,
         causeIds: this.reg.causes.get(hang.cvm) ?? [],
         cite: [...H.cite, 'ntnx-pe-alerts-7.0-cvm'],
         confidence: H.confidence,
@@ -398,7 +403,7 @@ export class Cvm implements Device<Profile> {
         severity: 'warn',
         deviceId: this.id,
         code: 'cvm.network.blackout',
-        text: `${this.label}: its inter-CVM interface stops answering for ${this.flapUntil - ctx.now} s (network flap); the CVM keeps running`,
+        text: `${this.label}: its inter-CVM interface stops answering (network flap); the CVM keeps running`,
         causeIds: this.reg.causes.get(this.id) ?? [],
         cite: ['ntnx-community-dnd'],
         confidence: 'assumption',
@@ -421,7 +426,7 @@ export class Cvm implements Device<Profile> {
         severity: 'warn',
         deviceId: this.id,
         code: 'stargate.zk-session-lost',
-        text: `${this.label}: cut off from its peers for ${ctx.now - this.flapSince} s, its Stargate lost its Zookeeper session and dropped out; its sessions are reset and move to other Stargates. Prism alert A1030 "Stargate Temporarily Down"`,
+        text: `${this.label}: cut off from its peers too long, its Stargate lost its Zookeeper session and dropped out; its sessions are reset and move to other Stargates. Prism alert A1030 "Stargate Temporarily Down"`,
         causeIds: this.reg.causes.get(this.id) ?? [],
         cite: [...D.cite, 'ntnx-pe-alerts-7.0-cluster'],
         confidence: 'assumption',
@@ -542,6 +547,7 @@ export class Cvm implements Device<Profile> {
     this.power = 'off';
     this.bootTimer = null;
     this.hadesWake = null;
+    this.servicesStopAt = null;
     this.hades.reset();
   }
 
@@ -622,7 +628,7 @@ export class Cvm implements Device<Profile> {
    */
   private active(): readonly CvmComponent[] {
     if (this.power !== 'running') return [];
-    if (this.hades.state !== 'ok') return [this.backend];
+    if (this.hades.state !== 'ok' && this.servicesStopAt === null) return [this.backend];
     return this.stargate.processUp
       ? this.components
       : this.components.filter((c) => c !== this.backend);
@@ -654,6 +660,7 @@ export class Cvm implements Device<Profile> {
     this.bootTimer = null;
     if (this.hadesWake) ctx.timers.cancel(this.hadesWake);
     this.hadesWake = null;
+    this.servicesStopAt = null;
     this.hades.reset();
     this.power = 'off';
     if (withHost) this.setEndpoints(ctx, false);
@@ -704,7 +711,7 @@ export class Cvm implements Device<Profile> {
       severity: 'info',
       deviceId: this.id,
       code: 'cvm.planned-shutdown.start',
-      text: `${this.label}: planned shutdown: the cluster grants the shutdown token (one CVM at a time), forwards its traffic away and stops its services in an orderly way; it powers off in about ${W.value} s`,
+      text: `${this.label}: planned shutdown: the cluster grants the shutdown token (one CVM at a time), forwards its traffic away and stops its services in an orderly way; it then powers off`,
       causeIds: this.reg.causes.get(this.id) ?? [],
       cite,
       confidence: W.confidence,
@@ -746,25 +753,34 @@ export class Cvm implements Device<Profile> {
   // ── Hades (T1) ──────────────────────────────────────────────────────────
 
   private stepHades(ctx: Ctx): void {
+    if (this.servicesStopAt !== null) {
+      // Maintenance mode is on and genesis is stopping the services: the volume monitor has
+      // nothing more to decide until they have stopped.
+      if (ctx.now >= this.servicesStopAt) this.stopServices(ctx);
+      else return;
+    }
     const step = this.hades.step(ctx, this.hades.state !== 'ok' || this.stargate.processUp);
     if (step === 'enter-maintenance') this.enterMaintenance(ctx);
     else if (step === 'volumes-healthy') this.exitMaintenance(ctx);
     this.wakeHades(ctx);
   }
 
-  /** Hades: service volumes lost past the threshold → maintenance mode, services stop. */
+  /**
+   * Hades: service volumes lost past the threshold → maintenance mode (this tick), then genesis
+   * stops the services (`HADES_STOP_LAG` later; `stopServices`). Two stages of the failure
+   * sequence, in this order (steps view, `../steps`).
+   */
   private enterMaintenance(ctx: Ctx): void {
     const H = ctx.profile.hades;
-    // Each node decides on its own service volumes: there is no cluster-wide admission limit, so
-    // a whole-array loss puts every node in maintenance and no Stargate is left to serve
-    // (`assumption`, SPEC §6.4 "T1 full array loss").
-    this.stopCause = 'clean-stop';
-    this.noteDown('orderly', ctx.now);
-    this.failComponents(ctx);
-    this.stargate.setProcess(false);
-    // The CVM's NVMe initiator keeps trying to reach the array (its controllers reconnect).
-    this.backend.onRecover?.(ctx);
     this.hades.enterMaintenance(ctx.now);
+    this.servicesStopAt = ctx.now + HADES_STOP_LAG;
+    // Wakes the engine on the stop tick ("fast-forward to next timer" must not skip it).
+    ctx.timers.set(
+      `${this.id} hades services stop`,
+      HADES_STOP_LAG,
+      { cite: H.maintenanceOnStorageError.cite, confidence: 'assumption' },
+      () => {},
+    );
     const cite: KnownCitationId[] = [
       'ntnx-cmdref-aos-7.6',
       'ntnx-bible-8c',
@@ -782,6 +798,31 @@ export class Cvm implements Device<Profile> {
   }
 
   /**
+   * Genesis stops the node's services and its Stargate process exits, resetting its connections:
+   * the VMs' sessions are redirected at once. Each node decides on its own service volumes: there
+   * is no cluster-wide admission limit, so a whole-array loss puts every node in maintenance and
+   * no Stargate is left to serve (`assumption`, SPEC §6.4 "T1 full array loss").
+   */
+  private stopServices(ctx: Ctx): void {
+    this.servicesStopAt = null;
+    this.stopCause = 'clean-stop';
+    this.noteDown('orderly', ctx.now);
+    this.failComponents(ctx);
+    this.stargate.setProcess(false);
+    // The CVM's NVMe initiator keeps trying to reach the array (its controllers reconnect).
+    this.backend.onRecover?.(ctx);
+    ctx.emit({
+      severity: 'error',
+      deviceId: this.id,
+      code: 'hades.services.stopped',
+      text: `${this.label}: genesis stopped the node's services; its Stargate process exited and its connections were reset`,
+      causeIds: this.reg.causes.get(this.id) ?? [],
+      cite: ['ntnx-cmdref-aos-7.6', 'ntnx-bible-8c'],
+      confidence: 'lab-observed',
+    });
+  }
+
+  /**
    * A volume check found the service-volume mounts healthy again: Hades takes the node out of
    * maintenance and the services restart (`hades.servicesRestartS`). The redirector fails back
    * only after its stable window.
@@ -794,7 +835,7 @@ export class Cvm implements Device<Profile> {
       severity: 'info',
       deviceId: this.id,
       code: 'hades.maintenance.exit',
-      text: `${this.label}: the service-volume mounts are healthy again at Hades' ${H.value} s volume check; the node leaves maintenance mode and its services restart (about ${R.value} s)`,
+      text: `${this.label}: the service-volume mounts are healthy again at Hades' ${H.value} s volume check; the node leaves maintenance mode and its services restart`,
       causeIds: [],
       cite: [...new Set([...H.cite, ...R.cite])],
       confidence: R.confidence,
@@ -895,7 +936,7 @@ export class Cvm implements Device<Profile> {
       severity: 'warn',
       deviceId: this.id,
       code: 'stargate.crashed',
-      text: `${this.label}: the Stargate process ${why}. The CVM resets its connections, so initiators log in elsewhere at once and its vDisks are free for peers; its self-monitor restarts it in about ${R.value} s. Prism alert A1030 "Stargate Temporarily Down"`,
+      text: `${this.label}: the Stargate process ${why}. The CVM resets its connections, so initiators log in elsewhere at once and its vDisks are free for peers; its self-monitor restarts it. Prism alert A1030 "Stargate Temporarily Down"`,
       causeIds,
       cite: [...R.cite, 'ntnx-pe-alerts-7.0-cvm'],
       confidence: R.confidence,

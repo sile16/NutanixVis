@@ -33,6 +33,7 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `ownerCvm` | string \| null | CVM whose Stargate serves its vDisks: the local CVM normally, a remote one after a redirect, and always remote on CO nodes. |
 | `ioPaths` | JSON string[] | T1 only: NVMe path ids that carried this VM's vDisk IO during the last tick. |
 | `ioUplinks` | JSON string[] | Physical NICs, on any host, that carried this VM's storage IO (iSCSI or NVMe/TCP) during the last tick. It is empty for HCI VMs served locally over `virbr0`. |
+| `ioChain` | JSON object | The VM's IO path as ordered hops, for drawing: `{vm, stalled, remote, selector, hops:[{role, ids, label, via?}]}`. Roles in order: `vm`, `redirector` (the AHV iSCSI redirector, Frodo; `via` lists the host NICs the iSCSI leg crosses when the CVM is remote), `cvm`, `stargate` (inside the CVM; the SPDK NVMe/TCP initiator on T1), `nic` (the CVM's storage NICs that carried IO), `array-port` (FlashArray interfaces reached). `selector` is the path selector among optimized paths (T1, e.g. `queue-depth`). HCI VMs end at `stargate`. `src/domain/steps` exports `ioChainOf`. |
 | `pathLossForceShutdownS` | number \| null | Optional. The per-VM force-shutdown timeout on storage path loss (T1); `null` means unset (retry forever). |
 
 ### `cvm`
@@ -127,6 +128,7 @@ The engine reports AHV virtual switches with view `kind: 'bond'`; the UI and sce
 | `service` | `nvme-tcp` \| `mgmt` \| `replication` | Schema value. |
 | `enabled` | boolean | Admin state (`fa.interface.disable` / `enable`). |
 | `oper` | `up` \| `down` | `down` if disabled, if its port has no carrier, or if its controller is not `up`. |
+| `cabled` | boolean | `false` when its port has no cable (the topology option `array-data-ports: first-only`): not connected by design, status `offline`, no NVMe path to it. |
 
 ### `disk`
 

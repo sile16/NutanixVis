@@ -27,7 +27,19 @@ const DISK = { w: 40, h: 40 };
 const NIC = { w: 60, h: 40 };
 const CVM_IF = { w: 80, h: 20 };
 const HOST_IF = { w: 80, h: 20 };
+/**
+ * Data-path bands (hosts with an external array): the AHV iSCSI redirector sits between the VMs and
+ * the CVM, and Stargate sits above the CVM's interfaces, so I/O reads top to bottom: VM, redirector,
+ * Stargate, interface, vswitch, NIC. Those two boxes are derived views, not topology devices, so the
+ * layout only reserves their rows (`src/ui/diagram/data-path.ts` places them).
+ */
+export const DATA_PATH_BAND = {
+  redirector: { h: 20 },
+  stargate: { h: 20, gap: 20 },
+} as const;
 const CVM_H = HEADER + CVM_IF.h + PAD;
+const cvmHeight = (dataPath: boolean | undefined) =>
+  CVM_H + (dataPath ? DATA_PATH_BAND.stargate.h + DATA_PATH_BAND.stargate.gap : 0);
 const VSWITCH_H = 40;
 const NIC_GROUP_GAP = 40;
 const SWITCH = { w: 240, h: 60 };
@@ -46,6 +58,8 @@ export interface HostBoxSpec {
   id: string;
   vms: readonly string[];
   cvm?: { id: string; ifaces: readonly string[] };
+  /** Reserve the redirector and Stargate rows (see `DATA_PATH_BAND`). */
+  dataPath?: boolean;
   disks: readonly string[];
   /** Host IPs (`host-interface`), drawn in a row just above their vswitch. */
   hostIfaces?: readonly { id: string; vswitch: string }[];
@@ -83,7 +97,8 @@ function hostMetrics(h: HostBoxSpec) {
   );
   let top = HEADER;
   if (h.vms.length) top += VM.h + GAP;
-  if (h.cvm) top += CVM_H + GAP;
+  if (h.dataPath && h.vms.length && h.cvm) top += DATA_PATH_BAND.redirector.h + GAP;
+  if (h.cvm) top += cvmHeight(h.dataPath) + GAP;
   if (h.disks.length) top += DISK.h + GAP;
   if (h.hostIfaces?.length) top += HOST_IF.h + GAP;
   const bottom = VSWITCH_H + GAP + NIC.h;
@@ -101,14 +116,17 @@ function layoutHost(h: HostBoxSpec, w: number, hh: number, nicRow: number, out: 
     });
     y += VM.h + GAP;
   }
+  if (h.dataPath && h.vms.length && h.cvm) y += DATA_PATH_BAND.redirector.h + GAP;
   if (h.cvm) {
     const cw = cvmWidth(h.cvm.ifaces.length);
-    out[h.cvm.id] = { x: center(cw), y, w: cw, h: CVM_H };
+    const ch = cvmHeight(h.dataPath);
+    out[h.cvm.id] = { x: center(cw), y, w: cw, h: ch };
     const ix0 = snapDown((cw - rowWidth(h.cvm.ifaces.length, CVM_IF.w)) / 2);
+    const iy = ch - PAD - CVM_IF.h;
     h.cvm.ifaces.forEach((id, i) => {
-      out[id] = { x: ix0 + i * (CVM_IF.w + GAP), y: HEADER, ...CVM_IF };
+      out[id] = { x: ix0 + i * (CVM_IF.w + GAP), y: iy, ...CVM_IF };
     });
-    y += CVM_H + GAP;
+    y += ch + GAP;
   }
   if (h.disks.length) {
     const x0 = center(rowWidth(h.disks.length, DISK.w));

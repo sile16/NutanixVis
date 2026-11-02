@@ -47,6 +47,8 @@ export interface VersionChoice {
 
 export interface UiState {
   topologyId: string;
+  /** Guided scenario loaded into the diagram (its topology and options), or null for free play. */
+  scenarioId: string | null;
   versions: VersionChoice;
   /** Bumped to rebuild the simulation (reset). */
   simEpoch: number;
@@ -82,6 +84,7 @@ export interface UiState {
   noteActionQueued(): void;
   noteTicked(): void;
   setTopology(id: string): void;
+  loadScenario(id: string | null, topology?: string): void;
   setVersions(v: VersionChoice): void;
   resetSim(): void;
   togglePackets(): void;
@@ -123,6 +126,7 @@ const freshRun = (s: UiState) => ({
 
 export const useUi = create<UiState>()((set) => ({
   topologyId: initialTopology(),
+  scenarioId: null,
   versions: { nutanix: '', flasharray: undefined },
   simEpoch: 0,
   selection: null,
@@ -156,6 +160,16 @@ export const useUi = create<UiState>()((set) => ({
     set((s) => ({
       ...freshRun(s),
       topologyId,
+      scenarioId: null,
+      selection: null,
+      bondUtilHost: null,
+      playing: false,
+    })),
+  loadScenario: (scenarioId, topology) =>
+    set((s) => ({
+      ...freshRun(s),
+      scenarioId,
+      topologyId: topology ?? s.topologyId,
       selection: null,
       bondUtilHost: null,
       playing: false,

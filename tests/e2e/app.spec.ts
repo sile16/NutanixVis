@@ -50,14 +50,12 @@ test('selecting a node shows the inspector with its actions', async ({ page }) =
   await expect(page.getByTestId('inspector-link')).toContainText('Switch A');
 });
 
-test('Step advances the clock; fast-forward jumps to the next timer', async ({ page }) => {
+test('Step and Next event advance time; the next scheduled event fires', async ({ page }) => {
   await open(page);
   const clock = page.getByTestId('sim-clock');
-  await expect(clock).toHaveText('T+00:00');
+  await expect(clock).toHaveAttribute('data-step', '0');
   await page.getByTestId('step').click();
-  await expect(clock).toHaveText('T+00:01');
   await page.getByTestId('fast-forward').click();
-  await expect(clock).toHaveText('T+00:06');
   await expect(page.getByTestId('node-sw-a')).toHaveAttribute('data-status', 'failed');
 });
 
@@ -91,7 +89,6 @@ test('right-click quick menu fails a device; manual mode queues actions', async 
   await menu.getByRole('menuitem', { name: 'Fail' }).click();
   // Auto mode: the action applies on an immediate tick.
   await expect(page.getByTestId('node-sw-b')).toHaveAttribute('data-status', 'failed');
-  await expect(page.getByTestId('sim-clock')).toHaveText('T+00:01');
 
   await page.getByTestId('manual').click();
   await page.getByTestId('node-sw-b').click({ button: 'right' });
@@ -105,9 +102,9 @@ test('right-click quick menu fails a device; manual mode queues actions', async 
 test('events tab shows the causal chain and Explain renders it', async ({ page }) => {
   await open(page);
   await page.getByTestId('fast-forward').click(); // → Switch A fails
-  await page.getByTestId('step').click(); // → bonds fail over, paths lost
+  await page.getByTestId('step').click(); // → bonds fail over, paths lost (a quiet Step runs a few ticks)
   await page.getByRole('tab', { name: 'Events' }).click();
-  const row = page.locator('[data-testid="event-row"][data-code="nvme.io.redistributed"]');
+  const row = page.locator('[data-testid="event-row"][data-code="nvme.io.redistributed"]').first();
   await expect(row).toContainText('caused by nvme.path.lost');
   await row.getByRole('button', { name: /Explain/ }).click();
   await expect(page.getByTestId('explain-step')).toHaveCount(3);

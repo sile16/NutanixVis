@@ -20,6 +20,7 @@ import { useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import { glowOpacity } from './activity-window';
 import { ContextMenu } from './context-menu';
+import { buildDataPath, hopFlows, hopLinks, isIoLink, placeDataPath } from './data-path';
 import { effectiveDevices } from './effective-status';
 import { buildEdges, buildNodes, type CableEdge, type DeviceNode } from './flow';
 import { computeLinkGeometries, type Point } from './geometry';
@@ -42,12 +43,15 @@ import { edgeTypes, nodeTypes } from './types';
 import { relocateFloatingIps, relocateVms } from './vm-placement';
 
 /** Layout depends only on structure (ids, parents, kinds, cable ends), not on per-tick state. */
-function structureKey(devices: Readonly<Record<string, DeviceView>>, s: Snapshot): string {
+function structureKey(
+  devices: Readonly<Record<string, DeviceView>>,
+  links: Snapshot['links'],
+): string {
   const d = Object.values(devices)
     .map((x) => `${x.id}<${x.parent ?? ''}:${x.kind}`)
     .sort()
     .join('|');
-  const l = Object.values(s.links)
+  const l = Object.values(links)
     .map((x) => `${x.id}=${x.a.device}#${x.a.port}~${x.b.device}#${x.b.port}`)
     .sort()
     .join('|');
@@ -84,11 +88,18 @@ export function Diagram({
 
   // Draw VMs under the host they currently run on (AHV HA restarts move them), and the array's
   // floating management IP inside the controller that currently holds it.
+  // The I/O data path: Stargate and the redirector are derived boxes; internal hops become links.
+  const model = useMemo(() => buildDataPath(snapshot), [snapshot]);
+  const allLinks = useMemo(
+    () => ({ ...snapshot.links, ...hopLinks(model) }),
+    [snapshot.links, model],
+  );
   const placed = useMemo(() => {
-    const vms = relocateVms(snapshot.devices, layoutMap);
+    const base = placeDataPath(model, snapshot.devices, layoutMap);
+    const vms = relocateVms(base.devices, base.layout);
     const vips = relocateFloatingIps(vms.devices, vms.layout);
     return { ...vms, devices: vips.devices, layout: vips.layout };
-  }, [snapshot.devices, layoutMap]);
+  }, [model, snapshot.devices, layoutMap]);
   // What is drawn: a failed device's children are drawn failed too.
   const shown = useMemo(() => effectiveDevices(placed.devices), [placed.devices]);
   const restartedFrom = useMemo(() => {
@@ -97,11 +108,11 @@ export function Diagram({
     return out;
   }, [placed.movedFrom, snapshot.devices]);
 
-  const key = structureKey(placed.devices, snapshot);
+  const key = structureKey(placed.devices, allLinks);
   // biome-ignore lint/correctness/useExhaustiveDependencies: recompute on structure, not per tick
   const { dl, geometries } = useMemo(() => {
-    const layout = computeLayout(placed.devices, snapshot.links, placed.layout);
-    const ends = Object.values(snapshot.links).flatMap((l) => {
+    const layout = computeLayout(placed.devices, allLinks, placed.layout);
+    const ends = Object.values(allLinks).flatMap((l) => {
       const a = layout.anchors.get(portKey(l.a.device, l.a.port));
       const b = layout.anchors.get(portKey(l.b.device, l.b.port));
       return a && b ? [{ id: l.id, a, b }] : [];
@@ -113,7 +124,12 @@ export function Diagram({
   // Activity views aggregate a rolling window so multipath round-robin doesn't flicker.
   const activityTicks = useUi((s) => s.activityTicks);
   const win = useActivityWindow(activityTicks);
-  const flows = useLinkFlows(activityTicks);
+  const traceFlows = useLinkFlows(activityTicks);
+  const flows = useMemo(
+    () => [...traceFlows, ...hopFlows(model, (c) => isCategoryVisible(traffic, c))],
+    [traceFlows, model, traffic],
+  );
+  const hops = useMemo(() => new Map(model.hops.map((h) => [h.id, h])), [model]);
   const pathUsage = useMemo(
     () =>
       selection?.type === 'device'
@@ -136,8 +152,7 @@ export function Diagram({
     if (!bondUtilHost) return out;
     for (const bond of bondUtilization(win.snapshot, bondUtilHost)) {
       for (const m of bond.members) {
-        const perTick = Math.round(m.total / win.ticks);
-        if (m.linkId && m.status === 'up') out.set(m.linkId, `${bond.label} ${perTick}/tick`);
+        if (m.linkId && m.status === 'up') out.set(m.linkId, bond.label);
       }
     }
     return out;
@@ -165,30 +180,33 @@ export function Diagram({
         utilLabels,
         draggable: layoutEdit,
         restartedFrom,
+        notes: model.notes,
       }),
-    [shown, dl, selectedId, pathUsage, utilLabels, layoutEdit, restartedFrom],
+    [shown, dl, selectedId, pathUsage, utilLabels, layoutEdit, restartedFrom, model],
   );
   const edges = useMemo<CableEdge[]>(
     () =>
-      buildEdges(snapshot.links, shown, geometries, {
+      buildEdges(allLinks, shown, geometries, {
         selectedId,
         pathUsage,
         glow,
         labels: edgeLabels,
+        hops,
+        activeLinks: model.activeLinks,
       }),
-    [snapshot.links, shown, geometries, selectedId, pathUsage, glow, edgeLabels],
+    [allLinks, shown, geometries, selectedId, pathUsage, glow, edgeLabels, hops, model],
   );
 
   const replayCtx = useMemo<ReplayContext>(
     () => ({
-      links: snapshot.links,
+      links: allLinks,
       geometry: geometries,
       devicePoint: (id: string): Point | undefined => {
         const r = dl.placed.get(id)?.rect;
         return r ? { x: r.x + r.w / 2, y: r.y + r.h / 2 } : undefined;
       },
     }),
-    [snapshot.links, geometries, dl],
+    [allLinks, geometries, dl],
   );
 
   // Traffic filter (legend): hidden categories are neither animated nor glowing.
@@ -201,9 +219,9 @@ export function Diagram({
       previous: new Set(
         (prev?.traces ?? []).filter((t) => t.result === 'dropped').map((t) => dropKey(t)),
       ),
-      isDead: deadChecker(shown, snapshot.links),
+      isDead: deadChecker(shown, allLinks),
     }),
-    [prev, shown, snapshot.links],
+    [prev, shown, allLinks],
   );
   const legendCategories = useMemo(
     () => [...new Set(win.snapshot.traces.map((t) => t.category))].sort(categoryOrder),
@@ -228,7 +246,8 @@ export function Diagram({
   const onEdgesChange = useCallback(
     (changes: EdgeChange<CableEdge>[]) => {
       for (const c of changes)
-        if (c.type === 'select' && c.selected) select({ type: 'link', id: c.id });
+        if (c.type === 'select' && c.selected && !isIoLink(c.id))
+          select({ type: 'link', id: c.id });
     },
     [select],
   );
@@ -244,7 +263,7 @@ export function Diagram({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={(_, n) => select({ type: 'device', id: n.id })}
-        onEdgeClick={(_, e) => select({ type: 'link', id: e.id })}
+        onEdgeClick={(_, e) => (isIoLink(e.id) ? select(null) : select({ type: 'link', id: e.id }))}
         onPaneClick={() => select(null)}
         onNodeContextMenu={(ev, n) => {
           ev.preventDefault();
@@ -252,6 +271,7 @@ export function Diagram({
         }}
         onEdgeContextMenu={(ev, e) => {
           ev.preventDefault();
+          if (isIoLink(e.id)) return;
           openContextMenu({ target: { type: 'link', id: e.id }, x: ev.clientX, y: ev.clientY });
         }}
         onEdgeMouseEnter={(ev, e) => setHoveredLink({ id: e.id, x: ev.clientX, y: ev.clientY })}
@@ -289,6 +309,7 @@ export function Diagram({
             dropped={anyDropped}
             animated={animate}
             reducedMotion={reducedMotion}
+            hasPath={model.enabled}
           />
         </Panel>
         {layoutEdit ? (
@@ -297,7 +318,7 @@ export function Diagram({
           </Panel>
         ) : null}
       </ReactFlow>
-      <LinkHoverCard history={history} />
+      <LinkHoverCard history={history} hops={hops} />
       <ContextMenu />
     </div>
   );

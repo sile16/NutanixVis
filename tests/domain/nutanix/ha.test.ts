@@ -5,6 +5,7 @@
  * is checked at its boundary (fires at T, not at T−1). T is the tick the failure applies.
  */
 import { describe, expect, it } from 'vitest';
+import { HADES_STOP_LAG } from '../../../src/domain/nutanix/hades';
 import { current as P } from '../../../src/domain/versions/profiles/current';
 import { harness, instances, vmHost, vmIds, vmState } from './harness';
 
@@ -250,6 +251,9 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
       T + HADES.mountFailAfterS.value + HADES.externalStorageErrorThresholdS.value,
     );
     expect(h.f('node-1.cvm', 'hades')).toBe('maintenance');
+    // Genesis stops the services one stage after maintenance mode begins (steps view order).
+    expect(h.f('node-1.cvm', 'stargate')).toBe('up');
+    h.run(HADES_STOP_LAG);
     expect(h.f('node-1.cvm', 'stargate')).toBe('down');
     // Redirected within seconds; the remote Stargate takes the vDisk over at once.
     h.run(10 + P.externalStorage.vdiskHandoverS.value);

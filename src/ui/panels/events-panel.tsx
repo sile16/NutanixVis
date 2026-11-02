@@ -2,9 +2,9 @@
 import { BookOpen, CornerDownRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { Severity } from '../../engine/types';
-import { formatSimTime } from '../app/format';
 import { Select } from '../components/controls';
 import { isDescendant } from '../diagram/path-usage';
+import { StepTag } from '../steps/step-tag';
 import { useSim, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import { eventId, filterEvents, indexEvents, SEVERITIES } from './events-model';
@@ -82,7 +82,7 @@ export function EventsPanel() {
                 data-code={e.code}
               >
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-ink-muted">{formatSimTime(e.t)}</span>
+                  <StepTag t={e.t} />
                   <SeverityTag severity={e.severity} />
                   {e.deviceId ? (
                     <button
@@ -112,7 +112,7 @@ export function EventsPanel() {
                     className="mt-0.5 flex items-center gap-1 text-left text-[11px] text-ink-muted hover:text-ink focus-visible:outline-2 focus-visible:outline-focus"
                   >
                     <CornerDownRight size={11} aria-hidden="true" />
-                    caused by <span className="font-mono">{c.code}</span> at {formatSimTime(c.t)}
+                    caused by <span className="font-mono">{c.code}</span> at <StepTag t={c.t} />
                   </button>
                 ))}
               </li>

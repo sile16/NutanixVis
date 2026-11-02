@@ -5,6 +5,7 @@
  */
 import { type Edge, type Node, type NodeHandle, Position } from '@xyflow/react';
 import type { LinkView } from '../../engine/types';
+import type { IoHop, Note } from './data-path';
 import { type EffectiveDevice, effectiveLinkStatus } from './effective-status';
 import type { LinkGeometry, Point, Side } from './geometry';
 import { type DiagramLayout, groupFrame } from './layout';
@@ -21,6 +22,8 @@ export type NodeKind =
   | 'iface'
   | 'vswitch'
   | 'disk'
+  | 'stargate'
+  | 'redirector'
   | 'generic';
 
 const KIND_TO_TYPE: Readonly<Record<string, NodeKind>> = {
@@ -38,6 +41,9 @@ const KIND_TO_TYPE: Readonly<Record<string, NodeKind>> = {
   // The engine's network view names a host virtual switch `bond` (docs/view-fields.md: `vswitch`).
   bond: 'vswitch',
   disk: 'disk',
+  // Derived by `data-path.ts` (not topology devices).
+  stargate: 'stargate',
+  redirector: 'redirector',
 };
 
 export const nodeTypeFor = (kind: string): NodeKind => KIND_TO_TYPE[kind] ?? 'generic';
@@ -62,6 +68,8 @@ export type DeviceNodeData = {
   inPath: boolean;
   /** Bond-utilization overlay text for NICs (e.g. "50%"). */
   utilLabel: string | null;
+  /** Data-path note under the card: bond member role, array port without a path. */
+  note: Note | null;
 };
 export type DeviceNode = Node<DeviceNodeData, NodeKind>;
 
@@ -77,6 +85,10 @@ export type CableEdgeData = {
   dim: boolean;
   inPath: boolean;
   label: string | null;
+  /** An internal hop of the I/O data path (not a physical cable): its state and reason. */
+  io: IoHop | null;
+  /** A physical cable that carries I/O on the active data path. */
+  ioActive: boolean;
 };
 export type CableEdge = Edge<CableEdgeData, 'cable'>;
 
@@ -120,6 +132,8 @@ export interface NodeBuildOptions {
   readonly draggable: boolean;
   /** VM id → label of the host AHV HA restarted it away from. */
   readonly restartedFrom?: ReadonlyMap<string, string>;
+  /** Data-path notes by device id. */
+  readonly notes?: ReadonlyMap<string, Note>;
 }
 
 export function buildNodes(
@@ -172,6 +186,7 @@ export function buildNodes(
         dim: opts.pathUsage !== null && !inPath && !placed.isGroup,
         inPath: inPath && opts.pathUsage?.vmId !== id,
         utilLabel: opts.utilLabels.get(id) ?? null,
+        note: opts.notes?.get(id) ?? null,
       },
     };
     if (placed.parent) node.parentId = placed.parent;
@@ -186,6 +201,10 @@ export interface EdgeBuildOptions {
   /** Per-link activity highlight: dominant category color, opacity (recency) and drop marker. */
   readonly glow: ReadonlyMap<string, { color: string; dropped: boolean; opacity: number }>;
   readonly labels: ReadonlyMap<string, string>;
+  /** Internal data-path hops by link id (see `data-path.ts`). */
+  readonly hops?: ReadonlyMap<string, IoHop>;
+  /** Cables that carry I/O on the active data path. */
+  readonly activeLinks?: ReadonlySet<string>;
 }
 
 export function buildEdges(
@@ -213,7 +232,9 @@ export function buildEdges(
       selected: opts.selectedId === link.id,
       deletable: false,
       zIndex: 0,
-      ariaLabel: `Cable ${link.id}, ${link.status}`,
+      ariaLabel: opts.hops?.has(link.id)
+        ? `I/O hop ${opts.hops.get(link.id)?.name}, ${link.status === 'down' ? 'down' : opts.hops.get(link.id)?.state}`
+        : `Cable ${link.id}, ${link.status}`,
       data: {
         link,
         pathD: g.pathD,
@@ -224,6 +245,8 @@ export function buildEdges(
         dim: opts.pathUsage !== null && !inPath,
         inPath,
         label: opts.labels.get(link.id) ?? null,
+        io: opts.hops?.get(link.id) ?? null,
+        ioActive: opts.activeLinks?.has(link.id) ?? false,
       },
     });
   }

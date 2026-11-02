@@ -136,6 +136,15 @@ export const t1Options = {
     ['single-bond', 'per-fabric'],
     'single-bond',
   ),
+  // `first-only`: only the first data port of each controller (eth10, Switch A side) is cabled;
+  // the second (eth11) keeps its address but is not connected, by design. Each CVM then has
+  // two live array paths and two portals that never answer, which is expected, not a fault.
+  arrayDataPorts: option(
+    'array-data-ports',
+    'Array data ports cabled',
+    ['all', 'first-only'],
+    'all',
+  ),
   // Field practice keeps storage off the ISL ("single hop"); the Cisco Validated Design allows
   // it. Only matters with vlan-placement tagged-both.
   islStorageVlans: option(
@@ -258,6 +267,7 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
         mtu: jumbo,
         vlans: [storage[1] ?? VLAN.storageA],
         service: 'nvme-tcp',
+        cabled: p.arrayDataPorts === 'all',
       },
     ],
   });

@@ -12,6 +12,14 @@ const PRESETS: readonly { id: TrafficPreset; label: string; title: string }[] = 
   { id: 'none', label: 'None', title: 'Hide all traffic (cable states stay visible)' },
 ];
 
+const PATH_KEY = [
+  { label: 'I/O path in use', stroke: 'var(--color-accent)', w: 2.5, dash: undefined },
+  { label: 'idle', stroke: 'var(--color-cable)', w: 1.25, dash: undefined },
+  { label: 'standby member', stroke: 'var(--color-cable)', w: 1.5, dash: '3 4' },
+  { label: 'stalled', stroke: 'var(--color-status-stalled)', w: 2.5, dash: '2 4' },
+  { label: 'down', stroke: 'var(--color-status-failed)', w: 2, dash: '6 4' },
+] as const;
+
 /**
  * Traffic legend and filter (SPEC §8): one toggle per category seen in the activity window, plus
  * presets. Hidden categories are neither animated nor counted in the cable glow or hover card;
@@ -22,12 +30,15 @@ export function Legend({
   dropped,
   animated,
   reducedMotion,
+  hasPath = false,
 }: {
   /** Categories seen in the activity window (sorted). */
   categories: readonly string[];
   dropped: boolean;
   animated: boolean;
   reducedMotion: boolean;
+  /** The diagram draws the internal I/O data path: show its line key. */
+  hasPath?: boolean;
 }) {
   const traffic = useUi((s) => s.traffic);
   const toggle = useUi((s) => s.toggleTraffic);
@@ -43,7 +54,7 @@ export function Legend({
         Traffic{' '}
         <span className="font-normal">
           {animated
-            ? '(dots and glow: recent ticks)'
+            ? '(dots and glow: recent activity)'
             : reducedMotion
               ? '(reduced motion: highlighted)'
               : '(packets off: highlighted)'}
@@ -99,6 +110,30 @@ export function Legend({
           {categories.length === 0 ? <li className="text-ink-muted">No recent traffic</li> : null}
         </ul>
       </fieldset>
+      {hasPath ? (
+        <ul
+          className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 border-t border-border pt-1 text-[10px]"
+          data-testid="io-path-legend"
+          aria-label="I/O path line styles"
+        >
+          {PATH_KEY.map((k) => (
+            <li key={k.label} className="flex items-center gap-1">
+              <svg width="22" height="6" aria-hidden="true">
+                <line
+                  x1="0"
+                  y1="3"
+                  x2="22"
+                  y2="3"
+                  stroke={k.stroke}
+                  strokeWidth={k.w}
+                  strokeDasharray={k.dash}
+                />
+              </svg>
+              {k.label}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <fieldset className="m-0 mt-1 flex flex-wrap items-center gap-1 border-0 p-0">
         <legend className="sr-only">Traffic presets</legend>
         {PRESETS.map((p) => {

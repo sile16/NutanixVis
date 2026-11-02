@@ -13,6 +13,8 @@ import {
   HostNode,
   IfaceNode,
   NicNode,
+  RedirectorNode,
+  StargateNode,
   SwitchNode,
   VmNode,
   VswitchNode,
@@ -29,6 +31,8 @@ export const nodeTypes = {
   iface: IfaceNode,
   vswitch: VswitchNode,
   disk: DiskNode,
+  stargate: StargateNode,
+  redirector: RedirectorNode,
   generic: GenericNode,
 } satisfies NodeTypes;
 

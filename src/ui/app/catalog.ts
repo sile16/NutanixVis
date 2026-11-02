@@ -6,7 +6,8 @@
 
 import { type CatalogEntry, fixtureCatalog } from '../../fixtures/catalog';
 import { loadSimulation } from '../../loader/simulation';
-import { type TopologyId, topologies, topologyIds } from '../../topologies';
+import type { ScenarioDef } from '../../scenarios/define';
+import { buildTopology, type TopologyId, topologies, topologyIds } from '../../topologies';
 import type { Topology } from '../../topologies/schema';
 
 const TITLES: Readonly<Record<TopologyId, string>> = {
@@ -58,6 +59,35 @@ const realEntries: CatalogEntry[] = topologyIds.map((id) => {
   };
 });
 
+/**
+ * T1 variant: ONE storage network and one virtual switch with both NICs bonded (MAC pinning), so
+ * the bond, its two members and the active member are visible. Only the first data port of each
+ * array controller is cabled, so each CVM has two live paths and the other two portals are not
+ * connected (by design). Same topology and models as T1,
+ * built from its options (declarative data, no engine change).
+ */
+const BONDED_OPTIONS = {
+  'storage-vlans': 'single',
+  'vlan-placement': 'tagged-both',
+  'isl-storage-vlans': 'allowed',
+  'array-data-ports': 'first-only',
+} as const;
+const bondedEntry: CatalogEntry = {
+  id: 't1-bonded-single',
+  title: 'T1 · single storage network, bonded NICs',
+  hasFlashArray: true,
+  layout: absoluteLeafLayout(buildTopology('t1-ahv-flasharray', BONDED_OPTIONS)),
+  createSimulation: (versions) =>
+    loadSimulation({
+      topologyId: 't1-ahv-flasharray',
+      options: BONDED_OPTIONS,
+      versions: {
+        nutanix: versions.nutanix,
+        ...(versions.flasharray ? { flasharray: versions.flasharray } : {}),
+      },
+    }).sim,
+};
+
 /** Fixture demos (scripted traffic) keep distinct ids and say so in their titles. */
 const demoEntries: CatalogEntry[] = fixtureCatalog.map((e) => ({
   ...e,
@@ -65,4 +95,26 @@ const demoEntries: CatalogEntry[] = fixtureCatalog.map((e) => ({
   title: `${e.title} (demo traffic)`,
 }));
 
-export const catalog: readonly CatalogEntry[] = [...realEntries, ...demoEntries];
+export const catalog: readonly CatalogEntry[] = [...realEntries, bondedEntry, ...demoEntries];
+
+/** A guided scenario as a catalog entry: its topology built with the scenario's own options. */
+export function scenarioEntry(def: ScenarioDef): CatalogEntry {
+  const id = def.topology as TopologyId;
+  const options = def.options ?? {};
+  return {
+    id: def.topology,
+    title: def.title,
+    hasFlashArray: topologies[id]?.devices.some((d) => d.kind === 'fa-array') ?? false,
+    layout: absoluteLeafLayout(buildTopology(id, options)),
+    createSimulation: (versions) =>
+      loadSimulation({
+        topologyId: id,
+        options,
+        ...(def.seed !== undefined ? { seed: def.seed } : {}),
+        versions: {
+          nutanix: versions.nutanix,
+          ...(versions.flasharray ? { flasharray: versions.flasharray } : {}),
+        },
+      }).sim,
+  };
+}

@@ -264,6 +264,7 @@ export function buildHost(p: HostPlan): Part & { layout: HostBoxSpec } {
       id: host,
       vms,
       ...(p.cvm ? { cvm: { id: cvmId, ifaces: p.cvm.map((i) => `${cvmId}.${i.segment}`) } } : {}),
+      ...(p.role === 'external-storage-compute' && p.cvm ? { dataPath: true } : {}),
       disks,
       hostIfaces,
       groups: p.vswitches.map((vs) => ({
@@ -308,6 +309,8 @@ export interface FaPortPlan {
   mtu: number;
   vlans: readonly number[];
   service: 'nvme-tcp' | 'mgmt';
+  /** False: the port exists and has its address but no cable (not connected, by design). */
+  cabled?: boolean;
 }
 
 /**
@@ -367,7 +370,7 @@ export function flashArray(p: { model: string; ports: readonly FaPortPlan[] }): 
         mtu: port.mtu,
       });
       const to = ci === 0 ? port.to[0] : port.to[1];
-      links.push({ id: linkId(nic, to), a: nic, b: to });
+      if (port.cabled !== false) links.push({ id: linkId(nic, to), a: nic, b: to });
       const ifaces: string[] = [];
       for (const vlan of port.vlans) {
         const id = `${nic}.v${vlan}`;

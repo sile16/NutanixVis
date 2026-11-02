@@ -5,7 +5,27 @@ import type { LucideIcon } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { DeviceView } from '../../../engine/types';
 import { RoleBadge, StatusIcon, statusColor } from '../../components/status';
+import type { Note } from '../data-path';
 import type { DeviceNodeData, PortHandle } from '../flow';
+
+export const NOTE_TONE: Readonly<Record<Note['tone'], string>> = {
+  ok: 'text-status-healthy',
+  muted: 'text-ink-muted',
+  bad: 'text-status-failed',
+};
+
+/** Small second line under a card's name: bond member role, an array port without a path. */
+export function NoteLine({ note }: { note: Note | null }) {
+  if (!note) return null;
+  return (
+    <span
+      className={clsx('truncate text-[8px] font-medium leading-none', NOTE_TONE[note.tone])}
+      data-testid="node-note"
+    >
+      {note.text}
+    </span>
+  );
+}
 
 const POSITION = {
   top: Position.Top,

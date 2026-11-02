@@ -64,8 +64,15 @@ function DeviceLink({ id }: { id: string }) {
   );
 }
 
+/**
+ * Durations in view fields (`ioPendingS`, `…TimeoutS`) are not shown: time is steps, not seconds,
+ * and the engine's internal clock must not read as a duration.
+ */
+const isDurationField = (k: string, v: ViewField): boolean =>
+  typeof v === 'number' && /[a-z]S$/.test(k);
+
 function Fields({ fields }: { fields: Readonly<Record<string, ViewField>> }) {
-  const entries = Object.entries(fields);
+  const entries = Object.entries(fields).filter(([k, v]) => !isDurationField(k, v));
   if (entries.length === 0) return <p className="text-xs text-ink-muted">No fields.</p>;
   return (
     <dl
@@ -193,7 +200,7 @@ function PathUsageSection({ vmId }: { vmId: string }) {
   const activityTicks = useUi((s) => s.activityTicks);
   const win = useActivityWindow(activityTicks);
   const usage = computePathUsage(win.snapshot, vmId, win.vmPaths.get(vmId));
-  const windowLabel = win.ticks === 1 ? 'last tick' : `last ${win.ticks} ticks`;
+  const windowLabel = 'recent activity';
   if (!usage) return null;
   // An HCI VM whose vDisks are served by its own host's CVM: IO stays on virbr0.
   const local =
@@ -236,7 +243,7 @@ function PathUsageSection({ vmId }: { vmId: string }) {
             />
           ))
         ) : (
-          <p className="text-xs text-ink-muted">No storage traffic in the {windowLabel}.</p>
+          <p className="text-xs text-ink-muted">No storage traffic in {windowLabel}.</p>
         )}
       </div>
       {usage.targets.length ? (
@@ -415,7 +422,7 @@ function LinkInspector({ link }: { link: LinkView }) {
   const win = useActivityWindow(activityTicks);
   const util = win.snapshot.links[link.id]?.util ?? link.util;
   const total = Object.values(util).reduce((s, v) => s + v, 0);
-  const windowLabel = win.ticks === 1 ? 'last tick' : `last ${win.ticks} ticks`;
+  const windowLabel = 'recent activity';
   return (
     <div data-testid="inspector-link">
       <header className="px-3 py-2">

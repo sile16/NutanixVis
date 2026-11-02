@@ -12,6 +12,7 @@
 import { asEngineContext } from '../../engine/context';
 import type { Device, DeviceStatus, DeviceView, ViewField } from '../../engine/types';
 import type { Ctx, IoRequest } from '../contracts';
+import { buildIoChain } from '../steps/io-chain';
 import type { Profile } from '../versions/profile';
 import { WORKLOAD, type WorkloadModel } from './io';
 
@@ -56,6 +57,10 @@ export interface VmEnv {
   /** Seconds since a Stargate last served the host's session for `vdisk` (0 while served). */
   unservedS(host: string, vdisk: string): number;
   hostOfNic(nic: string): string | undefined;
+  /** Path selection of the serving CVM's initiator (T1), for the `ioChain` view field. */
+  pathSelector?(vdisk: string): string | null;
+  /** AHV host of a CVM (`ioChain`: is the serving CVM local to the VM?). */
+  cvmHost?(cvm: string): string | undefined;
 }
 
 export interface VmSpec {
@@ -109,6 +114,9 @@ export class Vm implements Device<Profile> {
   private uplinks = new Set<string>();
   private shownUplinks: readonly string[] = [];
   private shownPaths: readonly string[] = [];
+  /** CVM-side storage NICs and array ports of the last tick (the `ioChain` field). */
+  private shownStorageNics: readonly string[] = [];
+  private shownSelector: string | null = null;
   private state: VmState = 'running';
   private pendingS = { all: 0, read: 0, write: 0 };
   private latencyMs = 0;
@@ -227,7 +235,7 @@ export class Vm implements Device<Profile> {
       severity: 'info',
       deviceId: this.id,
       code: 'vm.migrated',
-      text: `${this.label} live-migrated from ${from} to ${host} (${why}); its IO paused about ${P.value} s at the switchover`,
+      text: `${this.label} live-migrated from ${from} to ${host} (${why}); its IO paused briefly at the switchover`,
       causeIds,
       cite: P.cite,
       confidence: P.confidence,
@@ -374,7 +382,7 @@ export class Vm implements Device<Profile> {
       severity: 'error',
       deviceId: this.id,
       code: 'vm.crashed',
-      text: `${this.label} shut down unexpectedly: no Stargate served its disk for ${worst} s, so the AHV initiator gave up and its process exited; AHV powers it back on once a Stargate can serve`,
+      text: `${this.label} shut down unexpectedly: no Stargate served its disk past the AHV initiator's timeout, so the AHV initiator gave up and its process exited; AHV powers it back on once a Stargate can serve`,
       causeIds: [],
       cite: T.cite,
       confidence: T.confidence,
@@ -399,15 +407,23 @@ export class Vm implements Device<Profile> {
     }
     this.pendingS = { all, read, write };
     const paths = new Set<string>();
+    const storageNics = new Set<string>();
+    let selector: string | null = null;
     if (this.hostId !== null && this.lifecycle === 'running') {
       for (const v of this.vdisks) {
         const use = this.env.storageUse(v);
         for (const p of use.paths) paths.add(p);
-        for (const u of use.uplinks) this.uplinks.add(u);
+        for (const u of use.uplinks) {
+          this.uplinks.add(u);
+          storageNics.add(u);
+        }
+        selector ??= this.env.pathSelector?.(v) ?? null;
       }
       this.shownUplinks = [...this.uplinks].sort();
     }
     this.shownPaths = [...paths].sort();
+    this.shownStorageNics = [...storageNics].sort();
+    this.shownSelector = selector;
     this.state = this.computeState();
 
     const timeout = ctx.profile.guest.linuxScsiTimeoutS;
@@ -417,7 +433,7 @@ export class Vm implements Device<Profile> {
         severity: 'warn',
         deviceId: this.id,
         code: 'vm.io.guest-timeout',
-        text: `${this.label}: an IO has been pending ${all} s, past the ${timeout.value} s guest disk timeout`,
+        text: `${this.label}: an IO has been pending past the ${timeout.value} s guest disk timeout`,
         causeIds: [],
         cite: timeout.cite,
         confidence: timeout.confidence,
@@ -438,6 +454,7 @@ export class Vm implements Device<Profile> {
       ownerCvm: this.vdisks[0] === undefined ? null : this.env.ownerCvm(this.vdisks[0]),
       ioPaths: JSON.stringify(this.shownPaths),
       ioUplinks: JSON.stringify(this.shownUplinks),
+      ioChain: this.ioChainField(),
       pathLossForceShutdownS: this.forceShutdownS,
       vdisks: JSON.stringify(this.vdisks),
       outstandingIo: this.pending.size,
@@ -456,6 +473,36 @@ export class Vm implements Device<Profile> {
   }
 
   // ── Internals ───────────────────────────────────────────────────────────
+
+  /**
+   * The VM's IO path as ordered hops (`ioChain`, JSON): VM → AHV redirector (Frodo) → serving
+   * CVM → Stargate (SPDK NVMe/TCP initiator, queue-depth selection) → storage NIC → array port.
+   * Stargate sits inside the CVM; the redirector's host links are the iSCSI leg to it.
+   */
+  private ioChainField(): string {
+    const cvm = this.vdisks[0] === undefined ? null : this.env.ownerCvm(this.vdisks[0]);
+    const nics = new Set(this.shownStorageNics);
+    const ports = [
+      ...new Set(
+        this.shownPaths.flatMap((p) => {
+          const i = p.indexOf('~');
+          return i < 0 ? [] : [p.slice(i + 1)];
+        }),
+      ),
+    ].sort();
+    const chain = buildIoChain({
+      vm: this.id,
+      host: this.hostId,
+      cvm: this.hostId === null ? null : cvm,
+      stalled: this.state === 'io-stalled' || this.pendingS.all > 2,
+      storageNics: this.shownStorageNics,
+      arrayPorts: ports,
+      hostNics: this.shownUplinks.filter((u) => !nics.has(u)),
+      selector: this.shownSelector,
+      local: cvm === null || this.env.cvmHost?.(cvm) === this.hostId,
+    });
+    return JSON.stringify(chain);
+  }
 
   private computeState(): VmState {
     if (this.lifecycle !== 'running') return this.lifecycle;
@@ -551,7 +598,7 @@ export class Vm implements Device<Profile> {
       severity: 'warn',
       deviceId: this.id,
       code: 'vm.force-shutdown',
-      text: `${this.label} force-shut down: storage path lost for ${limit} s (per-VM timeout)`,
+      text: `${this.label} force-shut down: storage path lost past its per-VM timeout`,
       causeIds: [],
       cite: P.cite,
       confidence: 'assumption',
@@ -579,5 +626,7 @@ export class Vm implements Device<Profile> {
     this.uplinks = new Set();
     this.shownUplinks = [];
     this.shownPaths = [];
+    this.shownStorageNics = [];
+    this.shownSelector = null;
   }
 }

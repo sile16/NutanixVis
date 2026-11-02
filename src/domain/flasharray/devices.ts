@@ -317,8 +317,11 @@ export class FaInterfaceDevice implements EngineDevice<Profile> {
       : m.controllerOf(this.id);
     const enabled = m.enabled.get(this.id) ?? true;
     const ctrlUp = ctrl === undefined || ctrl.state === 'up' || ctrl.state === 'stalled';
+    // A port with no cable is not connected, by design (a topology option): neither up nor failed.
+    const cabled = this.fact.floating || m.facts.linkOfNic.has(nic);
     const oper = enabled && ctrlUp && this.array.carrierOf(nic) ? 'up' : 'down';
-    const status: DeviceStatus = !enabled ? 'offline' : oper === 'up' ? 'healthy' : 'failed';
+    const status: DeviceStatus =
+      !enabled || !cabled ? 'offline' : oper === 'up' ? 'healthy' : 'failed';
     return view(this.id, this.kind, this.label, this.parentId, status, [], {
       nic,
       vlan: this.fact.vlan,
@@ -327,6 +330,7 @@ export class FaInterfaceDevice implements EngineDevice<Profile> {
       floating: this.fact.floating,
       enabled,
       oper,
+      cabled,
     });
   }
 }

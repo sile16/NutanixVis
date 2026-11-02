@@ -7,8 +7,8 @@ import { ExternalLink } from 'lucide-react';
 import { useMemo } from 'react';
 import { citations } from '../../domain/citations';
 import type { SimEvent } from '../../engine/types';
-import { formatSimTime } from '../app/format';
 import { ConfidenceBadge } from '../components/status';
+import { StepTag } from '../steps/step-tag';
 import { useSim, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import { causalChain, eventId, indexEvents } from './events-model';
@@ -48,7 +48,7 @@ function EventCard({ e, step }: { e: SimEvent; step?: number }) {
     >
       <div className="mb-0.5 flex items-center gap-2">
         {step !== undefined ? <span className="font-mono text-ink-muted">{step}.</span> : null}
-        <span className="font-mono text-ink-muted">{formatSimTime(e.t)}</span>
+        <StepTag t={e.t} />
         <SeverityTag severity={e.severity} />
         <span className="ml-auto">
           {e.confidence ? <ConfidenceBadge confidence={e.confidence} /> : null}
@@ -95,7 +95,7 @@ export function ExplainPanel() {
               className="text-[11px] text-accent-ink hover:underline"
               onClick={() => explain(null)}
             >
-              Show last tick
+              Show latest
             </button>
           </div>
           <ol className="flex flex-col gap-1.5">
@@ -105,13 +105,13 @@ export function ExplainPanel() {
           </ol>
         </section>
       ) : (
-        <section aria-label="Last tick">
+        <section aria-label="Latest events">
           <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
-            Last tick ({formatSimTime(snapshot.simTime)})
+            Latest (<StepTag t={snapshot.simTime} className="normal-case" />)
           </h3>
           {snapshot.events.length === 0 ? (
             <p className="text-xs text-ink-muted">
-              Nothing happened this tick. Pick “Explain” on an event to see its chain.
+              Nothing happened just now. Pick “Explain” on an event to see its chain.
             </p>
           ) : (
             <ol className="flex flex-col gap-1.5">

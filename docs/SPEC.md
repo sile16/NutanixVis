@@ -808,6 +808,19 @@ T1-lab:
 - Hovering a link lists recent traces.
 - Animation is cosmetic: it replays traces and never feeds back into the engine.
 
+**I/O data path (hosts with an external array)**
+
+- Each host draws the path I/O takes, top to bottom: VM, the AHV iSCSI redirector (frodo), Stargate inside the CVM box, the CVM storage interface, the vswitch (bond) and its member NICs, then the cable to the switch and the array port. Stargate and the redirector are derived boxes (`src/ui/diagram/data-path.ts`), not topology devices; the topology layout only reserves their rows.
+- Each internal hop is an edge with a state: in use (highlighted, slow dots), idle, standby bond member, stalled or down. Hover names the hop and the reason. A bond card names which member is active.
+- When AHV redirects a VM to a CVM on another host, the path leaves through the host management interface and uplink to that CVM's Stargate, which uses its own storage NICs; it moves back at failback.
+- Array interfaces with no NVMe path show "no path".
+
+**Time is steps**
+
+- The UI shows `Step N` and "step N" on events, never seconds. A step is an ordinal on a relative scale (0 = no interruption, then brief, longer, redirected later, recovered), derived by `src/domain/steps`; nothing in the UI states what a step equals.
+- The Step button runs to the next step. A per-VM impact strip shows, for each affected workload and step, normal, stalled, redirected via a CVM, or recovered (colour, icon and text), and notes a bond that moved traffic with "0 steps, no interruption".
+- The Scenario tab loads a guided steps scenario (its topology and options) and applies its timeline group by group.
+
 **Interaction**
 
 - Clicking a node or edge selects it, and its applicable actions appear in the Inspector. A right-click context menu gives quick fail and recover.

@@ -40,6 +40,15 @@
 
 import type { Ctx, StorageBackend } from '../contracts';
 
+/**
+ * Gap between Hades putting the node in maintenance mode and genesis stopping its services (the
+ * Stargate process exiting), in simulation ticks. `lab-observed` as an ORDER only (maintenance
+ * mode first, services stopped after, then the redirect), not as a duration: it is the smallest
+ * gap that keeps the stages on distinct ticks, so the steps view (`../steps`) can show them one
+ * after another. Never shown as a time.
+ */
+export const HADES_STOP_LAG = 1;
+
 export type HadesState = 'ok' | 'maintenance' | 'restarting';
 
 export type HadesStep =

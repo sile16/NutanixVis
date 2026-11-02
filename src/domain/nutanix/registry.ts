@@ -368,6 +368,22 @@ export class Registry implements NutanixClusterView, VmEnv {
     return { paths, uplinks };
   }
 
+  /**
+   * Path selection of the serving CVM's NVMe/TCP initiator among optimized paths (T1), e.g.
+   * `queue-depth`; null where the data path has no external-array leg. Read from the backend
+   * without widening the `StorageBackend` contract.
+   */
+  pathSelector(vdisk: string): string | null {
+    const cvm = this.owner.get(vdisk);
+    const b = cvm === undefined ? undefined : this.backends.get(cvm);
+    const nvme = (b as { nvme?: { selector?: unknown } } | undefined)?.nvme;
+    return typeof nvme?.selector === 'string' ? nvme.selector : null;
+  }
+
+  cvmHost(cvm: string): string | undefined {
+    return this.facts.cvms.find((c) => c.id === cvm)?.host;
+  }
+
   storageLost(vdisk: string): boolean {
     if (!this.facts.externalStorage) return false;
     const cvm = this.owner.get(vdisk);

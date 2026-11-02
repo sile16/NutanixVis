@@ -188,7 +188,10 @@ export class Stargate implements CvmComponent {
       this.reply(entry, { status: 'retry', reason: 'host fenced by AHV HA' }, ctx);
       return true;
     }
-    const needsQuorum = io.op === 'write' || !this.reg.facts.externalStorage;
+    // T1 reads are served outside the quorum side while a quorum side exists elsewhere; with no
+    // quorum anywhere (total loss) no Stargate has a metadata majority and reads fail too.
+    const needsQuorum =
+      io.op === 'write' || !this.reg.facts.externalStorage || !this.reg.zkQuorum();
     if (needsQuorum && !this.reg.inQuorum(this.cvm) && !this.reg.zkSessionHeld(this.cvm)) {
       this.reply(entry, { status: 'retry', reason: 'no Zookeeper quorum' }, ctx);
       return true;

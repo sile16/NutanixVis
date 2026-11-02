@@ -203,4 +203,20 @@ describe('I/O data path with a failed CVM', () => {
     expect(hop(m, 'node-1.cvm.storage-a', 'node-1.vs1')?.state).toBe('down');
     expect(hop(m, 'node-1.vs1', 'node-1.eth2')?.vms).toEqual([]);
   });
+
+  it('two of three CVMs down: no quorum, so the surviving CVM carries no IO and the VMs stall', () => {
+    const { sim } = loadSimulation({
+      topologyId: 't1-ahv-flasharray',
+      options: { 'node-count': 3, 'vm-layout': 'two', 'storage-vswitch-layout': 'per-fabric' },
+    });
+    sim.tick(5);
+    sim.applyAction({ kind: 'power-off', target: 'node-1.cvm' });
+    sim.applyAction({ kind: 'power-off', target: 'node-3.cvm' });
+    sim.tick(30);
+    const s = sim.getSnapshot();
+    expect(s.devices['node-2.vm-1']?.status).toBe('stalled');
+    const m = buildDataPath(s);
+    expect(m.hops.some((h) => h.state === 'active')).toBe(false);
+    expect(s.traces.some((t) => t.category === 'nvme-io')).toBe(false);
+  });
 });

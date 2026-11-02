@@ -124,7 +124,7 @@ test('visual baseline: T1 steady state (animation off)', async ({ page }, testIn
   await open(page);
   // The banner shows the build id and date, which change on every commit.
   await page.getByTestId('build-version').evaluate((el) => {
-    el.textContent = '0000000 · 0000-00-00';
+    el.textContent = '0000000 · 0000-00-00 00:00 UTC';
   });
   await expect(page).toHaveScreenshot(name, { animations: 'disabled', maxDiffPixelRatio: 0.01 });
 });

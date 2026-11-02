@@ -25,7 +25,9 @@ export default defineConfig({
   base: '/NutanixVis/',
   define: {
     __BUILD_ID__: JSON.stringify(buildId()),
-    __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10)),
+    __BUILD_DATE__: JSON.stringify(
+      `${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`,
+    ),
   },
   plugins: [react(), tailwindcss()],
   test: {

@@ -11,7 +11,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import type { ActionRequest, Simulation, Snapshot } from '../../engine/types';
-import { STEP_QUANTUM_TICKS, type StepsView, StepTracker } from '../steps/step-tracker';
+import { STEP_IDLE_PRESS_TICKS, type StepsView, StepTracker } from '../steps/step-tracker';
 import { SnapshotHistory } from './snapshot-history';
 import { useUi } from './ui-store';
 
@@ -25,7 +25,7 @@ interface SimBundle {
 
 /** Safety caps for `stepForward` (ticks), not durations: it stops at the first new step. */
 const STEP_CAP_ACTIVE = 900;
-const STEP_CAP_QUIET = STEP_QUANTUM_TICKS + 2;
+const STEP_CAP_QUIET = STEP_IDLE_PRESS_TICKS + 2;
 
 const SimContext = createContext<SimBundle | null>(null);
 

@@ -5,10 +5,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   deriveVmSteps,
+  FIRST_STEP_TICKS,
   ioChainOf,
   nextStepTick,
   STAGES,
   stepAt,
+  stepOfElapsed,
   type VmSample,
   vmSeries,
 } from '../../../src/domain/steps';
@@ -56,18 +58,25 @@ describe('steps derivation', () => {
     expect(r.impact).toBe('none');
   });
 
-  it('partial path loss: the stall is one step, the IO retries on another path in step 2', () => {
+  it('a stall that ends within the first step counts as one stalled step', () => {
     const events = [ev(6, 'nvme.path.lost', 'n1.cvm')];
-    const series = run(0, 40, (t) => sample(t, 'running', t >= 4 && t < 30 ? t - 3 : 0));
+    const series = run(0, 40, (t) => sample(t, 'running', t >= 4 && t < 12 ? t - 3 : 0));
     const r = deriveVmSteps('v', events, series);
     expect(r.stalledSteps).toBe(1);
-    expect(r.resumeStep).toBe(2);
+    expect(r.resumeStep).toBe(1);
     expect(r.impact).toBe('brief');
-    expect(r.milestones.map((m) => [m.stage, m.step])).toEqual([
-      ['stall', 1],
-      ['path-rerouted', 2],
-      ['resumed', 2],
-    ]);
+    expect(r.milestones.map((m) => m.stage)).toEqual(['stall', 'path-rerouted', 'resumed']);
+  });
+
+  it('a longer stall spans more steps, on the compressive scale', () => {
+    const events = [ev(6, 'nvme.path.lost', 'n1.cvm')];
+    const series = run(0, 80, (t) => sample(t, 'running', t >= 4 && t < 45 ? t - 3 : 0));
+    const r = deriveVmSteps('v', events, series);
+    const start = r.startT as number;
+    const resumeT = r.milestones.find((m) => m.stage === 'resumed')?.t as number;
+    expect(r.resumeStep).toBe(stepOfElapsed(resumeT - start));
+    expect(r.resumeStep).toBeGreaterThan(2);
+    expect(r.stalledSteps).toBe((r.resumeStep as number) - 1);
   });
 
   it('a lost path does not count as a reroute while the VM is still stalled (monotonic steps)', () => {
@@ -91,7 +100,7 @@ describe('steps derivation', () => {
     expect(peak).toBe(1);
   });
 
-  it('every stage of the maintenance chain is a later step than the one before', () => {
+  it('the maintenance chain keeps its order, and the long failback wait spans several steps', () => {
     const events = [
       ev(8, 'nvme.all-paths.lost', 'n1.cvm'),
       ev(20, 'hades.maintenance.enter', 'n1.cvm'),
@@ -109,24 +118,30 @@ describe('steps derivation', () => {
     const r = deriveVmSteps('v', events, series);
     const step = (s: string) => r.milestones.find((m) => m.stage === s)?.step ?? Number.NaN;
     expect(step('stall')).toBe(1);
-    expect(step('maintenance')).toBeGreaterThan(step('all-paths-lost'));
-    expect(step('services-stopped')).toBeGreaterThan(step('maintenance'));
-    expect(step('resumed')).toBeGreaterThan(step('redirected'));
-    expect(step('maintenance-exited')).toBeGreaterThan(step('resumed'));
-    expect(step('services-restarted')).toBeGreaterThan(step('maintenance-exited'));
+    // Stages that happen close together can share a step; later ones never land earlier.
+    expect(step('maintenance')).toBeGreaterThanOrEqual(step('all-paths-lost'));
+    expect(step('services-stopped')).toBeGreaterThanOrEqual(step('maintenance'));
+    expect(step('resumed')).toBeGreaterThanOrEqual(step('redirected'));
+    expect(step('maintenance-exited')).toBeGreaterThanOrEqual(step('resumed'));
+    expect(step('services-restarted')).toBeGreaterThanOrEqual(step('maintenance-exited'));
+    // The long wait before the sessions fail back spans several steps.
     expect(step('failed-back')).toBeGreaterThan(step('services-restarted'));
+    expect(step('failed-back') - step('resumed')).toBeGreaterThanOrEqual(2);
     expect(r.impact).toBe('redirected');
     expect(r.cells.length).toBe(r.stalledSteps);
   });
 
-  it('step cursor and the next-step target follow milestone order', () => {
+  it('the step cursor follows the compressive scale and stops at the failback', () => {
     const events = [ev(6, 'nvme.path.lost', 'n1.cvm')];
     const series = run(0, 40, (t) => sample(t, 'running', t >= 4 && t < 30 ? t - 3 : 0));
     const r = deriveVmSteps('v', events, series);
-    expect(stepAt(r, 1)).toBe(0);
-    expect(stepAt(r, 6)).toBe(2);
-    expect(nextStepTick(r, 1)).toBe(r.milestones[0]?.t);
-    expect(nextStepTick(r, 100)).toBeNull();
+    const start = r.startT as number;
+    expect(stepAt(r, start - 1)).toBe(0);
+    expect(stepAt(r, start)).toBe(1);
+    expect(stepAt(r, start + FIRST_STEP_TICKS)).toBe(2);
+    expect(stepAt(r, start + 2 * FIRST_STEP_TICKS)).toBe(3);
+    expect(nextStepTick(r, start)).toBe(start + FIRST_STEP_TICKS);
+    expect(nextStepTick(r, start + FIRST_STEP_TICKS)).toBe(start + 2 * FIRST_STEP_TICKS);
   });
 
   it('every stage has a public-safe description with a citation and a confidence label', () => {
@@ -206,7 +221,7 @@ describe('ioChain view field', () => {
     expect(peak).toBeGreaterThanOrEqual(3);
   });
 
-  it('CVM failure: stall (1), redirect (2), IO resumes (3); failback comes after the CVM returns', () => {
+  it('CVM failure: stall, redirect, IO resumes; failback comes long after the CVM returns', () => {
     for (const [kind, back] of [
       ['fail', 'recover'],
       ['cvm.planned-shutdown', 'cvm.planned-start'],
@@ -227,22 +242,22 @@ describe('ioChain view field', () => {
       expect(chainNow?.remote).toBe(true);
       expect(chainNow?.hops.some((h) => h.ids.includes('node-1.cvm'))).toBe(false);
       let r = deriveVmSteps('node-1.vm-1', sim.eventLog(), vmSeries(hist, 'node-1.vm-1'));
-      expect(r.milestones.map((m) => [m.stage, m.step])).toEqual([
-        ['stall', 1],
-        ['redirected', 2],
-        ['resumed', 3],
-      ]);
+      expect(r.milestones.map((m) => m.stage)).toEqual(['stall', 'redirected', 'resumed']);
       expect(r.impact).toBe('redirected');
       sim.applyAction({ kind: back, target: 'node-1.cvm' });
       run(1500);
       r = deriveVmSteps('node-1.vm-1', sim.eventLog(), vmSeries(hist, 'node-1.vm-1'));
-      expect(r.milestones.map((m) => [m.stage, m.step])).toEqual([
-        ['stall', 1],
-        ['redirected', 2],
-        ['resumed', 3],
-        ['services-restarted', 4],
-        ['failed-back', 5],
+      expect(r.milestones.map((m) => m.stage)).toEqual([
+        'stall',
+        'redirected',
+        'resumed',
+        'services-restarted',
+        'failed-back',
       ]);
+      const steps = r.milestones.map((m) => m.step);
+      expect(steps).toEqual([...steps].sort((x, y) => x - y));
+      const at = (stage: string) => r.milestones.find((m) => m.stage === stage)?.step as number;
+      expect(at('failed-back') - at('resumed')).toBeGreaterThanOrEqual(2);
     }
   });
 });

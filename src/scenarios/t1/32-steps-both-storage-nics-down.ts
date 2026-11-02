@@ -49,18 +49,19 @@ export default defineScenario({
     ...t1Steady(),
     atCtx(
       END,
-      'steps: stall 1, maintenance 2, services stop and redirect 3, IO resumes 4',
+      'steps: the stall spans several steps, the stages never land in an earlier step than the one before, and the VM ends up redirected',
       (_s, ctx) => {
         const st = stepsOf(ctx, VM);
+        const step = (stage: string) => stepOfStage(st, stage) ?? Number.NaN;
         return (
-          stepOfStage(st, 'stall') === 1 &&
-          stepOfStage(st, 'all-paths-lost') === 1 &&
-          stepOfStage(st, 'maintenance') === 2 &&
-          stepOfStage(st, 'services-stopped') === 3 &&
-          stepOfStage(st, 'redirected') === 3 &&
-          st.resumeStep === 4 &&
-          st.stalledSteps === 4 &&
-          st.cells.length === 4 &&
+          step('stall') === 1 &&
+          step('all-paths-lost') >= step('stall') &&
+          step('maintenance') >= step('all-paths-lost') &&
+          step('services-stopped') >= step('maintenance') &&
+          step('redirected') >= step('services-stopped') &&
+          (st.resumeStep ?? 0) >= step('redirected') &&
+          st.stalledSteps >= 2 &&
+          st.cells.length === st.stalledSteps &&
           st.impact === 'redirected'
         );
       },
@@ -76,22 +77,22 @@ export default defineScenario({
         t('redirected') < t('resumed')
       );
     }),
-    atCtx(END, 'step 1: the VM is stalled on its own CVM, still served by it', (_s, ctx) => {
+    atCtx(END, 'first the VM is stalled on its own CVM, still served by it', (_s, ctx) => {
       const t = tickOfStage(stepsOf(ctx, VM), 'all-paths-lost') ?? -1;
       const v = vm(snapshotAt(ctx, t), VM);
       return v.state === 'io-stalled' && v.ownerCvm === CVM;
     }),
-    atCtx(END, 'step 2: maintenance mode, the local Stargate has not exited yet', (_s, ctx) => {
+    atCtx(END, 'then maintenance mode, the local Stargate has not exited yet', (_s, ctx) => {
       const t = tickOfStage(stepsOf(ctx, VM), 'maintenance') ?? -1;
       const s = snapshotAt(ctx, t);
       return device(s, CVM).fields.hades === 'maintenance' && vm(s, VM).state === 'io-stalled';
     }),
-    atCtx(END, 'step 3: Stargate has exited and the vDisks are sent to remote CVMs', (_s, ctx) => {
+    atCtx(END, 'then Stargate has exited and the vDisks are sent to remote CVMs', (_s, ctx) => {
       const t = tickOfStage(stepsOf(ctx, VM), 'services-stopped') ?? -1;
       const s = snapshotAt(ctx, t);
       return device(s, CVM).fields.stargate === 'down';
     }),
-    atCtx(END, 'step 4: IO resumes on a remote CVM, the path drawn through it', (_s, ctx) => {
+    atCtx(END, 'then IO resumes on a remote CVM, the path drawn through it', (_s, ctx) => {
       const t = tickOfStage(stepsOf(ctx, VM), 'resumed') ?? -1;
       const s = snapshotAt(ctx, t);
       const v = vm(s, VM);
@@ -114,7 +115,14 @@ export default defineScenario({
       const stalledAfter = ctx.history.some(
         (h) => h.simTime > resumeAt + 2 && vm(h, VM).state === 'io-stalled',
       );
-      return st.resumeStep < exit && exit < up && up < back && !stalledAfter;
+      // The wait before the sessions fail back is by far the longest: several steps.
+      return (
+        st.resumeStep <= exit &&
+        exit <= up &&
+        up < back &&
+        back - st.resumeStep >= 3 &&
+        !stalledAfter
+      );
     }),
     alwaysFrom(RESTORE_AT + 1, 'the VMs of the other nodes never stall in the recovery', (s) =>
       vms(s)

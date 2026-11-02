@@ -818,7 +818,7 @@ T1-lab:
 
 **Time is steps**
 
-- The UI shows `Step N` and "step N" on events, never seconds. A step is an ordinal on a relative scale (0 = no interruption, then brief, longer, redirected later, recovered), derived by `src/domain/steps`; nothing in the UI states what a step equals.
+- The UI shows `Step N` and "step N" on events, never seconds. Every component runs on its own timers and the sequence comes out of their combined behaviour; no stage owns a step number. A step is a slot on a compressive scale of the time since the interruption began (`src/domain/steps/scale.ts`): the first step is short and each later one is twice as long as the one before, so events that happen close together land in nearby steps, while a wait that is an order of magnitude longer (the sessions failing back) spans only a handful more. The counter reads 0 while nothing is interrupted and stops once the sessions have failed back. Nothing in the UI states what a step equals.
 - The Step button runs to the next step. A per-VM impact strip shows, for each affected workload and step, normal, stalled, redirected via a CVM, or recovered (colour, icon and text), and notes a bond that moved traffic with "0 steps, no interruption".
 - The Scenario tab loads a guided steps scenario (its topology and options) and applies its timeline group by group.
 

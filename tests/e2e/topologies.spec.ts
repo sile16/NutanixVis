@@ -106,7 +106,7 @@ test('real T1: Step keeps counting past step 4, and a restore shows later steps'
   const clock = page.getByTestId('sim-clock');
   for (let i = 0; i < 10; i++) await page.getByTestId('step').click();
   const atTen = Number(await clock.getAttribute('data-step'));
-  expect(atTen).toBeGreaterThanOrEqual(8);
+  expect(atTen).toBeGreaterThanOrEqual(5);
   let prev = atTen;
   for (const nic of ['node-1.eth2', 'node-1.eth3']) {
     await page.getByRole('tab', { name: 'Inspector' }).click();

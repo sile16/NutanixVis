@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadSimulation } from '../../loader/simulation';
-import { STEP_QUANTUM_TICKS, StepTracker } from './step-tracker';
+import { StepTracker } from './step-tracker';
 
 const OPTIONS = {
   'node-count': 3,
@@ -15,66 +15,60 @@ function setup() {
   return { sim, tracker };
 }
 
-/** What the Step button does past the last stage: one tick at a time until the counter moves. */
-function press(sim: ReturnType<typeof setup>['sim'], tracker: StepTracker, cap = 900): void {
-  const before = tracker.view().current;
-  for (let i = 0; i < cap; i++) {
-    sim.tick(1);
-    if (tracker.view().current !== before) return;
+/** Ticks (since the failure) at which the counter first reached each step. */
+function stepStarts(run: (t: number) => void, tracker: StepTracker, ticks: number): number[] {
+  const starts: number[] = [];
+  let prev = 0;
+  for (let t = 1; t <= ticks; t++) {
+    run(t);
+    const now = tracker.view().current;
+    for (let k = prev + 1; k <= now; k++) starts[k] = t;
+    prev = Math.max(prev, now);
   }
+  return starts;
 }
 
-describe('step counter past the last stage', () => {
-  it('keeps counting, never regresses, and stays 0 while steady', () => {
+describe('step counter on the relative scale', () => {
+  it('stays 0 while steady and never regresses', () => {
     const { sim, tracker } = setup();
-    for (let i = 0; i < 3; i++) press(sim, tracker, STEP_QUANTUM_TICKS + 2);
+    sim.tick(200);
     expect(tracker.view().current).toBe(0);
-
     sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
     sim.applyAction({ kind: 'fail', target: 'node-1.eth3' });
     let prev = 0;
-    for (let i = 0; i < 14; i++) {
-      press(sim, tracker);
+    for (let t = 0; t < 400; t++) {
+      sim.tick(1);
       const now = tracker.view().current;
       expect(now).toBeGreaterThanOrEqual(prev);
-      if (i >= 4) expect(now).toBeGreaterThan(prev);
       prev = now;
     }
-    expect(prev).toBeGreaterThanOrEqual(14);
+    expect(prev).toBeGreaterThan(3);
     expect(tracker.view().stepOfTick(sim.getSnapshot().simTime)).toBe(prev);
   });
 
-  it('restoring after the last stage still yields later steps with recovery events', () => {
+  it('is not linear: each step takes longer than the one before', () => {
     const { sim, tracker } = setup();
     sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
     sim.applyAction({ kind: 'fail', target: 'node-1.eth3' });
-    for (let i = 0; i < 10; i++) press(sim, tracker);
-    const atRestore = tracker.view().current;
-    sim.applyAction({ kind: 'recover', target: 'node-1.eth2' });
-    sim.applyAction({ kind: 'recover', target: 'node-1.eth3' });
-    let prev = atRestore;
-    for (let i = 0; i < 40; i++) {
-      press(sim, tracker);
-      const now = tracker.view().current;
-      expect(now).toBeGreaterThanOrEqual(prev);
-      prev = now;
+    const starts = stepStarts(() => sim.tick(1), tracker, 300);
+    const gaps: number[] = [];
+    for (let k = 2; k < starts.length - 1; k++) {
+      gaps.push((starts[k + 1] as number) - (starts[k] as number));
     }
-    expect(prev).toBeGreaterThan(atRestore);
-    const t = sim.getSnapshot().simTime;
-    expect(tracker.view().stepOfTick(t)).toBe(prev);
-    const view = tracker.view();
-    const vm = view.vms.get('node-1.vm-1');
-    expect(vm?.milestones.some((m) => m.step > 4)).toBe(true);
+    expect(gaps.length).toBeGreaterThanOrEqual(3);
+    for (let i = 1; i < gaps.length; i++) {
+      expect(gaps[i] as number).toBeGreaterThanOrEqual((gaps[i - 1] as number) * 1.5);
+    }
   });
 });
 
 describe('failback span', () => {
-  it('the long wait for the sessions to fail back is about four steps, then the counter stops', () => {
+  it('the long wait for the sessions to fail back spans a handful of steps, then the counter stops', () => {
     const { sim, tracker } = setup();
     sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
     sim.applyAction({ kind: 'fail', target: 'node-1.eth3' });
     let restored = false;
-    let restartedAt = -1;
+    let resumedAt = -1;
     let failedBackAt = -1;
     for (let t = 0; t < 900; t++) {
       sim.tick(1);
@@ -84,18 +78,17 @@ describe('failback span', () => {
         sim.applyAction({ kind: 'recover', target: 'node-1.eth2' });
         sim.applyAction({ kind: 'recover', target: 'node-1.eth3' });
         restored = true;
-      }
-      if (restartedAt < 0 && ms.some((m) => m.stage === 'services-restarted')) {
-        restartedAt = v.current;
+        resumedAt = v.current;
       }
       if (failedBackAt < 0 && ms.some((m) => m.stage === 'failed-back')) {
         failedBackAt = v.current;
         break;
       }
     }
-    expect(restartedAt).toBeGreaterThan(0);
-    expect(failedBackAt - restartedAt).toBe(4);
-    // Once failed back, the counter no longer climbs.
+    expect(resumedAt).toBeGreaterThan(0);
+    // The failover happens in the first few steps; recovering takes a handful more.
+    expect(failedBackAt - resumedAt).toBeGreaterThanOrEqual(3);
+    expect(failedBackAt - resumedAt).toBeLessThanOrEqual(6);
     sim.tick(600);
     expect(tracker.view().current).toBe(failedBackAt);
   });

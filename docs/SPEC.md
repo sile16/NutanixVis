@@ -810,7 +810,7 @@ T1-lab:
 
 **I/O data path (hosts with an external array)**
 
-- Each host draws the path I/O takes, top to bottom: VM, the AHV iSCSI redirector (frodo), Stargate inside the CVM box, the CVM storage interface, the vswitch (bond) and its member NICs, then the cable to the switch and the array port. Stargate and the redirector are derived boxes (`src/ui/diagram/data-path.ts`), not topology devices; the topology layout only reserves their rows.
+- Each host draws the path I/O takes, top to bottom: VM, the AHV IO redirector (frodo), Stargate inside the CVM box, the CVM storage interface, the vswitch (bond) and its member NICs, then the cable to the switch and the array port. Stargate and the redirector are derived boxes (`src/ui/diagram/data-path.ts`), not topology devices; the topology layout only reserves their rows.
 - Each internal hop is an edge with a state: in use (highlighted, slow dots), idle, standby bond member, stalled or down. Hover names the hop and the reason. A bond card names which member is active.
 - When AHV redirects a VM to a CVM on another host, the path leaves through the host management interface and uplink to that CVM's Stargate, which uses its own storage NICs; it moves back at failback.
 - Array interfaces with no NVMe path show "no path".

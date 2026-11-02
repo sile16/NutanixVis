@@ -2,7 +2,7 @@
  * The I/O data path of a compute node that uses an external array (pure; the renderer only reads
  * the result). One VM's I/O runs:
  *
- *   VM -> AHV iSCSI redirector (frodo) -> Stargate inside the CVM -> CVM storage interface
+ *   VM -> AHV IO redirector (frodo) -> Stargate inside the CVM -> CVM storage interface
  *      -> vswitch (bond) -> member NIC -> cable -> switch -> array port -> controller
  *
  * The first hops are inside a host, so they have no cable in the topology. This module derives them
@@ -170,12 +170,12 @@ export function buildDataPath(s: Input): DataPathModel {
       devices[rid] = {
         id: rid,
         kind: 'redirector',
-        label: 'frodo · iSCSI redirector',
+        label: 'frodo · IO redirector',
         parent: host.id,
         status: stalled ? 'stalled' : out.length > 0 ? 'degraded' : 'healthy',
         badges: [],
         fields: {
-          role: 'AHV iSCSI redirector (frodo)',
+          role: 'AHV IO redirector (frodo)',
           sessions: here
             .map((v) => {
               const o = str(v.fields.ownerCvm);
@@ -219,7 +219,7 @@ export function buildDataPath(s: Input): DataPathModel {
       const sg = str(cvm.fields.stargate) ?? 'up';
       let state: HopState = stateOfDemand(local);
       let reason = local.length
-        ? 'iSCSI over the host-internal link to the local Stargate'
+        ? 'IO over the host-internal link to the local Stargate'
         : 'no VM on this host is served by the local Stargate';
       if (cvm.fields.internalLink === 'down') {
         state = 'down';
@@ -508,7 +508,7 @@ export function hopLinks(model: DataPathModel): Record<string, LinkView> {
 }
 
 /**
- * Slow continuous dots on every hop that carries I/O: iSCSI hops show writes toward the array and
+ * Slow continuous dots on every hop that carries I/O: redirector hops show writes toward the array and
  * reads coming back, NVMe/TCP hops show both directions in one category. Stalled, down, idle and
  * standby hops carry no dots.
  */

@@ -269,11 +269,11 @@ export function StargateNode({ data, selected }: P) {
   );
 }
 
-/** The AHV iSCSI redirector (frodo) between the VMs and the CVM. */
+/** The AHV IO redirector (frodo) between the VMs and the CVM. */
 export function RedirectorNode({ data, selected }: P) {
   return (
     <LeafCard data={data} selected={selected} Icon={Route} className="justify-center">
-      <span className="truncate text-[10px] font-medium">frodo · iSCSI redirector</span>
+      <span className="truncate text-[10px] font-medium">frodo · IO redirector</span>
     </LeafCard>
   );
 }

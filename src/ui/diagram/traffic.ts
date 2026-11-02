@@ -18,12 +18,12 @@ export const TRAFFIC: Readonly<Record<string, TrafficStyle>> = {
     label: 'IO read',
     color: '#0072b2',
     description:
-      'VM read IO to Stargate: over iSCSI through the AHV redirector, or a remote replica read (HCI).',
+      'VM read IO to Stargate: through the AHV IO redirector, or a remote replica read (HCI).',
   },
   'io-write': {
     label: 'IO write',
     color: '#e69f00',
-    description: 'VM write IO to Stargate over iSCSI through the AHV iSCSI redirector.',
+    description: 'VM write IO to Stargate through the AHV IO redirector.',
   },
   'nvme-io': {
     label: 'NVMe/TCP IO',
@@ -49,10 +49,10 @@ export const TRAFFIC: Readonly<Record<string, TrafficStyle>> = {
     description: 'Curator re-replication of extent groups after a disk or node is lost.',
   },
   'iscsi-nop': {
-    label: 'iSCSI NOP',
+    label: 'Redirector NOP',
     color: '#b59f00',
     description:
-      'iSCSI NOP: AHV redirector health check of Stargate (Autopath). VM disks reach Stargate over iSCSI via the host redirector; missed NOPs make it redirect to another Stargate.',
+      'Redirector NOP: the AHV IO redirector health-checks Stargate (Autopath). VM disks reach Stargate via the host redirector; missed NOPs make it redirect to another Stargate.',
   },
   zk: {
     label: 'Zookeeper',

@@ -26,6 +26,8 @@ export default defineScenario({
   title: 'T1 steps: a MAC-pinning bond does not fail back to the restored NIC',
   topology: T1.topology,
   options: {
+    'node-count': 3,
+    'vm-layout': 'two',
     'vlan-placement': 'tagged-both',
     'isl-storage-vlans': 'allowed',
     'vs1-bond-mode': 'balance-slb',

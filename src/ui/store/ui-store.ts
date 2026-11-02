@@ -38,7 +38,6 @@ export const SPEEDS = [1, 5, 20, 60] as const;
 export type Speed = (typeof SPEEDS)[number];
 
 export type RailTab = 'inspector' | 'events' | 'explain' | 'scenario';
-export type ThemePref = 'system' | 'light' | 'dark';
 
 export interface VersionChoice {
   readonly nutanix: string;
@@ -70,7 +69,6 @@ export interface UiState {
   bondUtilHost: string | null;
   layoutEdit: boolean;
   explainEvent: number | null;
-  theme: ThemePref;
   /** Which traffic categories the overlay, glow and hover card show (kept across topologies). */
   traffic: TrafficFilter;
 
@@ -92,7 +90,6 @@ export interface UiState {
   setBondUtilHost(id: string | null): void;
   setLayoutEdit(on: boolean): void;
   explain(seq: number | null): void;
-  setTheme(t: ThemePref): void;
   toggleTraffic(category: string): void;
   setTrafficPreset(preset: TrafficPreset): void;
 }
@@ -143,7 +140,6 @@ export const useUi = create<UiState>()((set) => ({
   bondUtilHost: null,
   layoutEdit: false,
   explainEvent: null,
-  theme: 'system',
   traffic: typeof window === 'undefined' ? presetFilter('all') : loadTrafficFilter(),
 
   select: (selection) => set({ selection, contextMenu: null }),
@@ -182,7 +178,6 @@ export const useUi = create<UiState>()((set) => ({
   setLayoutEdit: (layoutEdit) => set({ layoutEdit }),
   explain: (explainEvent) =>
     set(explainEvent === null ? { explainEvent } : { explainEvent, tab: 'explain' }),
-  setTheme: (theme) => set({ theme }),
   toggleTraffic: (category) =>
     set((s) => ({ traffic: saveTrafficFilter(toggleCategory(s.traffic, category)) })),
   setTrafficPreset: (preset) => set({ traffic: saveTrafficFilter(presetFilter(preset)) }),

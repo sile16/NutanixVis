@@ -41,16 +41,21 @@ export function absoluteLeafLayout(t: Topology): Topology['layout'] {
   return out;
 }
 
+/** The simple view: 3 nodes, 2 test VMs (nodes 1 and 2). */
+const SIMPLE_OPTIONS = { 'node-count': 3, 'vm-layout': 'two' } as const;
+
 const realEntries: CatalogEntry[] = topologyIds.map((id) => {
-  const t = topologies[id];
+  const simple = id === 't1-ahv-flasharray';
+  const options = simple ? SIMPLE_OPTIONS : {};
   return {
     id,
     title: TITLES[id],
-    hasFlashArray: t.devices.some((d) => d.kind === 'fa-array'),
-    layout: absoluteLeafLayout(t),
+    hasFlashArray: topologies[id].devices.some((d) => d.kind === 'fa-array'),
+    layout: absoluteLeafLayout(simple ? buildTopology(id, options) : topologies[id]),
     createSimulation: (versions) =>
       loadSimulation({
         topologyId: id,
+        options,
         versions: {
           nutanix: versions.nutanix,
           ...(versions.flasharray ? { flasharray: versions.flasharray } : {}),
@@ -67,6 +72,7 @@ const realEntries: CatalogEntry[] = topologyIds.map((id) => {
  * built from its options (declarative data, no engine change).
  */
 const BONDED_OPTIONS = {
+  ...SIMPLE_OPTIONS,
   'storage-vlans': 'single',
   'vlan-placement': 'tagged-both',
   'isl-storage-vlans': 'allowed',

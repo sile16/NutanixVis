@@ -119,7 +119,7 @@ test('visual baseline: T1 steady state (animation off)', async ({ page }, testIn
     !!process.env.CI && !existsSync(testInfo.snapshotPath(name, { kind: 'screenshot' })),
     'No baseline for this platform yet; generate with --update-snapshots on the CI image.',
   );
-  await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'light' });
+  await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'dark' });
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page);
   // The banner shows the build id and date, which change on every commit.

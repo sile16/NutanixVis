@@ -1730,8 +1730,6 @@ exports[`scenario acceptance > t1-32-steps-both-storage-nics-down: T1 steps: bot
   "32	ha.leader.lost@node-1",
   "32	redirector.redirect@node-1",
   "33	stargate.vdisk.handover@node-2.cvm",
-  "33	stargate.vdisk.handover@node-2.cvm",
-  "34	stargate.vdisk.taken-over@node-2.cvm",
   "34	stargate.vdisk.taken-over@node-2.cvm",
   "52	ha.leader.elected@node-2",
   "191	action.recover@node-1.eth2",
@@ -1749,7 +1747,6 @@ exports[`scenario acceptance > t1-32-steps-both-storage-nics-down: T1 steps: bot
   "196	hades.maintenance.exit@node-1.cvm",
   "256	stargate.up@node-1.cvm",
   "557	redirector.failback@node-1",
-  "567	redirector.failback@node-1",
 ]
 `;
 

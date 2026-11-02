@@ -7,6 +7,7 @@ Living status page: where the project stands, what is left, which behavior still
 ## Where things stand
 
 - **UI scope (2026-11-02):** the topology dropdown offers two storage-network configurations only: two vSwitches with no bond (separate storage networks), and one vSwitch on a single subnet with an active/active MAC-pinning bond. T1-lab, HCI, T3 and the demo entries still build (deep link `#topology=<id>`, `fullCatalog` in `src/ui/app/catalog.ts`) but are not offered.
+- **Simple view (2026-11-02):** the UI builds T1 with 3 nodes and 2 test VMs (nodes 1 and 2) (`node-count` 3, `vm-layout` two), dark theme only, and the inspector offers only hard stop and maintenance mode for CVMs and hosts, cable pull and fail for hardware. The other failure actions stay in the engine for scenarios and tests (`src/ui/panels/offered-actions.ts`).
 - **Live site:** https://sile16.github.io/NutanixVis/ (GitHub Pages, deployed from `main` once `check` and `e2e` pass).
 - **Topologies:**
   - T1: AHV compute with an Everpure FlashArray over NVMe/TCP.

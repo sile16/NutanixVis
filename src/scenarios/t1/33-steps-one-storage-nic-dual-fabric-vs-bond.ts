@@ -38,7 +38,7 @@ function dualFabric(): ScenarioDef {
     id: 't1-33-steps-one-nic-dual-fabric',
     title: 'T1 steps: one storage NIC down, two unbonded fabrics (multipath, short stall)',
     topology: T1.topology,
-    options: { 'vlan-placement': 'strict-ab' },
+    options: { 'node-count': 3, 'vm-layout': 'two', 'vlan-placement': 'strict-ab' },
     durationS: END,
     timeline,
     expect: [
@@ -111,6 +111,8 @@ function bond(): ScenarioDef {
     title: 'T1 steps: one storage NIC down, one MAC-pinning bond (no interruption)',
     topology: T1.topology,
     options: {
+      'node-count': 3,
+      'vm-layout': 'two',
       'vlan-placement': 'tagged-both',
       'isl-storage-vlans': 'allowed',
       'vs1-bond-mode': 'balance-slb',

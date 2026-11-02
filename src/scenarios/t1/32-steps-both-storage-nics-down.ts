@@ -36,6 +36,7 @@ export default defineScenario({
   id: 't1-32-steps-both-storage-nics-down',
   title: 'T1 steps: both storage NICs of one node go down (stall, maintenance, redirect, failback)',
   topology: T1.topology,
+  options: { 'node-count': 3, 'vm-layout': 'two' },
   durationS: END,
   timeline: [
     { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth2 fails.' },

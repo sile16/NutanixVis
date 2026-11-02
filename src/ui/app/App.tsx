@@ -5,7 +5,7 @@
  * Topologies come from `src/topologies` via the loader (`./catalog`), plus fixture demo entries
  * with scripted traffic; versions come from the real version matrix.
  */
-import { Eye, EyeOff, Monitor, Moon, Move, RotateCcw, Sun } from 'lucide-react';
+import { Eye, EyeOff, Move, RotateCcw } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { matrix as versionMatrix } from '../../domain/versions';
 import type { CatalogEntry } from '../../fixtures/catalog';
@@ -16,10 +16,10 @@ import { Diagram } from '../diagram/diagram';
 import { RightRail } from '../panels/right-rail';
 import { ImpactStrip } from '../steps/impact-strip';
 import { SimProvider } from '../store/sim-context';
-import { type ThemePref, topologyFromHash, useUi } from '../store/ui-store';
+import { topologyFromHash, useUi } from '../store/ui-store';
 import { usePlayback } from '../store/use-playback';
 import { catalog, fullCatalog, scenarioEntry } from './catalog';
-import { loadThemePref, saveThemePref, useResolvedTheme } from './theme';
+import { useDarkTheme } from './theme';
 import { SimClock, TimeControls } from './time-controls';
 import { VersionSelector } from './version-selector';
 import { resolveVersions, toVersionSelection } from './versions';
@@ -32,12 +32,6 @@ const ACTIVITY_LABEL: Readonly<Record<number, string>> = {
   10: 'Medium',
   30: 'Long',
 };
-const THEME_NEXT: Readonly<Record<ThemePref, ThemePref>> = {
-  system: 'light',
-  light: 'dark',
-  dark: 'system',
-};
-
 /**
  * Keep `#topology=<id>` and the selected topology in sync both ways: picking a topology writes the
  * hash (so reload and shared links keep it), and editing the hash or going back switches.
@@ -67,27 +61,7 @@ function PlaybackDriver() {
   return null;
 }
 
-function ThemeToggle({ pref }: { pref: ThemePref }) {
-  const setTheme = useUi((s) => s.setTheme);
-  const Icon = pref === 'light' ? Sun : pref === 'dark' ? Moon : Monitor;
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={() => {
-        const next = THEME_NEXT[pref];
-        setTheme(next);
-        saveThemePref(next);
-      }}
-      aria-label={`Theme: ${pref}. Switch to ${THEME_NEXT[pref]}`}
-      title={`Theme: ${pref}`}
-    >
-      <Icon size={15} aria-hidden="true" />
-    </Button>
-  );
-}
-
-function Header({ entry, themePref }: { entry: CatalogEntry; themePref: ThemePref }) {
+function Header({ entry }: { entry: CatalogEntry }) {
   const setTopology = useUi((s) => s.setTopology);
   const resetSim = useUi((s) => s.resetSim);
   const showPackets = useUi((s) => s.showPackets);
@@ -178,7 +152,6 @@ function Header({ entry, themePref }: { entry: CatalogEntry; themePref: ThemePre
             Layout
           </Button>
         ) : null}
-        <ThemeToggle pref={themePref} />
       </div>
     </header>
   );
@@ -188,10 +161,7 @@ export function App() {
   const topologyId = useUi((s) => s.topologyId);
   const versions = useUi((s) => s.versions);
   const simEpoch = useUi((s) => s.simEpoch);
-  const themePref = useUi((s) => s.theme);
-  const setTheme = useUi((s) => s.setTheme);
-  useEffect(() => setTheme(loadThemePref()), [setTheme]);
-  const theme = useResolvedTheme(themePref);
+  useDarkTheme();
 
   const scenarioId = useUi((s) => s.scenarioId);
   const entry = useMemo(
@@ -215,15 +185,11 @@ export function App() {
     <SimProvider sim={sim}>
       <PlaybackDriver />
       <div className="flex h-full flex-col">
-        <Header entry={entry} themePref={themePref} />
+        <Header entry={entry} />
         <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_24rem]">
           <section aria-label="Topology diagram" className="flex min-h-0 min-w-0 flex-col">
             <div className="min-h-0 flex-1">
-              <Diagram
-                key={`${entry.id}:${simEpoch}`}
-                baseLayout={entry.layout}
-                colorMode={theme}
-              />
+              <Diagram key={`${entry.id}:${simEpoch}`} baseLayout={entry.layout} colorMode="dark" />
             </div>
             {entry.hasFlashArray ? <ImpactStrip /> : null}
           </section>

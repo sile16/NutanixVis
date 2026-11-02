@@ -40,6 +40,9 @@ export const t1Options = {
   // 4 nodes tolerate N−2 simultaneous node failures (DEPLOY-GUIDE "Compute Cluster High
   // Availability"); ≥3 nodes required (DEPLOY-GUIDE limits).
   nodeCount: nodeCountOption('node-count', 'AHV nodes', 4),
+  // `two`: one test VM on node 1 and one on node 2 (the simple view the UI offers);
+  // `per-node`: two VMs on every node.
+  vmLayout: option('vm-layout', 'Test VMs', ['per-node', 'two'], 'per-node'),
   // Default MAC pinning: Everpure's recommendation (NET). LACP is Nutanix's preference when
   // available (DEPLOY-GUIDE Table 2). No-bond is discouraged by both (NET).
   vs1BondMode: option(
@@ -219,7 +222,7 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
         ...storageVswitches,
       ],
       cvm,
-      vmCount: 2,
+      vmCount: p.vmLayout === 'two' ? (n <= 2 ? 1 : 0) : 2,
       vmPathLossForceShutdownS: forceShutdownS(p.pathLossForceShutdownS),
       disks: [],
       hostIfaces: [HOST_MGMT],

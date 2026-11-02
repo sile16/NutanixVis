@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { topologies, topologyIds } from '../../src/topologies';
+import { buildTopology, topologies, topologyIds } from '../../src/topologies';
 
 /**
  * Every real topology renders from the live engine (loader) with all devices and cables. Hosts of
@@ -8,9 +8,15 @@ import { topologies, topologyIds } from '../../src/topologies';
  */
 for (const id of topologyIds) {
   test(`real topology ${id} renders every device and cable`, async ({ page }) => {
-    const t = topologies[id];
+    // The UI builds T1 as the simple view: 3 nodes, 2 test VMs.
+    const t =
+      id === 't1-ahv-flasharray'
+        ? buildTopology(id, { 'node-count': 3, 'vm-layout': 'two' })
+        : topologies[id];
+    // One Stargate box per CVM, plus a redirector box on every host that runs VMs.
     const derived = t.devices.some((d) => d.kind === 'fa-array')
-      ? 2 * t.devices.filter((d) => d.kind === 'cvm').length
+      ? t.devices.filter((d) => d.kind === 'cvm').length +
+        new Set(t.devices.filter((d) => d.kind === 'vm').map((d) => d.parent)).size
       : 0;
     await page.goto(`./#topology=${id}`);
     await expect(page.getByTestId('node-sw-a')).toBeVisible();

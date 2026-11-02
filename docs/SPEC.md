@@ -632,14 +632,14 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 **T1 default: AHV + FlashArray**
 
 - **4 AHV nodes**, which tolerate 2 simultaneous node failures (N−2, DEPLOY-GUIDE). A 5-node variant shows the N−3 regime.
-- Each node has two virtual switches, each with 2 NICs (DEPLOY-GUIDE Table 2):
+- Each host has four NICs. `vs0` takes eth0 and eth1; the storage NICs are eth2 and eth3, either both in one storage vswitch (`vs1`) or one each in two storage vswitches (`vs1`, `vs2`, no bond). The UI offers both:
   - `vs0` carries mgmt, live migration, DR and application traffic, in Active/Backup.
-  - `vs1` carries NVMe/TCP data only, and its NICs are always bonded.
+  - `vs1` (one-vswitch layout) carries NVMe/TCP data only, with eth2 and eth3 bonded.
 - **`vs1` bond mode** (see `docs/research/nutanix-flasharray.md` §2a):
   - **Default: Active/Active with MAC pinning.** This is Everpure's recommendation (NET), it is acceptable to Nutanix, and it needs no MLAG.
   - **Option: LACP**, which Nutanix prefers when available (DEPLOY-GUIDE). It needs MLAG/vPC across the two switches and has fast/slow detection timers.
   - **Option: no-bond.** Both vendors discourage it, and it is shown as a misconfiguration.
-- On `vs1`, one NIC goes to Switch A and one to Switch B.
+- On each pair, one NIC goes to Switch A and one to Switch B (eth0 and eth2 to A, eth1 and eth3 to B). The CVM storage interfaces are drawn as `CVM-IP` (`CVM-IP A` and `CVM-IP B` when there are two).
 - **Two isolated storage VLANs** (default, the typical storage design): VLAN A only on Switch A, VLAN B only on Switch B. NET lists "dedicated switches for each VLAN" as a supported design. Ports are tagged trunks that allow only the required VLANs.
 - **Switch settings:** STP enabled with node and array ports as edge ports. **Flow control off.** NET: "Do not enable Priority Flow Control (PFC) or Global Pause … not supported by Everpure FlashArray in NVMe/TCP environments". A `flow-control` option (global-pause | pfc) is a misconfiguration to demo.
 - The FA has ct0.eth10 and ct1.eth10 on Switch A, and ct0.eth11 and ct1.eth11 on Switch B, plus FA mgmt.

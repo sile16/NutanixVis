@@ -39,12 +39,12 @@ function variant(placement: 'strict-ab' | 'tagged-both'): ScenarioDef {
       {
         at: T0,
         action: { kind: 'fail', target: T1.storageNicA(1) },
-        note: 'Node 1 eth1 (vs1 member to Switch A) fails.',
+        note: 'Node 1 eth2 (vs1 member to Switch A) fails.',
       },
     ],
     expect: [
       ...t1Steady(),
-      at(T0, 'the VLAN-A vNIC starts on eth1 (Switch A)', (s) => {
+      at(T0, 'the VLAN-A vNIC starts on eth2 (Switch A)', (s) => {
         return vswitch(s, T1.storageVs(1)).pinning[T1.segA(1)] === T1.storageNicA(1);
       }),
       ...(trunked

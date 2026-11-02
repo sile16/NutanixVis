@@ -76,7 +76,7 @@ function hades(): ScenarioDef {
     topology: T1.topology,
     durationS: END,
     timeline: [
-      { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth1 fails.' },
+      { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth2 fails.' },
       { at: T0, action: { kind: 'fail', target: T1.storageNicB(1) }, note: 'Node 1 eth3 fails.' },
       { at: RESTORE_AT, action: { kind: 'recover', target: T1.storageNicA(1) } },
       { at: RESTORE_AT, action: { kind: 'recover', target: T1.storageNicB(1) } },
@@ -179,7 +179,7 @@ function retryInPlace(): ScenarioDef {
     options: { 'hades-maintenance-on-storage-error': 'off' },
     durationS: END,
     timeline: [
-      { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth1 fails.' },
+      { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth2 fails.' },
       { at: T0, action: { kind: 'fail', target: T1.storageNicB(1) }, note: 'Node 1 eth3 fails.' },
       { at: RESTORE_AT, action: { kind: 'recover', target: T1.storageNicA(1) } },
       { at: RESTORE_AT, action: { kind: 'recover', target: T1.storageNicB(1) } },

@@ -2,8 +2,8 @@
 
 exports[`scenario acceptance > t1-01-storage-nic-strict-ab: T1: one vs1 storage NIC fails (isolated A/B VLANs) 1`] = `
 [
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.vlan-stranded@node-1.vs1",
@@ -14,8 +14,8 @@ exports[`scenario acceptance > t1-01-storage-nic-strict-ab: T1: one vs1 storage 
 
 exports[`scenario acceptance > t1-01-storage-nic-tagged-both: T1: one vs1 storage NIC fails (VLANs tagged on both switches) 1`] = `
 [
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.failover@node-1.vs1",
@@ -214,8 +214,8 @@ exports[`scenario acceptance > t1-08-cvm-fails: T1: a CVM fails while its host s
 
 exports[`scenario acceptance > t1-09-node-storage-uplinks-lost: T1: a node loses both storage uplinks but keeps vs0 (Hades maintenance mode) 1`] = `
 [
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.vlan-stranded@node-1.vs1",
@@ -240,8 +240,8 @@ exports[`scenario acceptance > t1-09-node-storage-uplinks-lost: T1: a node loses
   "34	stargate.vdisk.taken-over@node-2.cvm",
   "34	stargate.vdisk.taken-over@node-2.cvm",
   "52	ha.leader.elected@node-2",
-  "191	action.recover@node-1.eth1",
-  "191	device.recovered@node-1.eth1",
+  "191	action.recover@node-1.eth2",
+  "191	device.recovered@node-1.eth2",
   "191	net.link.up",
   "191	net.bond.member-up@node-1.vs1",
   "191	action.recover@node-1.eth3",
@@ -261,8 +261,8 @@ exports[`scenario acceptance > t1-09-node-storage-uplinks-lost: T1: a node loses
 
 exports[`scenario acceptance > t1-09-node-storage-uplinks-lost-hades-off: T1: a node loses both storage uplinks but keeps vs0 (Hades maintenance off) 1`] = `
 [
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.vlan-stranded@node-1.vs1",
@@ -280,8 +280,8 @@ exports[`scenario acceptance > t1-09-node-storage-uplinks-lost-hades-off: T1: a 
   "15	zk.not-active@node-1.cvm",
   "72	vm.io.guest-timeout@node-1.vm-1",
   "72	vm.io.guest-timeout@node-1.vm-2",
-  "191	action.recover@node-1.eth1",
-  "191	device.recovered@node-1.eth1",
+  "191	action.recover@node-1.eth2",
+  "191	device.recovered@node-1.eth2",
   "191	net.link.up",
   "191	net.bond.member-up@node-1.vs1",
   "191	action.recover@node-1.eth3",
@@ -635,14 +635,14 @@ exports[`scenario acceptance > t1-11-single-vlan-switch-fail: T1 misconfiguratio
 
 exports[`scenario acceptance > t1-12-mtu-mismatch: T1 misconfiguration: hosts and array at MTU 9000, switches at 1500 1`] = `
 [
-  "1	net.mtu.mismatch@l-node-1.eth1--sw-a",
+  "1	net.mtu.mismatch@l-node-1.eth2--sw-a",
   "1	net.mtu.mismatch@l-node-1.eth3--sw-b",
   "1	net.mtu.mismatch@l-node-2.eth3--sw-b",
-  "1	net.mtu.mismatch@l-node-2.eth1--sw-a",
-  "1	net.mtu.mismatch@l-node-3.eth1--sw-a",
+  "1	net.mtu.mismatch@l-node-2.eth2--sw-a",
+  "1	net.mtu.mismatch@l-node-3.eth2--sw-a",
   "1	net.mtu.mismatch@l-node-3.eth3--sw-b",
   "1	net.mtu.mismatch@l-node-4.eth3--sw-b",
-  "1	net.mtu.mismatch@l-node-4.eth1--sw-a",
+  "1	net.mtu.mismatch@l-node-4.eth2--sw-a",
   "1	net.mtu.mismatch@l-fa.ct0.eth11--sw-b",
   "1	net.mtu.mismatch@l-fa.ct1.eth10--sw-a",
   "1	net.mtu.mismatch@l-fa.ct1.eth11--sw-b",
@@ -740,8 +740,8 @@ exports[`scenario acceptance > t1-14-bond-steady-balance-tcp-active-passive: T1 
 
 exports[`scenario acceptance > t1-15-bond-nic-down-active-backup-tagged-both: T1 bond comparison: one node NIC down under active-backup (VLANs on both switches) 1`] = `
 [
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.failover@node-1.vs1",
@@ -750,8 +750,8 @@ exports[`scenario acceptance > t1-15-bond-nic-down-active-backup-tagged-both: T1
 
 exports[`scenario acceptance > t1-15-bond-nic-down-balance-slb-strict-ab: T1 bond comparison: one node NIC down under balance-slb (isolated A/B VLANs) 1`] = `
 [
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.vlan-stranded@node-1.vs1",
@@ -762,8 +762,8 @@ exports[`scenario acceptance > t1-15-bond-nic-down-balance-slb-strict-ab: T1 bon
 
 exports[`scenario acceptance > t1-15-bond-nic-down-balance-slb-tagged-both: T1 bond comparison: one node NIC down under balance-slb (VLANs on both switches) 1`] = `
 [
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.failover@node-1.vs1",
@@ -772,8 +772,8 @@ exports[`scenario acceptance > t1-15-bond-nic-down-balance-slb-tagged-both: T1 b
 
 exports[`scenario acceptance > t1-15-bond-nic-down-balance-tcp-tagged-both: T1 bond comparison: one node NIC down under balance-tcp (VLANs on both switches) 1`] = `
 [
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.failover@node-1.vs1",
@@ -795,8 +795,8 @@ exports[`scenario acceptance > t1-17-lacp-no-mlag: T1 misconfiguration: LACP acr
   "0	net.bond.lacp-no-mlag@node-2.vs1",
   "0	net.bond.lacp-no-mlag@node-3.vs1",
   "0	net.bond.lacp-no-mlag@node-4.vs1",
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.member-up@node-1.vs1",
@@ -1708,8 +1708,8 @@ exports[`scenario acceptance > t1-31-maintenance-rolling: T1: rolling maintenanc
 
 exports[`scenario acceptance > t1-32-steps-both-storage-nics-down: T1 steps: both storage NICs of one node go down (stall, maintenance, redirect, failback) 1`] = `
 [
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.vlan-stranded@node-1.vs1",
@@ -1734,8 +1734,8 @@ exports[`scenario acceptance > t1-32-steps-both-storage-nics-down: T1 steps: bot
   "34	stargate.vdisk.taken-over@node-2.cvm",
   "34	stargate.vdisk.taken-over@node-2.cvm",
   "52	ha.leader.elected@node-2",
-  "191	action.recover@node-1.eth1",
-  "191	device.recovered@node-1.eth1",
+  "191	action.recover@node-1.eth2",
+  "191	device.recovered@node-1.eth2",
   "191	net.link.up",
   "191	net.bond.member-up@node-1.vs1",
   "191	action.recover@node-1.eth3",
@@ -1755,13 +1755,13 @@ exports[`scenario acceptance > t1-32-steps-both-storage-nics-down: T1 steps: bot
 
 exports[`scenario acceptance > t1-33-steps-one-nic-bond: T1 steps: one storage NIC down, one MAC-pinning bond (no interruption) 1`] = `
 [
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.failover@node-1.vs1",
-  "101	action.recover@node-1.eth1",
-  "101	device.recovered@node-1.eth1",
+  "101	action.recover@node-1.eth2",
+  "101	device.recovered@node-1.eth2",
   "101	net.link.up",
   "101	net.bond.member-up@node-1.vs1",
 ]
@@ -1769,15 +1769,15 @@ exports[`scenario acceptance > t1-33-steps-one-nic-bond: T1 steps: one storage N
 
 exports[`scenario acceptance > t1-33-steps-one-nic-dual-fabric: T1 steps: one storage NIC down, two unbonded fabrics (multipath, short stall) 1`] = `
 [
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.vlan-stranded@node-1.vs1",
   "15	nvme.path.lost@node-1.cvm",
   "15	nvme.path.lost@node-1.cvm",
-  "101	action.recover@node-1.eth1",
-  "101	device.recovered@node-1.eth1",
+  "101	action.recover@node-1.eth2",
+  "101	device.recovered@node-1.eth2",
   "101	net.link.up",
   "101	net.bond.member-up@node-1.vs1",
   "105	nvme.path.restored@node-1.cvm",
@@ -1787,13 +1787,13 @@ exports[`scenario acceptance > t1-33-steps-one-nic-dual-fabric: T1 steps: one st
 
 exports[`scenario acceptance > t1-34-steps-bond-does-not-fail-back: T1 steps: a MAC-pinning bond does not fail back to the restored NIC 1`] = `
 [
-  "11	action.fail@node-1.eth1",
-  "11	device.failed@node-1.eth1",
+  "11	action.fail@node-1.eth2",
+  "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.failover@node-1.vs1",
-  "71	action.recover@node-1.eth1",
-  "71	device.recovered@node-1.eth1",
+  "71	action.recover@node-1.eth2",
+  "71	device.recovered@node-1.eth2",
   "71	net.link.up",
   "71	net.bond.member-up@node-1.vs1",
 ]

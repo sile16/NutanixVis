@@ -27,7 +27,7 @@ describe('loadSimulation', () => {
     sim.applyAction({ kind: 'fail', target: 'sw-a' });
     const s = sim.tick();
     expect(s.devices['sw-a']?.status).toBe('failed');
-    expect(s.links['l-node-1.eth1--sw-a']?.status).toBe('down');
+    expect(s.links['l-node-1.eth2--sw-a']?.status).toBe('down');
   });
 
   it('failing a host takes its NICs down with it', () => {

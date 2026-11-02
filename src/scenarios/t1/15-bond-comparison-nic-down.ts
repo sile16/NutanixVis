@@ -29,9 +29,9 @@ function variant(mode: Mode, placement: Placement): ScenarioDef {
   const saved = placement === 'tagged-both';
   const describe: Record<Mode, string> = {
     'active-backup': 'Active-Backup moves all traffic to the standby uplink on carrier loss.',
-    'balance-slb': 'MAC pinning re-pins the vNICs that were on eth1 to eth3 on carrier loss.',
+    'balance-slb': 'MAC pinning re-pins the vNICs that were on eth2 to eth3 on carrier loss.',
     'balance-tcp':
-      'LACP drops eth1 from the aggregate on carrier loss and rehashes its flows onto eth3.',
+      'LACP drops eth2 from the aggregate on carrier loss and rehashes its flows onto eth3.',
   };
   return defineScenario({
     id: `t1-15-bond-nic-down-${mode}-${placement}`,
@@ -45,7 +45,7 @@ function variant(mode: Mode, placement: Placement): ScenarioDef {
     },
     durationS: END,
     timeline: [
-      { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth1 fails.' },
+      { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth2 fails.' },
     ],
     expect: [
       ...t1Steady(),

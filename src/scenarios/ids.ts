@@ -28,12 +28,12 @@ export const pathId = (local: string, remote: string): string => `${local}~${rem
 export const range = (from: number, to: number): readonly number[] =>
   Array.from({ length: to - from + 1 }, (_, i) => from + i);
 
-/** T1 default: 4 nodes; vs0 = eth0 (A) + eth2 (B), vs1 = eth1 (A) + eth3 (B). */
+/** T1 default: 4 nodes; vs0 = eth0 (A) + eth1 (B), storage vs1 = eth2 (A) + eth3 (B). */
 export const T1 = {
   topology: 't1-ahv-flasharray',
   nodes: range(1, 4),
   storageVs: (n: number): string => vsId(n, 1),
-  storageNicA: (n: number): string => nicId(n, 1),
+  storageNicA: (n: number): string => nicId(n, 2),
   storageNicB: (n: number): string => nicId(n, 3),
   segA: (n: number): string => segId(n, 'storage-a'),
   segB: (n: number): string => segId(n, 'storage-b'),

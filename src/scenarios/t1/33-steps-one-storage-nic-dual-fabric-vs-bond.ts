@@ -25,7 +25,7 @@ const END = by(PATH_LOSS_WORST, RESTORE_AT) + 30;
 
 /** One storage NIC of node 1 fails, then returns. */
 const timeline = [
-  { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth1 fails.' },
+  { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth2 fails.' },
   { at: RESTORE_AT, action: { kind: 'recover', target: T1.storageNicA(1) } },
 ] as const;
 

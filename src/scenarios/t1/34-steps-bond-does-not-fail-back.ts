@@ -33,11 +33,11 @@ export default defineScenario({
   },
   durationS: END,
   timeline: [
-    { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth1 fails.' },
+    { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth2 fails.' },
     {
       at: RESTORE_AT,
       action: { kind: 'recover', target: T1.storageNicA(1) },
-      note: 'eth1 returns.',
+      note: 'eth2 returns.',
     },
   ],
   expect: [
@@ -50,12 +50,12 @@ export default defineScenario({
         return st.stalledSteps === 0 && st.impact === 'none';
       },
     ),
-    atCtx(END, 'the vNIC is pinned to the surviving NIC while eth1 is down', (_s, ctx) =>
+    atCtx(END, 'the vNIC is pinned to the surviving NIC while eth2 is down', (_s, ctx) =>
       Object.values(vswitch(snapshotAt(ctx, RESTORE_AT - 1), T1.storageVs(1)).pinning).every(
         (m) => m === T1.storageNicB(1),
       ),
     ),
-    atCtx(END, 'eth1 is back in service but takes no load: the pin never moves back', (s) => {
+    atCtx(END, 'eth2 is back in service but takes no load: the pin never moves back', (s) => {
       const vs = vswitch(s, T1.storageVs(1));
       return (
         vs.activeMembers === 2 &&

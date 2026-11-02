@@ -163,7 +163,7 @@ describe('ioChain view field', () => {
   it('after a redirect the chain goes through the remote CVM and the host management uplink', () => {
     const sim = loadSimulation({ topologyId: 't1-ahv-flasharray', options: {}, seed: 1 }).sim;
     sim.tick(10);
-    sim.applyAction({ kind: 'fail', target: 'node-1.eth1' });
+    sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
     sim.applyAction({ kind: 'fail', target: 'node-1.eth3' });
     const s = sim.tick(60);
     const chain = ioChainOf(s.devices['node-1.vm-1']);
@@ -188,7 +188,7 @@ describe('ioChain view field', () => {
     };
     sim.tick(10);
     push();
-    sim.applyAction({ kind: 'fail', target: 'node-1.eth1' });
+    sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
     sim.applyAction({ kind: 'fail', target: 'node-1.eth3' });
     let peak = 0;
     let everRerouted = false;

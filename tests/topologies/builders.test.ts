@@ -35,12 +35,12 @@ describe('t1-ahv-flasharray', () => {
     const vs1 = get(t, 'node-1.vs1', 'vswitch');
     expect(vs0).toMatchObject({
       bondMode: 'active-backup',
-      uplinks: ['node-1.eth0', 'node-1.eth2'],
+      uplinks: ['node-1.eth0', 'node-1.eth1'],
     });
-    expect(vs1).toMatchObject({ bondMode: 'balance-slb', uplinks: ['node-1.eth1', 'node-1.eth3'] });
+    expect(vs1).toMatchObject({ bondMode: 'balance-slb', uplinks: ['node-1.eth2', 'node-1.eth3'] });
     expect(t.links.map((l) => l.id)).toEqual(
       expect.arrayContaining([
-        'l-node-1.eth1--sw-a',
+        'l-node-1.eth2--sw-a',
         'l-node-1.eth3--sw-b',
         'l-fa.ct0.eth10--sw-a',
         'l-fa.ct1.eth11--sw-b',
@@ -106,7 +106,7 @@ describe('t1-ahv-flasharray', () => {
     expect(get(t, 'sw-a', 'switch').mlagDomain).toBeUndefined();
     expect(get(t, 'node-1.vs1', 'vswitch').lacpRate).toBeUndefined();
     const nb = buildT1({ vs1BondMode: 'no-bond' });
-    expect(get(nb, 'node-1.vs1', 'vswitch').uplinks).toEqual(['node-1.eth1']);
+    expect(get(nb, 'node-1.vs1', 'vswitch').uplinks).toEqual(['node-1.eth2']);
     // eth3 stays cabled so set-uplinks can re-add it at runtime.
     expect(nb.links.some((l) => l.a === 'node-1.eth3')).toBe(true);
   });
@@ -126,19 +126,18 @@ describe('t1-ahv-flasharray', () => {
     expect(ofKind(s, 'vm').map((v) => v.pathLossForceShutdownS)).toEqual(Array(8).fill(120));
   });
 
-  it('per-fabric storage vswitches: vs1a (eth1, storage-a) and vs1b (eth3, storage-b), no bond', () => {
+  it('per-fabric storage vswitches: vs1 (eth2, storage-a) and vs2 (eth3, storage-b), no bond', () => {
     const s = buildT1({ storageVswitchLayout: 'per-fabric' });
-    expect(ofKind(s, 'vswitch').some((v) => v.id === 'node-1.vs1')).toBe(false);
-    expect(get(s, 'node-1.vs1a', 'vswitch')).toMatchObject({
+    expect(get(s, 'node-1.vs1', 'vswitch')).toMatchObject({
       bondMode: 'no-bond',
-      uplinks: ['node-1.eth1'],
+      uplinks: ['node-1.eth2'],
     });
-    expect(get(s, 'node-1.vs1b', 'vswitch')).toMatchObject({
+    expect(get(s, 'node-1.vs2', 'vswitch')).toMatchObject({
       bondMode: 'no-bond',
       uplinks: ['node-1.eth3'],
     });
-    expect(get(s, 'node-1.cvm.storage-a', 'cvm-interface').vswitch).toBe('node-1.vs1a');
-    expect(get(s, 'node-1.cvm.storage-b', 'cvm-interface').vswitch).toBe('node-1.vs1b');
+    expect(get(s, 'node-1.cvm.storage-a', 'cvm-interface').vswitch).toBe('node-1.vs1');
+    expect(get(s, 'node-1.cvm.storage-b', 'cvm-interface').vswitch).toBe('node-1.vs2');
     expect(reachabilityProblems(s)).toEqual([]);
     expect(
       reachabilityProblems(

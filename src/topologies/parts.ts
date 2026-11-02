@@ -94,7 +94,7 @@ export interface NicPlan {
   to: SwitchId;
 }
 export interface VSwitchPlan {
-  /** `vs0`, `vs1`, or a per-fabric storage vswitch such as `vs1a` / `vs1b`. */
+  /** `vs0`, `vs1`, or a per-fabric storage vswitch such as `vs1` / `vs2`. */
   name: string;
   bondMode: BondMode;
   lacpRate: LacpRate;
@@ -219,10 +219,20 @@ export function buildHost(p: HostPlan): Part & { layout: HostBoxSpec } {
   const cvmId = `${host}.cvm`;
   if (p.cvm) {
     devices.push({ id: cvmId, label: `CVM ${p.n}`, kind: 'cvm', parent: host });
+    // Storage interfaces read as the CVM's IP on that network; A/B only when there are two.
+    const twoStorage = p.cvm.some((i) => i.segment === 'storage-b');
+    const ifaceLabel = (segment: string): string =>
+      segment === 'storage-a'
+        ? twoStorage
+          ? 'CVM-IP A'
+          : 'CVM-IP'
+        : segment === 'storage-b'
+          ? 'CVM-IP B'
+          : segment;
     for (const i of p.cvm) {
       devices.push({
         id: `${cvmId}.${i.segment}`,
-        label: i.segment,
+        label: ifaceLabel(i.segment),
         kind: 'cvm-interface',
         parent: cvmId,
         vswitch: `${host}.${i.vswitch}`,

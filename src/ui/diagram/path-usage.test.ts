@@ -84,7 +84,7 @@ describe('bondUtilization on the engine view (kind "bond")', () => {
     const w = window10('t1-ahv-flasharray');
     const bonds = bondUtilization(w.snapshot, 'node-1');
     expect(bonds.map((b) => b.vswitchId)).toEqual(['node-1.vs0', 'node-1.vs1']);
-    expect(bonds[1]?.members.map((m) => m.nicId)).toEqual(['node-1.eth1', 'node-1.eth3']);
+    expect(bonds[1]?.members.map((m) => m.nicId)).toEqual(['node-1.eth2', 'node-1.eth3']);
   });
 });
 

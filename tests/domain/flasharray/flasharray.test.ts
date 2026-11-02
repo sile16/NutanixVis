@@ -308,7 +308,7 @@ describe('storage NIC loss: strict A/B vs tagged on both switches', () => {
   it('strict A/B: the VLAN-A vNIC has nowhere to go, its paths are lost after KATO', () => {
     const r = loadWithStubs(T1, { 'vlan-placement': 'strict-ab' });
     runTo(r, T0);
-    r.sim.applyAction({ kind: 'fail', target: 'node-1.eth1' });
+    r.sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
     const w = watch(r, T0 + HOLD + 10);
     const lost = r.events('nvme.path.lost');
     expect(new Set(lost.map((e) => e.deviceId))).toEqual(new Set(['node-1.cvm']));
@@ -329,7 +329,7 @@ describe('storage NIC loss: strict A/B vs tagged on both switches', () => {
       'isl-storage-vlans': 'allowed',
     });
     runTo(r, T0);
-    r.sim.applyAction({ kind: 'fail', target: 'node-1.eth1' });
+    r.sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
     const w = watch(r, T0 + KATO + CQT + 10);
     expect(r.events('nvme.path.lost')).toHaveLength(0);
     expect(allLive(r)).toBe(true);
@@ -431,7 +431,7 @@ describe('path usage (SPEC §6.4b)', () => {
       mlag: true,
     });
     runTo(r, T0);
-    expect(r.backend(1).uplinksFor('node-1.vm-1.vd-1')).toEqual(['node-1.eth1', 'node-1.eth3']);
+    expect(r.backend(1).uplinksFor('node-1.vm-1.vd-1')).toEqual(['node-1.eth2', 'node-1.eth3']);
   });
 
   it('active-passive: one path per vDisk', () => {
@@ -448,7 +448,7 @@ describe('determinism', () => {
       const r = loadWithStubs(T1, { 'vs1-bond-mode': 'balance-tcp', mlag: true });
       runTo(r, T0);
       r.sim.applyAction({ kind: 'fail', target: 'fa.ct0' });
-      r.sim.applyAction({ kind: 'fail', target: 'node-2.eth1' });
+      r.sim.applyAction({ kind: 'fail', target: 'node-2.eth2' });
       runTo(r, T0 + 60);
       return r.events().map((e) => `${e.t} ${e.code}@${e.deviceId} ${e.text}`);
     };

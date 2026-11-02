@@ -34,7 +34,7 @@ const MIGRATE = P.cluster.serviceVolumeMigrationDelayS;
 const FENCE = MIGRATE + HA.disconnectTimeoutS;
 const RESTART = FENCE + HA.restartByS - HA.fenceAtS;
 const END = by(RESTART) + 20;
-/** `alternate`: odd hosts start vs0 on Switch A (eth0), even hosts on Switch B (eth2). */
+/** `alternate`: odd hosts start vs0 on Switch A (eth0), even hosts on Switch B (eth1). */
 const ON_A = [1, 3];
 const ON_B = [2, 4];
 
@@ -55,7 +55,7 @@ export default defineScenario({
     ...t1Steady(),
     at(T0, 'odd hosts run vs0 on Switch A, even hosts on Switch B', (s) =>
       T1.nodes.every(
-        (n) => vswitch(s, `node-${n}.vs0`).activeMember === `node-${n}.eth${n % 2 === 1 ? 0 : 2}`,
+        (n) => vswitch(s, `node-${n}.vs0`).activeMember === `node-${n}.eth${n % 2 === 1 ? 0 : 1}`,
       ),
     ),
     at(by(0), 'nodes 1 and 3 hold two ZK seats: no side has a ZK majority', (s) =>

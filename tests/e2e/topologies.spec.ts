@@ -43,9 +43,9 @@ test('real T1: both storage NICs down, step by step: stall, maintenance, redirec
   const hop = (a: string, b: string) => page.locator(`.react-flow__edge[data-id="io:${a}>${b}"]`);
   await page.getByTestId('step').click();
   await expect(hop('node-1.vm-1', 'node-1.redirector')).toHaveAttribute('aria-label', /active/);
-  await expect(hop('node-1.vs1', 'node-1.eth1')).toHaveAttribute('aria-label', /active/);
+  await expect(hop('node-1.vs1', 'node-1.eth2')).toHaveAttribute('aria-label', /active/);
 
-  for (const nic of ['node-1.eth1', 'node-1.eth3']) {
+  for (const nic of ['node-1.eth2', 'node-1.eth3']) {
     await page.getByRole('tab', { name: 'Inspector' }).click();
     if ((await page.getByTestId('inspector-empty').count()) === 0) {
       await page.locator('.react-flow__pane').click({ position: { x: 5, y: 5 } });
@@ -63,7 +63,7 @@ test('real T1: both storage NICs down, step by step: stall, maintenance, redirec
   // The counter only moves forward, one ordinal at a time, and reaches the redirect step.
   expect([...seen].sort((a, b) => a - b)).toEqual(seen);
   expect(seen.at(-1)).toBe(4);
-  await expect(hop('node-1.vs1', 'node-1.eth1')).toHaveAttribute('aria-label', /down/);
+  await expect(hop('node-1.vs1', 'node-1.eth2')).toHaveAttribute('aria-label', /down/);
   const row = page.locator('[data-testid="impact-row"][data-vm="node-1.vm-1"]');
   await expect(row.locator('[data-kind="stalled"]').first()).toBeVisible();
   await expect(row.locator('[data-kind="redirected"]').first()).toContainText('via CVM 2');
@@ -78,14 +78,14 @@ test('bonded single-network topology: a member loss is a 0-step, no-interruption
 }) => {
   await page.goto('./#topology=t1-bonded-single');
   await expect(page.getByTestId('node-node-1.vs1')).toBeVisible();
-  await page.getByTestId('device-picker').selectOption('node-1.eth1');
+  await page.getByTestId('device-picker').selectOption('node-1.eth2');
   await page.getByTestId('action-fail').click();
   for (let i = 0; i < 6; i++) await page.getByTestId('step').click();
   await expect(page.getByTestId('sim-clock')).toHaveAttribute('data-step', '0');
   await expect(page.getByTestId('impact-bond')).toContainText('no interruption');
   await expect(page.getByTestId('impact-summary')).toContainText('no VM interrupted');
   await expect(page.getByTestId('node-node-1.eth3').getByTestId('node-note')).toHaveText('active');
-  await expect(page.getByTestId('node-node-1.eth1').getByTestId('node-note')).toHaveText('down');
+  await expect(page.getByTestId('node-node-1.eth2').getByTestId('node-note')).toHaveText('down');
 });
 
 test('bonded single-network variant: two live array paths, other portals not connected, both NICs down', async ({
@@ -102,7 +102,7 @@ test('bonded single-network variant: two live array paths, other portals not con
     );
     await expect(page.getByTestId(`node-${id}`)).toHaveAttribute('data-status', 'offline');
   }
-  for (const nic of ['node-1.eth1', 'node-1.eth3']) {
+  for (const nic of ['node-1.eth2', 'node-1.eth3']) {
     await page.getByRole('tab', { name: 'Inspector' }).click();
     if ((await page.getByTestId('inspector-empty').count()) === 0) {
       await page.locator('.react-flow__pane').click({ position: { x: 5, y: 5 } });
@@ -128,5 +128,5 @@ test('guided steps scenario loads its topology and injects the failure', async (
   await expect(page.getByTestId('scenario-active')).toContainText('MAC-pinning bond');
   await page.getByTestId('scenario-apply-0').click();
   await expect(page.getByTestId('scenario-group').first()).toHaveAttribute('data-state', 'applied');
-  await expect(page.getByTestId('node-node-1.eth1')).toHaveAttribute('data-status', 'failed');
+  await expect(page.getByTestId('node-node-1.eth2')).toHaveAttribute('data-status', 'failed');
 });

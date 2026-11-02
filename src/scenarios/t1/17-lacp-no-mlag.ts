@@ -29,7 +29,7 @@ export default defineScenario({
   },
   durationS: END,
   timeline: [
-    { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth1 fails.' },
+    { at: T0, action: { kind: 'fail', target: T1.storageNicA(1) }, note: 'Node 1 eth2 fails.' },
   ],
   expect: [
     atCtx(T0, 'each bond sees two different LACP partners', (_s, ctx) =>
@@ -45,7 +45,7 @@ export default defineScenario({
     allRunningAt(T0),
     at(
       by(P.bond.lacpFastDetectS),
-      'node 1 still has one working member after eth1 fails',
+      'node 1 still has one working member after eth2 fails',
       (s) => vswitch(s, T1.storageVs(1)).activeMembers === 1,
     ),
     allRunningAt(by(P.bond.lacpFastDetectS)),

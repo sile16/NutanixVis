@@ -18,7 +18,7 @@ const ID_RULES: Partial<Record<DeviceSpec['kind'], RegExp>> = {
   'ahv-host': /^node-[1-9]\d*$/,
   cvm: /^node-[1-9]\d*\.cvm$/,
   'cvm-interface': /^node-[1-9]\d*\.cvm\.[a-z][a-z-]*$/,
-  // vs0, vs1, or per-fabric storage vswitches vs1a / vs1b.
+  // vs0, vs1, or per-fabric storage vswitches vs1 / vs2.
   vswitch: /^node-[1-9]\d*\.vs\d+[a-z]?$/,
   'host-interface': /^node-[1-9]\d*\.host-[a-z][a-z-]*$/,
   vm: /^node-[1-9]\d*\.vm-[1-9]\d*$/,

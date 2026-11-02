@@ -79,8 +79,8 @@ export default defineScenario({
     alwaysFrom(T0, 'no host is ever marked disconnected (no quorum side to judge it)', (s) =>
       hosts(s).every((h) => h.haState === 'connected'),
     ),
-    at(by(0, POWER_OFF), 'carrier loss: every vs0 fails over to eth2 at once', (s) =>
-      T1.nodes.every((n) => vswitch(s, vs0(n)).activeMember === `node-${n}.eth2`),
+    at(by(0, POWER_OFF), 'carrier loss: every vs0 fails over to eth1 at once', (s) =>
+      T1.nodes.every((n) => vswitch(s, vs0(n)).activeMember === `node-${n}.eth1`),
     ),
     at(by(0, POWER_OFF), 'quorum and cluster services are back', (s) => {
       const d = derived(s);

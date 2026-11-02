@@ -126,9 +126,9 @@ export const t1Options = {
     ['crash-and-restart', 'stall'],
     'crash-and-restart',
   ),
-  // single-bond: vs1 = eth1 + eth3 bonded (DEPLOY-GUIDE Table 2). per-fabric: two storage
-  // vswitches with "No Uplink Bond" (AHV Admin Guide 11.2 Table 9), vs1a = eth1 → Switch A
-  // (storage-a), vs1b = eth3 → Switch B (storage-b); NVMe multipathing alone provides redundancy.
+  // single-bond: vs1 = eth2 + eth3 bonded (vs0 keeps eth0 + eth1 for management). per-fabric: two
+  // storage vswitches with "No Uplink Bond" (AHV Admin Guide 11.2 Table 9), vs1 = eth2 → Switch A
+  // (storage-a), vs2 = eth3 → Switch B (storage-b); NVMe multipathing alone provides redundancy.
   // NET discourages no-bond but allows it as an exception; seen in field deployments.
   storageVswitchLayout: option(
     'storage-vswitch-layout',
@@ -173,7 +173,7 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
       // One vNIC + one IP per storage segment (DEPLOY-GUIDE "Creating an Internal Interface").
       {
         segment: 'storage-a',
-        vswitch: perFabric ? 'vs1a' : 'vs1',
+        vswitch: 'vs1',
         vlan: VLAN.storageA,
         service: 'external-storage',
       },
@@ -181,29 +181,29 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
     if (p.storageVlans === 'two') {
       cvm.push({
         segment: 'storage-b',
-        vswitch: perFabric ? 'vs1b' : 'vs1',
+        vswitch: perFabric ? 'vs2' : 'vs1',
         vlan: VLAN.storageB,
         service: 'external-storage',
       });
     }
     const storageVswitches: VSwitchPlan[] = perFabric
       ? [
-          { name: 'vs1a', bondMode: 'no-bond', lacpRate: p.lacpRate, mtu: jumbo, nics: [1] },
-          { name: 'vs1b', bondMode: 'no-bond', lacpRate: p.lacpRate, mtu: jumbo, nics: [3] },
+          { name: 'vs1', bondMode: 'no-bond', lacpRate: p.lacpRate, mtu: jumbo, nics: [2] },
+          { name: 'vs2', bondMode: 'no-bond', lacpRate: p.lacpRate, mtu: jumbo, nics: [3] },
         ]
       : [
           // vs1: NVMe/TCP data only, always bonded (DEPLOY-GUIDE Table 2).
-          { name: 'vs1', bondMode: p.vs1BondMode, lacpRate: p.lacpRate, mtu: jumbo, nics: [1, 3] },
+          { name: 'vs1', bondMode: p.vs1BondMode, lacpRate: p.lacpRate, mtu: jumbo, nics: [2, 3] },
         ];
     const host = buildHost({
       n,
       role: 'external-storage-compute',
       label: `Node ${n}`,
-      // vs0: eth0+eth2, vs1: eth1+eth3, one NIC of each to each switch (DEPLOY-GUIDE Table 2).
+      // vs0 (management): eth0 + eth1; storage: eth2 + eth3, one NIC of each pair to each switch.
       nics: [
         { eth: 0, speedGbps: 25, mtu: 1500, to: 'sw-a' },
-        { eth: 1, speedGbps: 25, mtu: jumbo, to: 'sw-a' },
-        { eth: 2, speedGbps: 25, mtu: 1500, to: 'sw-b' },
+        { eth: 1, speedGbps: 25, mtu: 1500, to: 'sw-b' },
+        { eth: 2, speedGbps: 25, mtu: jumbo, to: 'sw-a' },
         { eth: 3, speedGbps: 25, mtu: jumbo, to: 'sw-b' },
       ],
       vswitches: [
@@ -213,8 +213,8 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
           bondMode: 'active-backup',
           lacpRate: p.lacpRate,
           mtu: 1500,
-          nics: [0, 2],
-          initialActive: vs0InitialActive(p.vs0ActiveMember, n, 0, 2),
+          nics: [0, 1],
+          initialActive: vs0InitialActive(p.vs0ActiveMember, n, 0, 1),
         },
         ...storageVswitches,
       ],

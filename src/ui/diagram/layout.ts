@@ -116,6 +116,7 @@ export function computeLayout(
   devices: Readonly<Record<string, DeviceView>>,
   links: Readonly<Record<string, LinkView>>,
   layout: LayoutMap,
+  sideHints: ReadonlyMap<string, Side> = new Map(),
 ): DiagramLayout {
   const kids = childrenIndex(devices);
   const placed = new Map<string, PlacedDevice>();
@@ -234,7 +235,7 @@ export function computeLayout(
     .sort((a, b) => a.depth - b.depth || a.id.localeCompare(b.id))
     .map((p) => p.id);
 
-  const anchors = computeAnchors(links, placed);
+  const anchors = computeAnchors(links, placed, sideHints);
   const bounds = union([...placed.values()].map((p) => p.rect)) ?? { x: 0, y: 0, w: 0, h: 0 };
   return { placed, order, anchors, bounds };
 }
@@ -255,9 +256,14 @@ export function facingSide(r: Rect, peer: Rect): Side {
   return dx >= 0 ? 'right' : 'left';
 }
 
+/**
+ * `sideHints` (by port key) force the side a port leaves from, for links that would otherwise
+ * route straight through another box.
+ */
 export function computeAnchors(
   links: Readonly<Record<string, LinkView>>,
   placed: ReadonlyMap<string, PlacedDevice>,
+  sideHints: ReadonlyMap<string, Side> = new Map(),
 ): Map<string, PortAnchor> {
   interface Pending {
     device: string;
@@ -280,7 +286,7 @@ export function computeAnchors(
       const key = portKey(end.device, end.port);
       if (seen.has(key)) continue;
       seen.add(key);
-      const side = facingSide(r, peer);
+      const side = sideHints.get(key) ?? facingSide(r, peer);
       const pc = center(peer);
       const list = bySide.get(`${end.device}|${side}`) ?? [];
       list.push({

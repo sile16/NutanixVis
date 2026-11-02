@@ -23,6 +23,7 @@ import { ContextMenu } from './context-menu';
 import { buildDataPath, hopFlows, hopLinks, isIoLink, placeDataPath } from './data-path';
 import { effectiveDevices } from './effective-status';
 import { buildEdges, buildNodes, type CableEdge, type DeviceNode } from './flow';
+import type { Side } from './geometry';
 import { computeLinkGeometries, type Point } from './geometry';
 import {
   useActivityWindow,
@@ -110,7 +111,16 @@ export function Diagram({
   const key = structureKey(placed.devices, allLinks);
   // biome-ignore lint/correctness/useExhaustiveDependencies: recompute on structure, not per tick
   const { dl, geometries } = useMemo(() => {
-    const layout = computeLayout(placed.devices, allLinks, placed.layout);
+    // A redirected VM leaves its host over the management uplink. Route that hop down the host's
+    // left edge so it does not pass through the (failed) CVM box in between.
+    const sideHints = new Map<string, Side>();
+    for (const h of model.hops) {
+      if (h.redirected && h.from.endsWith('.redirector') && h.to.endsWith('.host-mgmt')) {
+        sideHints.set(portKey(h.from, `${h.id}:a`), 'left');
+        sideHints.set(portKey(h.to, `${h.id}:b`), 'left');
+      }
+    }
+    const layout = computeLayout(placed.devices, allLinks, placed.layout, sideHints);
     const ends = Object.values(allLinks).flatMap((l) => {
       const a = layout.anchors.get(portKey(l.a.device, l.a.port));
       const b = layout.anchors.get(portKey(l.b.device, l.b.port));

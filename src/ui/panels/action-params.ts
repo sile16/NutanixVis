@@ -24,6 +24,10 @@ export function currentParamValue(kind: string, key: string, view: DeviceView | 
       return f.bondMode ?? f.mode;
     case 'rate':
       return f.lacpRate;
+    case 'gbps':
+      return f.offeredLoad;
+    case 'readPct':
+      return f.readPct;
     case 'seconds':
       return f.pathLossForceShutdownS === null ? 'off' : f.pathLossForceShutdownS;
     case 'enabled':

@@ -93,7 +93,11 @@ export function useSimControls() {
       const v = steps.view();
       return [...v.samples.values()].some((list) => {
         const last = list[list.length - 1];
-        return last !== undefined && (last.state !== 'running' || last.ioPendingS > 0);
+        // A powered-off VM (e.g. the spare) is not activity to wait out.
+        return (
+          last !== undefined &&
+          ((last.state !== 'running' && last.state !== 'off') || last.ioPendingS > 0)
+        );
       });
     };
     const cap = active() ? STEP_CAP_ACTIVE : STEP_CAP_QUIET;

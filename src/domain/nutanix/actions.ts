@@ -14,6 +14,9 @@ const isKind = (t: ActionTarget, ...kinds: string[]): t is DeviceView =>
 const field = (t: DeviceView, k: string) => t.fields[k];
 
 export const FORCE_SHUTDOWN_CHOICES = ['off', 60, 120, 300] as const;
+/** `vm.set-load` choices (throughput model, illustrative). */
+export const LOAD_CHOICES = [10, 25, 50, 100, 'line-rate'] as const;
+export const READ_PCT_CHOICES = [70, 50, 30, 100, 0] as const;
 
 export function nutanixActions(reg: Registry): ActionDefinition[] {
   const host = (id: string) => {
@@ -323,6 +326,29 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
         const n = Number(v);
         if (!Number.isInteger(n) || n <= 0) throw new ActionError(`bad timeout ${String(v)}`);
         vm(req.target).setPathLossForceShutdownS(n);
+      },
+    },
+    {
+      spec: {
+        kind: 'vm.set-load',
+        label: 'Set offered load',
+        description:
+          'Throughput model: how much storage IO this VM offers and its read share. line-rate = no cap: the guest pushes as hard as its queue depth allows, so the NICs and links limit it. Illustrative workload.',
+        appliesTo: (t) => isKind(t, 'vm') && reg.facts.externalStorage,
+        params: {
+          gbps: { label: 'Offered load (Gb/s)', choices: LOAD_CHOICES },
+          readPct: { label: 'Read share (%)', choices: READ_PCT_CHOICES },
+        },
+      },
+      apply: (req) => {
+        const v = vm(req.target);
+        const raw = req.params?.gbps;
+        const g = typeof raw === 'number' ? raw : stringParam(req, 'gbps');
+        const gbps = g === 'line-rate' ? null : Number(g);
+        if (gbps !== null && !(gbps > 0)) throw new ActionError(`bad load ${String(g)}`);
+        const rp = Number(req.params?.readPct ?? 70);
+        if (!(rp >= 0 && rp <= 100)) throw new ActionError(`bad read share ${String(rp)}`);
+        reg.vmLoad.set(v.id, { gbps, readPct: rp });
       },
     },
     {

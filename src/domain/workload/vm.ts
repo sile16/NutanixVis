@@ -61,6 +61,18 @@ export interface VmEnv {
   pathSelector?(vdisk: string): string | null;
   /** AHV host of a CVM (`ioChain`: is the serving CVM local to the VM?). */
   cvmHost?(cvm: string): string | undefined;
+  /** Throughput model result for this VM (T1), if the model runs. */
+  flowOf?(vm: string):
+    | {
+        readonly offeredGbps: number | null;
+        readonly readPct: number;
+        readonly gbps: number;
+        readonly readGbps: number;
+        readonly writeGbps: number;
+        readonly latencyUs: number;
+        readonly paths: readonly unknown[];
+      }
+    | undefined;
 }
 
 export interface VmSpec {
@@ -69,6 +81,8 @@ export interface VmSpec {
   readonly host: string;
   readonly vdisks: readonly string[];
   readonly pathLossForceShutdownS: number | null;
+  /** False: the VM starts powered off. Default true. */
+  readonly poweredOn?: boolean;
 }
 
 interface Pending {
@@ -135,6 +149,12 @@ export class Vm implements Device<Profile> {
     this.home = spec.host;
     this.vdisks = spec.vdisks;
     this.forceShutdownS = spec.pathLossForceShutdownS;
+    // A spare VM: powered off on its home host until `power-on` (no HA restart is owed).
+    if (spec.poweredOn === false) {
+      this.hostId = null;
+      this.lifecycle = 'off';
+      this.state = 'off';
+    }
   }
 
   // ── Queries used by AHV HA ──────────────────────────────────────────────
@@ -461,6 +481,16 @@ export class Vm implements Device<Profile> {
       ioLatencyMs: this.latencyMs,
       restartNeed: this.need,
     };
+    const flow = this.env.flowOf?.(this.id);
+    if (flow) {
+      fields.offeredLoad = flow.offeredGbps === null ? 'line-rate' : flow.offeredGbps;
+      fields.readPct = flow.readPct;
+      fields.throughputGbps = round1(flow.gbps);
+      fields.readGbps = round1(flow.readGbps);
+      fields.writeGbps = round1(flow.writeGbps);
+      fields.ioLatencyUs = Math.round(flow.latencyUs);
+      fields.flowPaths = JSON.stringify(flow.paths);
+    }
     return {
       id: this.id,
       kind: this.kind,
@@ -630,3 +660,5 @@ export class Vm implements Device<Profile> {
     this.shownSelector = null;
   }
 }
+
+const round1 = (x: number): number => Math.round(x * 10) / 10;

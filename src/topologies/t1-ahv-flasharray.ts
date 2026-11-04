@@ -36,13 +36,33 @@ export function forceShutdownS(v: 'off' | 60 | 120 | 300): number | undefined {
 
 export const T1_ID = 't1-ahv-flasharray';
 
+/**
+ * Line rates (illustrative sizing, per direction). 50 Gb node NICs against a 2 × 100 Gb ISL and
+ * 100 Gb array ports: two nodes at line rate with every interface on the far switch come close to
+ * filling the ISL, and three exceed it.
+ */
+export const NODE_NIC_GBPS = 50;
+export const ARRAY_PORT_GBPS = 100;
+export const ISL_GBPS = 200;
+
 export const t1Options = {
   // 4 nodes tolerate N−2 simultaneous node failures (DEPLOY-GUIDE "Compute Cluster High
   // Availability"); ≥3 nodes required (DEPLOY-GUIDE limits).
   nodeCount: nodeCountOption('node-count', 'AHV nodes', 4),
-  // `two`: one test VM on node 1 and one on node 2 (the simple view the UI offers);
-  // `per-node`: two VMs on every node.
-  vmLayout: option('vm-layout', 'Test VMs', ['per-node', 'two'], 'per-node'),
+  // `two`: one test VM on node 1 and one on node 2; `two-plus-spare` adds a powered-off VM on
+  // node 3 to power on mid-run (the simple view the UI offers); `per-node`: two VMs on every node.
+  vmLayout: option('vm-layout', 'Test VMs', ['per-node', 'two', 'two-plus-spare'], 'per-node'),
+  // Throughput model (docs/research/link-congestion.md). Each running VM's offered storage load:
+  // `line-rate` = no cap, the VM pushes as hard as its guest queue depth allows, so the NICs and
+  // links limit it. Illustrative workload, not vendor behavior.
+  vmLoadGbps: option(
+    'vm-load-gbps',
+    'Offered load per VM (Gb/s)',
+    [10, 25, 50, 100, 'line-rate'],
+    10,
+  ),
+  // Changed per VM at runtime with the VM action `vm.set-load`.
+  readPct: option('read-pct', 'Read share of the load (%)', [70, 50, 30, 100, 0], 70),
   // Default MAC pinning: Everpure's recommendation (NET). LACP is Nutanix's preference when
   // available (DEPLOY-GUIDE Table 2). No-bond is discouraged by both (NET).
   vs1BondMode: option(
@@ -195,10 +215,10 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
       label: `Node ${n}`,
       // vs0 (management): eth0 + eth1; storage: eth2 + eth3, one NIC of each pair to each switch.
       nics: [
-        { eth: 0, speedGbps: 25, mtu: 1500, to: 'sw-a' },
-        { eth: 1, speedGbps: 25, mtu: 1500, to: 'sw-b' },
-        { eth: 2, speedGbps: 25, mtu: jumbo, to: 'sw-a' },
-        { eth: 3, speedGbps: 25, mtu: jumbo, to: 'sw-b' },
+        { eth: 0, speedGbps: NODE_NIC_GBPS, mtu: 1500, to: 'sw-a' },
+        { eth: 1, speedGbps: NODE_NIC_GBPS, mtu: 1500, to: 'sw-b' },
+        { eth: 2, speedGbps: NODE_NIC_GBPS, mtu: jumbo, to: 'sw-a' },
+        { eth: 3, speedGbps: NODE_NIC_GBPS, mtu: jumbo, to: 'sw-b' },
       ],
       vswitches: [
         // vs0: mgmt, live migration, DR, apps; Active/Backup, MTU 1500 (DEPLOY-GUIDE Table 2).
@@ -213,7 +233,8 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
         ...storageVswitches,
       ],
       cvm,
-      vmCount: p.vmLayout === 'two' ? (n <= 2 ? 1 : 0) : 2,
+      vmCount: p.vmLayout === 'per-node' ? 2 : n <= 2 ? 1 : 0,
+      spareVmCount: p.vmLayout === 'two-plus-spare' && n === 3 ? 1 : 0,
       vmPathLossForceShutdownS: forceShutdownS(p.pathLossForceShutdownS),
       disks: [],
       hostIfaces: [HOST_MGMT],
@@ -238,6 +259,7 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
     mtu: fabricMtu,
     mlag: p.mlag,
     flowControl: p.flowControl,
+    islSpeedGbps: ISL_GBPS,
   });
 
   // ct0/ct1.eth10 → Switch A, ct0/ct1.eth11 → Switch B, plus mgmt (SPEC §6.5; NET). With a
@@ -257,7 +279,7 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
       {
         name: 'eth10',
         to: ['sw-a', 'sw-a'],
-        speedGbps: 25,
+        speedGbps: ARRAY_PORT_GBPS,
         mtu: jumbo,
         vlans: arrayTrunk ? storage : [VLAN.storageA],
         service: 'nvme-tcp',
@@ -265,7 +287,7 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
       {
         name: 'eth11',
         to: ['sw-b', 'sw-b'],
-        speedGbps: 25,
+        speedGbps: ARRAY_PORT_GBPS,
         mtu: jumbo,
         vlans: arrayTrunk ? storage : [storage[1] ?? VLAN.storageA],
         service: 'nvme-tcp',

@@ -86,7 +86,12 @@ export function buildImpact(
   let unaffected = 0;
   const label = (id: string | null): string => (id ? (devices[id]?.label ?? id) : 'none');
 
-  for (const [vm, series] of view.samples) {
+  for (const [vm, all] of view.samples) {
+    // A spare VM that has not been powered on yet is not an affected VM; its time off before
+    // the first start is not an outage either.
+    const firstOn = all.findIndex((x) => x.state !== 'off');
+    if (firstOn < 0) continue;
+    const series = all.slice(firstOn);
     if (series.length === 0) continue;
     const base = series.find((s) => s.ownerCvm !== null)?.ownerCvm ?? null;
     const touched = series.some(

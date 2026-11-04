@@ -73,6 +73,13 @@ export interface EngineTickContext<TProfile = unknown> extends TickContext<TProf
   ): FlowId;
   /** The trace of a message delivered or dropped during the current tick. */
   trace(msgId: string): EngineTrace | undefined;
+  /** Every trace of the current tick so far, in delivery order. */
+  traces(): readonly EngineTrace[];
+  /**
+   * Throughput model: congestion queueing delay per link direction (`<linkId>><from device>`,
+   * ms), added to the latency of later frames that cross it. Replaces the previous map.
+   */
+  setQueueDelays(delaysMs: ReadonlyMap<string, number>): void;
 }
 
 const ENGINE_CTX = Symbol.for('nutanixvis.engine.ctx');

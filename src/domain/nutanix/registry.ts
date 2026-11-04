@@ -31,11 +31,37 @@ export interface HostHa {
 /** Stream F's `ClusterView` (kept as an alias; the contract now carries every method). */
 export type NutanixClusterView = ClusterView;
 
+/** A VM's throughput as the flows device last solved it. */
+export interface VmFlowView {
+  readonly offeredGbps: number | null;
+  readonly readPct: number;
+  readonly gbps: number;
+  readonly readGbps: number;
+  readonly writeGbps: number;
+  readonly latencyUs: number;
+  /** Per NVMe path: its share, latency and the links it crosses (inspector). */
+  readonly paths: readonly VmFlowPath[];
+}
+
+export interface VmFlowPath {
+  readonly id: string;
+  readonly gbps: number;
+  readonly latencyUs: number;
+  /** Share of this path's traffic whose route crosses a switch-to-switch link, 0..100. */
+  readonly islPct: number;
+  /** Distinct routes (connections hash onto routes), heaviest first. */
+  readonly routes: readonly { readonly pct: number; readonly out: string; readonly back: string }[];
+}
+
 export class Registry implements NutanixClusterView, VmEnv {
   readonly hosts = new Map<string, AhvHost>();
   readonly cvms = new Map<string, Cvm>();
   readonly vms = new Map<string, Vm>();
   readonly backends = new Map<string, StorageBackend>();
+  /** Throughput model: each VM's offered load (`null` = line rate) and read share (`vm.set-load`). */
+  readonly vmLoad = new Map<string, { readonly gbps: number | null; readonly readPct: number }>();
+  /** Throughput model results of the last tick, per VM (flows device). */
+  readonly vmFlow = new Map<string, VmFlowView>();
   /** vDisk → owning CVM. */
   readonly owner = new Map<string, string>();
   /** VMs a `power-on` action asked to start (handled by the cluster device). */
@@ -378,6 +404,10 @@ export class Registry implements NutanixClusterView, VmEnv {
     const b = cvm === undefined ? undefined : this.backends.get(cvm);
     const nvme = (b as { nvme?: { selector?: unknown } } | undefined)?.nvme;
     return typeof nvme?.selector === 'string' ? nvme.selector : null;
+  }
+
+  flowOf(vm: string): VmFlowView | undefined {
+    return this.vmFlow.get(vm);
   }
 
   cvmHost(cvm: string): string | undefined {

@@ -42,8 +42,17 @@ export function absoluteLeafLayout(t: Topology): Topology['layout'] {
   return out;
 }
 
-/** The simple view: 3 nodes, 2 test VMs (nodes 1 and 2). */
-const SIMPLE_OPTIONS = { 'node-count': 3, 'vm-layout': 'two' } as const;
+/**
+ * The simple view: 3 nodes, 2 test VMs (nodes 1 and 2) and a powered-off spare VM on node 3 to
+ * power on for more load. Every VM offers line rate at 70 % read (throughput model,
+ * docs/research/link-congestion.md).
+ */
+const SIMPLE_OPTIONS = {
+  'node-count': 3,
+  'vm-layout': 'two-plus-spare',
+  'vm-load-gbps': 'line-rate',
+  'read-pct': 70,
+} as const;
 
 /**
  * Two storage vSwitches: vs1 (eth2, fabric A) and vs2 (eth3, fabric B), no bond, each with one

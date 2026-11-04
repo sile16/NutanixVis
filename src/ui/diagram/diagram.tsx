@@ -37,6 +37,7 @@ import { computeLayout, type LayoutMap, moveDevice, portKey } from './layout';
 import { LayoutEditPanel } from './layout-edit-panel';
 import { Legend } from './legend';
 import { LinkHoverCard } from './link-hover-card';
+import { linkUsageLabels } from './link-usage';
 import { PacketOverlay } from './packet-overlay';
 import { bondUtilization, computePathUsage } from './path-usage';
 import { type DropContext, deadChecker, dropKey, type ReplayContext } from './replay';
@@ -157,12 +158,21 @@ export function Diagram({
     return out;
   }, [win, bondUtilHost]);
 
+  // Throughput model (T1): Gb/s per direction on every cable carrying storage, colored when busy.
+  const usage = useMemo(() => linkUsageLabels(snapshot), [snapshot]);
+  const labelTones = useMemo(
+    () => new Map([...usage].map(([id, u]) => [id, u.tone] as const)),
+    [usage],
+  );
   const edgeLabels = useMemo(() => {
     const out = new Map<string, string>();
-    // Always on: how much of the storage IO crosses the inter-switch link.
-    for (const isl of islShares(win.snapshot)) {
-      const label = islLabel(isl);
-      if (label) out.set(isl.linkId, label);
+    for (const [id, u] of usage) out.set(id, u.text);
+    // Without a throughput model: how much of the sampled storage IO crosses the ISL.
+    if (usage.size === 0) {
+      for (const isl of islShares(win.snapshot)) {
+        const label = islLabel(isl);
+        if (label) out.set(isl.linkId, label);
+      }
     }
     if (!bondUtilHost) return out;
     for (const bond of bondUtilization(win.snapshot, bondUtilHost)) {
@@ -171,7 +181,7 @@ export function Diagram({
       }
     }
     return out;
-  }, [win, bondUtilHost]);
+  }, [win, bondUtilHost, usage]);
 
   const animate = !reducedMotion;
   const glow = useMemo(() => {
@@ -206,10 +216,11 @@ export function Diagram({
         pathUsage,
         glow,
         labels: edgeLabels,
+        labelTones,
         hops,
         activeLinks: model.activeLinks,
       }),
-    [allLinks, shown, geometries, selectedId, pathUsage, glow, edgeLabels, hops, model],
+    [allLinks, shown, geometries, selectedId, pathUsage, glow, edgeLabels, labelTones, hops, model],
   );
 
   const replayCtx = useMemo<ReplayContext>(

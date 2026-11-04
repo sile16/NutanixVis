@@ -16,6 +16,7 @@ describe('nodeTypeFor', () => {
     const { sim } = loadSimulation({ topologyId: 't3-co-hci', versions: { nutanix: 'aos-7.6' } });
     const kinds = new Set(Object.values(sim.getSnapshot().devices).map((d) => d.kind));
     kinds.delete('nutanix-cluster'); // logical: shown in panels, not drawn
+    kinds.delete('throughput-model');
     for (const k of kinds) expect(nodeTypeFor(k), k).not.toBe('generic');
   });
 });

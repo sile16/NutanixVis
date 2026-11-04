@@ -95,7 +95,7 @@ const union = (rects: readonly Rect[]): Rect | null => {
 };
 
 /** Logical devices that hold cluster-wide state; shown in panels, not drawn on the diagram. */
-const LOGICAL_KINDS: ReadonlySet<string> = new Set(['nutanix-cluster']);
+const LOGICAL_KINDS: ReadonlySet<string> = new Set(['nutanix-cluster', 'throughput-model']);
 
 export function childrenIndex(
   devices: Readonly<Record<string, DeviceView>>,

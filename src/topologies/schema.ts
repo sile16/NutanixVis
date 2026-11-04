@@ -112,6 +112,8 @@ const VmSpec = z.object({
   vdisks: z.number().int().min(1).default(1),
   /** Per-VM force-shutdown timeout on storage path loss (T1), seconds; absent = retry forever. */
   pathLossForceShutdownS: z.number().int().positive().optional(),
+  /** False: the VM exists but starts powered off (a spare to power on mid-scenario). */
+  poweredOn: z.boolean().default(true),
 });
 
 const ArraySpec = z.object({
@@ -169,6 +171,11 @@ export const LinkSpecSchema = z.object({
   kind: z.enum(['cable', 'isl']).default('cable'),
   mtu: z.number().int().optional(),
   latencyMs: z.number().min(0).default(0),
+  /**
+   * Line rate per direction (full duplex). Absent: the slower NIC end of the cable. Set it on
+   * links between switches (an ISL port-channel's total, e.g. 2 × 100 Gb = 200).
+   */
+  speedGbps: z.number().positive().optional(),
   /** Restrict the VLANs carried on this switch port (strict A/B, VLAN pruning). */
   allowedVlans: z.array(z.number().int()).optional(),
 });

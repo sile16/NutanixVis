@@ -185,7 +185,13 @@ test('reset clears the event log (event numbers restart)', async ({ page }) => {
   await expect(page.getByTestId('event-row').first()).toBeVisible();
   await page.getByRole('button', { name: 'Reset simulation' }).click();
   await expect(page.getByRole('tab', { name: 'Explain' })).toHaveCount(0);
-  await expect(page.getByTestId('event-row')).toHaveCount(0);
+  // Only the fresh run's own events remain (line-rate VMs fill their NICs at once).
+  await expect(page.locator('[data-testid="event-row"][data-code^="action."]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="event-row"][data-code="switch.failed"]')).toHaveCount(0);
+  const codes = await page
+    .getByTestId('event-row')
+    .evaluateAll((rows) => rows.map((r) => r.getAttribute('data-code')));
+  expect(codes.every((c) => c === 'net.link.saturated')).toBe(true);
 });
 
 test('forms show the current value; enabling MLAG pairs an unpaired switch', async ({ page }) => {

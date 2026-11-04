@@ -124,6 +124,8 @@ export interface HostPlan {
   /** Absent on compute-only hosts (SPEC §6.3a). */
   cvm?: readonly CvmIfacePlan[];
   vmCount: number;
+  /** VMs added after `vmCount` that start powered off (spares to power on mid-scenario). */
+  spareVmCount?: number;
   /** Per-VM storage path-loss force-shutdown timeout (T1); absent = retry forever. */
   vmPathLossForceShutdownS?: number | undefined;
   disks: readonly DiskPlan[];
@@ -242,13 +244,17 @@ export function buildHost(p: HostPlan): Part & { layout: HostBoxSpec } {
       });
     }
   }
-  const vms = Array.from({ length: p.vmCount }, (_, i) => `${host}.vm-${i + 1}`);
+  const vms = Array.from(
+    { length: p.vmCount + (p.spareVmCount ?? 0) },
+    (_, i) => `${host}.vm-${i + 1}`,
+  );
   vms.forEach((id, i) => {
     devices.push({
       id,
       label: `VM ${p.n}-${i + 1}`,
       kind: 'vm',
       parent: host,
+      ...(i >= p.vmCount ? { poweredOn: false } : {}),
       ...(p.vmPathLossForceShutdownS !== undefined
         ? { pathLossForceShutdownS: p.vmPathLossForceShutdownS }
         : {}),
@@ -298,6 +304,8 @@ export function switchPair(p: {
   mtu: number;
   mlag: boolean;
   flowControl?: 'off' | 'global-pause' | 'pfc';
+  /** ISL line rate per direction (e.g. a 2 × 100 Gb port-channel = 200). Absent: unlimited. */
+  islSpeedGbps?: number;
 }): Part {
   const sw = (id: SwitchId, label: string, vlans: readonly number[]): DeviceInput => ({
     id,
@@ -310,7 +318,15 @@ export function switchPair(p: {
   });
   return {
     devices: [sw('sw-a', 'Switch A', p.vlansA), sw('sw-b', 'Switch B', p.vlansB)],
-    links: [{ id: ISL_ID, a: 'sw-a', b: 'sw-b', kind: 'isl' }],
+    links: [
+      {
+        id: ISL_ID,
+        a: 'sw-a',
+        b: 'sw-b',
+        kind: 'isl',
+        ...(p.islSpeedGbps !== undefined ? { speedGbps: p.islSpeedGbps } : {}),
+      },
+    ],
   };
 }
 

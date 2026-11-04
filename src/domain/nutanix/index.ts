@@ -17,12 +17,14 @@ import { nutanixActions } from './actions';
 import { ClusterDevice } from './cluster';
 import { Cvm } from './cvm';
 import { buildFacts } from './facts';
+import { FlowsDevice } from './flows';
 import { AhvHost } from './host';
 import { TRAFFIC } from './messages';
 import { Registry } from './registry';
 
 export { CLUSTER_DEVICE_ID } from './cluster';
 export { buildFacts, type Facts, vdiskId } from './facts';
+export { FLOWS_DEVICE_ID } from './flows';
 export { MSG, TRAFFIC } from './messages';
 export type { NutanixClusterView } from './registry';
 
@@ -55,8 +57,12 @@ export const createNutanixDomain: NutanixDomain = ({ topology, profile, backendF
   const cluster = new ClusterDevice(reg);
   // Contract: `attach` once after all devices exist (a backend shared by CVMs is attached once).
   for (const b of new Set(reg.backends.values())) b.attach(reg);
+  // Throughput model (T1): runs after every VM and CVM, on this tick's traces.
+  const flows = topology.devices.some((d) => d.kind === 'fa-array')
+    ? [new FlowsDevice(topology, reg)]
+    : [];
   return {
-    devices: [cluster, ...hosts, ...cvms, ...vms],
+    devices: [cluster, ...hosts, ...cvms, ...vms, ...flows],
     actions: nutanixActions(reg),
     traffic: TRAFFIC,
     cluster: reg,

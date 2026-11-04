@@ -87,6 +87,8 @@ export type CableEdgeData = {
   dim: boolean;
   inPath: boolean;
   label: string | null;
+  /** Link-usage tone of the label: a busy (≥ 80 %) or full direction is colored. */
+  labelTone: 'ok' | 'busy' | 'full' | null;
   /** An internal hop of the I/O data path (not a physical cable): its state and reason. */
   io: IoHop | null;
   /** A physical cable that carries I/O on the active data path. */
@@ -203,6 +205,7 @@ export interface EdgeBuildOptions {
   /** Per-link activity highlight: dominant category color, opacity (recency) and drop marker. */
   readonly glow: ReadonlyMap<string, { color: string; dropped: boolean; opacity: number }>;
   readonly labels: ReadonlyMap<string, string>;
+  readonly labelTones?: ReadonlyMap<string, 'ok' | 'busy' | 'full'>;
   /** Internal data-path hops by link id (see `data-path.ts`). */
   readonly hops?: ReadonlyMap<string, IoHop>;
   /** Cables that carry I/O on the active data path. */
@@ -247,6 +250,7 @@ export function buildEdges(
         dim: opts.pathUsage !== null && !inPath,
         inPath,
         label: opts.labels.get(link.id) ?? null,
+        labelTone: opts.labelTones?.get(link.id) ?? null,
         io: opts.hops?.get(link.id) ?? null,
         ioActive: opts.activeLinks?.has(link.id) ?? false,
       },

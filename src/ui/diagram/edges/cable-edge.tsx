@@ -111,7 +111,16 @@ export function CableEdgeView({ id, data, selected }: EdgeProps<CableEdge>) {
               </span>
             ) : null}
             {data.label ? (
-              <span className="rounded border border-accent/40 bg-panel px-1 font-mono text-[9px] text-accent-ink">
+              <span
+                className={`rounded border bg-panel px-1 font-mono text-[9px] ${
+                  data.labelTone === 'full'
+                    ? 'border-status-failed/70 text-status-failed'
+                    : data.labelTone === 'busy'
+                      ? 'border-status-degraded/70 text-status-degraded'
+                      : 'border-accent/40 text-accent-ink'
+                }`}
+                data-tone={data.labelTone ?? undefined}
+              >
                 {data.label}
               </span>
             ) : null}

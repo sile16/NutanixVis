@@ -11,6 +11,7 @@ import { Button, Select, ShareBar } from '../components/controls';
 import { RoleBadge, StatusPill } from '../components/status';
 import { type EffectiveDevice, effectiveDevices } from '../diagram/effective-status';
 import { useActivityWindow } from '../diagram/hooks';
+import { linkUsage } from '../diagram/link-usage';
 import { BOND_MODE_LABEL } from '../diagram/nodes/parts';
 import {
   ancestorOfKind,
@@ -72,8 +73,17 @@ function DeviceLink({ id }: { id: string }) {
 const isDurationField = (k: string, v: ViewField): boolean =>
   typeof v === 'number' && /[a-z]S$/.test(k);
 
+/** Fields shown by their own section instead (`flowPaths`: Storage throughput). */
+const HIDDEN_FIELDS = new Set(['flowPaths']);
+
 function Fields({ fields }: { fields: Readonly<Record<string, ViewField>> }) {
-  const entries = Object.entries(fields).filter(([k, v]) => !isDurationField(k, v));
+  const entries = Object.entries(fields).filter(
+    ([k, v]) =>
+      !isDurationField(k, v) &&
+      !HIDDEN_FIELDS.has(k) &&
+      // With the throughput model running, its latency (µs, incl. queueing) replaces this one.
+      !(k === 'ioLatencyMs' && typeof fields.ioLatencyUs === 'number'),
+  );
   if (entries.length === 0) return null;
   return (
     <dl
@@ -195,6 +205,79 @@ function Actions({ target, view }: { target: string; view: DeviceView | LinkView
           ))}
         </div>
       )}
+    </Section>
+  );
+}
+
+interface FlowPathView {
+  readonly id: string;
+  readonly gbps: number;
+  readonly latencyUs: number;
+  readonly islPct: number;
+  readonly routes: readonly { readonly pct: number; readonly out: string; readonly back: string }[];
+}
+
+function parseFlowPaths(v: ViewField | undefined): FlowPathView[] {
+  if (typeof v !== 'string') return [];
+  try {
+    const x: unknown = JSON.parse(v);
+    return Array.isArray(x) ? (x as FlowPathView[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Throughput model (T1): the VM's rate, read/write split and latency, and per NVMe path how much
+ * it carries, its latency and the links it crosses out and back (docs/research/link-congestion.md).
+ * The queue-depth selector keeps outstanding IO equal per path, so a slower path carries less.
+ */
+function ThroughputSection({ vm }: { vm: DeviceView }) {
+  const snapshot = useSnapshot();
+  const f = vm.fields;
+  if (typeof f.throughputGbps !== 'number') return null;
+  const paths = parseFlowPaths(f.flowPaths);
+  const label = (id: string) => snapshot.devices[id]?.label ?? id;
+  const pathName = (id: string) => {
+    const [local = '', remote = ''] = id.split('~');
+    const port = snapshot.devices[remote]?.parent;
+    const ct = port ? snapshot.devices[port]?.parent : undefined;
+    return `${label(local)} → ${ct ? `${label(ct)} ` : ''}${port ? label(port) : label(remote)} (${label(remote)})`;
+  };
+  const offered = f.offeredLoad === 'line-rate' ? 'line rate' : `${String(f.offeredLoad)} Gb/s`;
+  return (
+    <Section title="Storage throughput" testId="vm-throughput">
+      <div className="text-xs" data-testid="vm-throughput-summary">
+        <span className="font-mono">{f.throughputGbps} Gb/s</span> of {offered} offered ·{' '}
+        {String(f.readPct)}% read ({String(f.readGbps)} Gb/s) · {100 - Number(f.readPct)}% write (
+        {String(f.writeGbps)} Gb/s) · <span className="font-mono">{String(f.ioLatencyUs)} µs</span>{' '}
+        per IO
+      </div>
+      <ul className="mt-1 space-y-1 text-[11px]" data-testid="vm-throughput-paths">
+        {paths.map((p) => (
+          <li key={p.id} data-testid="vm-throughput-path" data-isl={p.islPct}>
+            <div className="flex gap-2">
+              <span className="truncate" title={p.id}>
+                {pathName(p.id)}
+              </span>
+              <span className="ml-auto shrink-0 font-mono">
+                {p.gbps} Gb/s · {p.latencyUs} µs{p.islPct > 0 ? ` · ISL ${p.islPct}%` : ''}
+              </span>
+            </div>
+            {p.routes.map((r) => (
+              <div key={`${r.out}|${r.back}`} className="pl-2 font-mono text-ink-muted">
+                {p.routes.length > 1 ? `${r.pct}% ` : ''}out {r.out}
+                {r.back ? (
+                  <>
+                    <br />
+                    {p.routes.length > 1 ? '    ' : ''}back {r.back}
+                  </>
+                ) : null}
+              </div>
+            ))}
+          </li>
+        ))}
+      </ul>
     </Section>
   );
 }
@@ -402,6 +485,7 @@ function DeviceInspector({ device: raw }: { device: DeviceView }) {
       <Section title="State">
         <Fields fields={device.fields} />
       </Section>
+      {device.kind === 'vm' ? <ThroughputSection vm={device} /> : null}
       {device.kind === 'vm' ? <PathUsageSection vmId={device.id} /> : null}
       {showBond && host ? <BondSection hostId={host.id} /> : null}
       <Actions target={device.id} view={device} />
@@ -417,6 +501,32 @@ function DeviceInspector({ device: raw }: { device: DeviceView }) {
         </Section>
       ) : null}
     </div>
+  );
+}
+
+/** Throughput model (T1): Gb/s, line rate and queueing delay per direction of a cable. */
+function LinkThroughput({ linkId }: { linkId: string }) {
+  const snapshot = useSnapshot();
+  const dirs = linkUsage(snapshot)?.get(linkId);
+  if (!dirs || dirs.length === 0) return null;
+  const label = (id: string) => snapshot.devices[id]?.label ?? id;
+  return (
+    <Section title="Throughput (storage IO)" testId="link-throughput">
+      <ul className="space-y-0.5 text-xs">
+        {dirs.map((d) => (
+          <li key={d.from} className="flex gap-2" data-testid="link-throughput-dir">
+            <span className="truncate">
+              {label(d.from)} → {label(d.to)}
+            </span>
+            <span className="ml-auto shrink-0 font-mono">
+              {d.gbps} / {d.capacityGbps} Gb/s ({Math.round((100 * d.gbps) / d.capacityGbps)}%)
+              {d.delayUs > 0 ? ` · queue +${Math.round(d.delayUs)} µs` : ''}
+              {d.dropGbps > 0 ? ` · drops ${d.dropGbps} Gb/s` : ''}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Section>
   );
 }
 
@@ -454,6 +564,7 @@ function LinkInspector({ link }: { link: LinkView }) {
           }}
         />
       </Section>
+      <LinkThroughput linkId={link.id} />
       <Section title={`Utilization (${windowLabel})`}>
         {total === 0 ? (
           <p className="text-xs text-ink-muted">No delivered traffic.</p>

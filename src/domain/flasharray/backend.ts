@@ -11,6 +11,7 @@ import type {
   ClusterView,
   Ctx,
   CvmComponent,
+  FlowPathSet,
   IoCompletion,
   IoRequest,
   StorageBackend,
@@ -194,6 +195,24 @@ export class ExternalStorageBackend implements StorageBackend {
   /** Bond member NICs its IO egressed on during the last tick (vm `ioUplinks`). */
   uplinksFor(vdisk: string): readonly string[] {
     return this.nvme.uplinksFor(vdisk);
+  }
+
+  flowPaths(vdisk: string): FlowPathSet {
+    const live = Object.entries(this.nvme.pathStates())
+      .filter(([, st]) => st === 'live')
+      .map(([id]) => id);
+    const split = (id: string) => {
+      const [local = '', remote = ''] = id.split('~');
+      return { id, local, remote };
+    };
+    if (this.nvme.policy === 'active-passive') {
+      const used = this.nvme.pathsFor(vdisk).find((p) => live.includes(p)) ?? live[0];
+      return { paths: used === undefined ? [] : [split(used)], selector: 'single' };
+    }
+    return {
+      paths: live.map(split),
+      selector: this.nvme.selector === 'round-robin' ? 'round-robin' : 'queue-depth',
+    };
   }
 
   preTick(ctx: Ctx): void {

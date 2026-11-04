@@ -44,6 +44,8 @@ export interface VmFacts {
   readonly host: string;
   readonly vdisks: readonly string[];
   readonly pathLossForceShutdownS: number | null;
+  /** False: starts powered off (a spare VM). */
+  readonly poweredOn: boolean;
 }
 
 export interface Facts {
@@ -151,6 +153,7 @@ export function buildFacts(t: Topology): Facts {
     host: v.parent ?? '',
     vdisks: Array.from({ length: v.vdisks }, (_, k) => vdiskId(v.id, k + 1)),
     pathLossForceShutdownS: v.pathLossForceShutdownS ?? null,
+    poweredOn: v.poweredOn,
   }));
 
   const linkHostNic = new Map<string, string>();

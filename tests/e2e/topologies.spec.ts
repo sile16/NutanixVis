@@ -13,7 +13,9 @@ for (const id of topologyIds) {
       id === 't1-ahv-flasharray'
         ? buildTopology(id, {
             'node-count': 3,
-            'vm-layout': 'two',
+            'vm-layout': 'two-plus-spare',
+            'vm-load-gbps': 'line-rate',
+            'read-pct': 70,
             'storage-vswitch-layout': 'per-fabric',
           })
         : topologies[id];
@@ -247,12 +249,33 @@ test('guided steps scenario loads its topology and injects the failure', async (
   await expect(page.getByTestId('node-node-1.eth2')).toHaveAttribute('data-status', 'failed');
 });
 
-test('the ISL edge shows the share of storage IO crossing it', async ({ page }) => {
+test('the ISL edge shows Gb/s each way and the share of storage IO crossing it', async ({
+  page,
+}) => {
   await page.goto('./#topology=t1-bonded-slb-8ip');
+  await expect(page.getByTestId('node-node-1.vs1')).toBeVisible();
+  for (let i = 0; i < 2; i++) await page.getByTestId('step').click();
   await expect(page.getByTestId('edge-label-l-sw-a--sw-b')).toContainText(
-    /ISL · 5\d% of storage IO/,
+    /ISL 200 Gb: A→B \d+ · B→A \d+ · 5\d% of storage IO/,
   );
   await page.goto('./#topology=t1-ahv-flasharray');
   await page.reload();
-  await expect(page.getByTestId('edge-label-l-sw-a--sw-b')).toHaveText('ISL · 0% of storage IO');
+  await expect(page.getByTestId('edge-label-l-sw-a--sw-b')).toContainText('0% of storage IO');
+  // Line-rate VMs fill their node NICs: those cable labels are marked full.
+  await expect(
+    page.getByTestId('edge-label-l-node-1.eth2--sw-a').locator('[data-tone="full"]'),
+  ).toBeVisible();
+});
+
+test('the spare VM powers on and the inspector explains its paths', async ({ page }) => {
+  await page.goto('./#topology=t1-bonded-slb');
+  await expect(page.getByTestId('node-node-3.vm-1')).toBeVisible();
+  await page.getByTestId('device-picker').selectOption('node-3.vm-1');
+  await page.getByTestId('action-power-on').click();
+  for (let i = 0; i < 4; i++) await page.getByTestId('step').click();
+  await expect(page.getByTestId('vm-throughput-summary')).toContainText(
+    /Gb\/s of line rate offered/,
+  );
+  await expect(page.getByTestId('vm-throughput-path')).toHaveCount(4);
+  await expect(page.getByTestId('vm-throughput-paths')).toContainText('out Node 3');
 });

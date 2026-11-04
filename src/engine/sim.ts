@@ -464,6 +464,8 @@ class Sim<TProfile> implements EngineSimulation {
       },
       flow: (src, dst, l4) => this.net.flow(src, dst, l4),
       trace: (msgId) => this.traceById.get(msgId),
+      traces: () => this.traces,
+      setQueueDelays: (m) => this.net.setQueueDelays(m),
     };
     return markEngineContext(ctx);
   }

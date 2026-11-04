@@ -189,6 +189,7 @@ const DEFAULT_SWITCH_MTU = 9216;
 const DEFAULT_ENDPOINT_MTU = 1500;
 
 export class NetworkRuntime implements NetworkQuery {
+  private queueDelayMs: ReadonlyMap<string, number> = new Map();
   readonly config: NetworkConfig;
   private readonly nics = new Map<string, NicState>();
   private readonly switches = new Map<string, SwitchState>();
@@ -464,6 +465,15 @@ export class NetworkRuntime implements NetworkQuery {
   setLinkLatency(id: LinkId, ms: number): void {
     if (!Number.isFinite(ms) || ms < 0) throw new NetworkError(`latency must be >= 0, got ${ms}`);
     this.requireLink(id).latencyMs = ms;
+  }
+
+  /**
+   * Congestion queueing delay per link direction (`<linkId>><from device>`, ms), set by the
+   * throughput model each tick and added to the latency of frames that cross that direction.
+   * Replaces the previous map.
+   */
+  setQueueDelays(delaysMs: ReadonlyMap<string, number>): void {
+    this.queueDelayMs = new Map(delaysMs);
   }
 
   /** `null` allows every VLAN. */
@@ -785,7 +795,11 @@ export class NetworkRuntime implements NetworkQuery {
         egress,
       );
     }
-    return withEgress(this.finish(d, need, path.links, path.links), egress);
+    let queueMs = 0;
+    for (let i = 0; i < path.links.length; i++) {
+      queueMs += this.queueDelayMs.get(`${path.links[i]}>${path.nodes[i]}`) ?? 0;
+    }
+    return withEgress(this.finish(d, need, path.links, path.links, queueMs), egress);
   }
 
   /** Destination-side checks once the frame reached the destination's attachment. */
@@ -794,8 +808,10 @@ export class NetworkRuntime implements NetworkQuery {
     need: number,
     links: readonly LinkId[],
     carried: readonly LinkId[],
+    queueMs = 0,
   ): RouteResult {
-    const latencyMs = carried.reduce((sum, id) => sum + (this.links.get(id)?.latencyMs ?? 0), 0);
+    const latencyMs =
+      queueMs + carried.reduce((sum, id) => sum + (this.links.get(id)?.latencyMs ?? 0), 0);
     const fault =
       this.endpointFault(d) ??
       (need > d.mtu ? { reason: 'mtu' as const, at: d.spec.owner, detail: 'endpoint-mtu' } : null);

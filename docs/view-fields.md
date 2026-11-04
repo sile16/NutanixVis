@@ -35,6 +35,11 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `ioUplinks` | JSON string[] | Physical NICs, on any host, that carried this VM's storage IO (iSCSI or NVMe/TCP) during the last tick. It is empty for HCI VMs served locally over `virbr0`. |
 | `ioChain` | JSON object | The VM's IO path as ordered hops, for drawing: `{vm, stalled, remote, selector, hops:[{role, ids, label, via?}]}`. Roles in order: `vm`, `redirector` (the AHV iSCSI redirector, Frodo; `via` lists the host NICs the iSCSI leg crosses when the CVM is remote), `cvm`, `stargate` (inside the CVM; the SPDK NVMe/TCP initiator on T1), `nic` (the CVM's storage NICs that carried IO), `array-port` (FlashArray interfaces reached). `selector` is the path selector among optimized paths (T1, e.g. `queue-depth`). HCI VMs end at `stargate`. `src/domain/steps` exports `ioChainOf`. |
 | `pathLossForceShutdownS` | number \| null | Optional. The per-VM force-shutdown timeout on storage path loss (T1); `null` means unset (retry forever). |
+| `offeredLoad` | number \| `line-rate` | T1 throughput model (`docs/research/link-congestion.md`): the VM's offered storage load in Gb/s; `line-rate` = no cap. Set by option `vm-load-gbps` or action `vm.set-load`. |
+| `readPct` | number | T1 throughput model: read share of the load, %. |
+| `throughputGbps`, `readGbps`, `writeGbps` | number | T1 throughput model: the rate the VM achieves (read + write, and each), after NIC and link limits. |
+| `ioLatencyUs` | number | T1 throughput model: mean round-trip latency of one IO, µs, including queueing on congested links. |
+| `flowPaths` | JSON array | T1 throughput model, per NVMe path: `{id, gbps, latencyUs, islPct, routes:[{pct, out, back}]}`. `out` and `back` name the hops each way, marking a switch-to-switch hop `⇒ ISL ⇒` and a full direction `[full +N µs]`. The inspector's "Storage throughput" section shows it. |
 
 ### `cvm`
 
@@ -130,6 +135,10 @@ The engine reports AHV virtual switches with view `kind: 'bond'`; the UI and sce
 | `oper` | `up` \| `down` | `down` if disabled, if its port has no carrier, or if its controller is not `up`. |
 | `cabled` | boolean | `false` when its port has no cable (the topology option `array-data-ports: first-only`): not connected by design, status `offline`, no NVMe path to it. |
 
+### `throughput-model` (`flows`, T1)
+
+A logical device (not drawn). `links`: JSON `{linkId: [{from, to, gbps, capacityGbps, delayUs, dropGbps}]}`, one entry per direction, from the throughput model. `saturated`: JSON list of link directions (`<linkId>><from>`) at line rate. The diagram labels cables from `links`.
+
 ### `disk`
 
 | Key | Type | Meaning |
@@ -173,6 +182,7 @@ All of these are scalars.
 | `net.bond.lacp-no-mlag` | vswitch | The members see different LACP partners (no MLAG). |
 | `net.bond.lacp-fallback` / `net.bond.lacp-negotiated` | vswitch | A balance-tcp bond fell back to active-backup because no member is negotiated, or left that fallback. |
 | `net.bond.mode-changed` | vswitch | The runtime bond mode changed. |
+| `net.link.saturated` / `net.link.unsaturated` | link | T1 throughput model: one direction of the link reached line rate (its queue adds latency and the IO through it slows), or fell below it again. |
 | `net.mtu.mismatch` | link or switch | A large frame was dropped for MTU. Emit it once per link, not per frame. |
 | `switch.flow-control.unsupported` | switch | Flow control other than `off` is set (Everpure NET KB). |
 | `nvme.path.lost` | cvm | One path was lost: its keep-alive expired, the target refused or reset the connection, or an IO timeout reset it. The text says which. |

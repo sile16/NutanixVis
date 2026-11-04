@@ -91,6 +91,20 @@ export interface StorageBackend extends CvmComponent {
   pathsFor?(vdisk: string): readonly string[];
   /** Physical NICs (bond members) that carried a vDisk's IO during the last tick (vm `ioUplinks`). */
   uplinksFor?(vdisk: string): readonly string[];
+  /**
+   * Optional (T1): the live NVMe paths a vDisk's IO may use now, and how the initiator spreads
+   * IO over them, for the throughput model. `single`: active-passive, one path.
+   */
+  flowPaths?(vdisk: string): FlowPathSet;
+}
+
+export interface FlowPathSet {
+  readonly paths: readonly {
+    readonly id: string;
+    readonly local: EndpointId;
+    readonly remote: EndpointId;
+  }[];
+  readonly selector: 'queue-depth' | 'round-robin' | 'single';
 }
 
 /** Read-only cluster facts F exposes to E and G. */

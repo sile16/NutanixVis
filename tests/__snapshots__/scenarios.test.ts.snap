@@ -1826,6 +1826,7 @@ exports[`scenario acceptance > t1lab-03-prune-storage-vlans-default: T1-lab: pru
   "33	stargate.vdisk.handover@node-2.cvm",
   "34	stargate.vdisk.taken-over@node-2.cvm",
   "34	stargate.vdisk.taken-over@node-2.cvm",
+  "34	net.link.saturated@l-node-2.eth0--sw-b",
   "52	ha.leader.elected@node-2",
 ]
 `;

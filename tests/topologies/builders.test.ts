@@ -53,13 +53,10 @@ describe('t1-ahv-flasharray', () => {
       ['node-1.cvm.storage-a', 'node-1.vs1', 10],
       ['node-1.cvm.storage-b', 'node-1.vs1', 20],
     ]);
-    // Default is isolated storage VLANs (fabric A/B): VLAN 10 only on sw-a, VLAN 20 only on sw-b.
-    expect(get(t, 'sw-a', 'switch').vlans).toEqual([10, 100, 200]);
-    expect(get(t, 'sw-b', 'switch').vlans).toEqual([20, 100, 200]);
-    expect(get(t, 'sw-a', 'switch').flowControl).toBe('off');
-    const both = buildT1({ vlanPlacement: 'tagged-both' });
+    // One bonded vs1: both storage VLANs trunked on both switches (and the ISL).
     for (const sw of ['sw-a', 'sw-b'])
-      expect(get(both, sw, 'switch').vlans).toEqual([10, 20, 100, 200]);
+      expect(get(t, sw, 'switch').vlans).toEqual([10, 20, 100, 200]);
+    expect(get(t, 'sw-a', 'switch').flowControl).toBe('off');
     expect(ofKind(t, 'fa-interface').map((i) => i.id)).toEqual(
       expect.arrayContaining(['fa.ct0.eth10.v10', 'fa.ct0.eth11.v20', 'fa.ct1.eth10.v10']),
     );
@@ -69,12 +66,27 @@ describe('t1-ahv-flasharray', () => {
     expect(count(buildT1({ nodeCount: n }), 'ahv-host')).toBe(n);
   });
 
-  it('strict A/B: storage-a only on Switch A, storage-b only on B, ISL carries neither', () => {
-    const s = buildT1({ vlanPlacement: 'strict-ab' });
+  it('per-fabric with access array ports: storage-a only on Switch A, storage-b only on B', () => {
+    const s = buildT1({ storageVswitchLayout: 'per-fabric' });
     expect(get(s, 'sw-a', 'switch').vlans).toEqual([10, 100, 200]);
     expect(get(s, 'sw-b', 'switch').vlans).toEqual([20, 100, 200]);
-    // eth3 (Switch B) alone can no longer reach VLAN 10.
+    // eth3 (Switch B) cannot reach VLAN 10.
     expect(switchesReaching(s, ['node-1.eth3'], 10).size).toBe(0);
+    expect(reachabilityProblems(s)).toEqual([]);
+  });
+
+  it('array-port-vlans trunked: every data port carries both storage VLANs (8 data IPs)', () => {
+    const s = buildT1({ arrayPortVlans: 'trunked' });
+    const data = ofKind(s, 'fa-interface').filter((i) => i.service === 'nvme-tcp');
+    expect(data.map((i) => i.id).sort()).toEqual(
+      ['ct0', 'ct1']
+        .flatMap((c) =>
+          ['eth10', 'eth11'].flatMap((e) => [10, 20].map((v) => `fa.${c}.${e}.v${v}`)),
+        )
+        .sort(),
+    );
+    expect(new Set(data.map((i) => i.ip)).size).toBe(8);
+    expect(ofKind(t, 'fa-interface').filter((i) => i.service === 'nvme-tcp')).toHaveLength(4);
     expect(reachabilityProblems(s)).toEqual([]);
   });
 
@@ -141,19 +153,17 @@ describe('t1-ahv-flasharray', () => {
     expect(reachabilityProblems(s)).toEqual([]);
     expect(
       reachabilityProblems(
-        buildT1({ storageVswitchLayout: 'per-fabric', vlanPlacement: 'tagged-both' }),
+        buildT1({ storageVswitchLayout: 'per-fabric', arrayPortVlans: 'trunked' }),
       ),
     ).toEqual([]);
   });
 
-  it('isl-storage-vlans: pruned (default) keeps storage VLANs off the ISL', () => {
+  it('the ISL carries the storage VLANs with a bond, and not for per-fabric access ports', () => {
     const isl = (x: Topology) => x.links.find((l) => l.id === 'l-sw-a--sw-b');
-    expect(isl(t)?.allowedVlans).toEqual([100, 200]);
-    const both = buildT1({ vlanPlacement: 'tagged-both' });
-    expect(switchesReaching(both, ['node-1.eth3'], 10)).toEqual(new Set(['sw-b']));
-    const allowed = buildT1({ vlanPlacement: 'tagged-both', islStorageVlans: 'allowed' });
-    expect(isl(allowed)?.allowedVlans).toBeUndefined();
-    expect(switchesReaching(allowed, ['node-1.eth3'], 10)).toEqual(new Set(['sw-a', 'sw-b']));
+    expect(isl(t)?.allowedVlans).toBeUndefined();
+    expect(switchesReaching(t, ['node-1.eth3'], 10)).toEqual(new Set(['sw-a', 'sw-b']));
+    const pf = buildT1({ storageVswitchLayout: 'per-fabric' });
+    expect(isl(pf)?.allowedVlans).toEqual([100, 200]);
   });
 
   it('option patch for a runtime change touches only the expected fields', () => {

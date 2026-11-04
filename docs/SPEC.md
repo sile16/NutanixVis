@@ -247,11 +247,10 @@ type Trace   = { msgId; kind; links: LinkId[]; result: 'delivered'|'dropped'; dr
   - `vswitch.set-uplinks` adds or removes NICs from the bond.
   - `vswitch.set-lacp-rate` sets fast or slow.
   - `fabric.set-mlag` turns MLAG on or off.
-  - `fabric.set-vlan-placement` switches between tagged on both switches and strict A/B.
 - **How the changes apply.** They take effect at the next tick. The real procedure is noted in the action's description. For example, enabling Active-Active (LACP) in Prism performs a rolling host reboot, and a Quick-method uplink update that takes over 30 s triggers HA (AHV Admin Guide). Simulating the rolling procedure itself is a later option.
 - **Build-up and misconfiguration actions.** These are topology options exposed as actions:
   - single storage VLAN
-  - strict A/B fabrics vs trunked + ISL
+  - array data ports as access ports (4 data IPs) or trunks (8 data IPs)
   - MTU mismatch
   - LACP slow
   - HA reservation off
@@ -574,7 +573,7 @@ The integration sets the multipath and NVMe timers automatically, and they must 
    - Once every path's controller is deleted, queued IO fails to the guest.
 7. **Bond interplay.**
    - When a bond failover keeps the VLAN reachable, the TCP connections survive and NVMe never notices.
-   - When it doesn't (strict A/B), the path is lost through keep-alive (item 2), and step 3 applies.
+   - When it doesn't (no surviving member, or a member whose switch lacks the VLAN), the path is lost through keep-alive (item 2), and step 3 applies.
 
 **Values.** **KATO 5 s, controller loss 3600 s, CQT 30 s** are set automatically and must not be changed (Everpure "Nutanix Cloud Infrastructure Configuration", public, `everpure-nutanix-nci-cfg`; Hades gflag `--nvme_ctrl_loss_tmo` in the AOS 7.6 Command Reference, `ntnx-cmdref-aos-7.6`; also `everpure-nutanix-301-deck`, published with the owner's approval). A single command's worst case on a silent path loss is therefore about 3 × 5 + 30 = 45 s, under the 60 s guest timeout. The IO timeout is 45 s (`inferred`); the reconnect delay is 10 s (`assumption`, the Linux `NVMF_DEF_RECONNECT_DELAY` default); the hold multiplier and the multipath policy are `assumption`s and the path selector is `inferred`. The generic 10 s multipath retry of HA-Scenarios (`flasharray.hostMultipathRetryS`) is SCSI / dm-multipath `fast_io_fail_tmo` behavior and does not apply to this path.
 
@@ -604,9 +603,9 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 
 | Failure | Detector and timer | IO effect | VM / HA effect | Data effect |
 |---|---|---|---|---|
-| **One node storage NIC or cable down** (`vs1` member) | **Bond first.** MAC pinning fails over on link state. LACP detects in ≤3 s (fast) or ≤90 s (slow). | **Strict A/B (default):** that NIC's VLAN has no other member, so its paths go silent and are lost after **KATO** (§6.4c). New IO then continues on the other VLAN's paths. In-flight commands on the lost paths retry at 3 × KATO + CQT ≈ 45 s after the last exchange (§6.4c). **Tagged on both switches with storage VLANs allowed on the ISL:** the vNIC moves to the surviving uplink and **no NVMe path is lost** (`inferred`). If the ISL is pruned (the default), the paths are lost as in strict A/B. | None | None |
+| **One node storage NIC or cable down** (`vs1` member) | **Bond first.** MAC pinning fails over on link state. LACP detects in ≤3 s (fast) or ≤90 s (slow). | Both storage VLANs are trunked on both switches and the ISL, so the vNIC moves to the surviving uplink and **no NVMe path is lost** (`inferred`; observed on AHV 11.2). With access array ports, the moved interface reaches its VLAN's portals over the ISL. | None | None |
 | **One NVMe path down** (FA port, FA-side cable, a pruned VLAN, or an unrecoverable node-side path) | Initiator keep-alive: lost KATO (5 s) after the last exchange; at once if the target closes the connection | Until detection the selector still sends new IO to it (§6.4c item 3). **Queue-depth (default):** a few commands stuck, retried at 3 × KATO + CQT ≈ 45 s; IO continues on the other paths. **Round-robin:** a queue-depth-bound guest stalls completely for ≈ 45 s. The generic 10 s multipath retry (HA-Scenarios) is SCSI / dm-multipath behavior, not this path. | None (stall < guest timeout) | None (no RF; the array owns the data) |
-| **One storage switch down** | Keep-alive (KATO); the CVM never sees the carrier loss | Every path through that switch is lost after KATO: in strict A/B, all of one VLAN's paths. New IO then moves to the other fabric. In-flight commands retry at 3 × KATO + CQT, so the worst case is about 45 s (§6.4c); with round-robin the guest pauses for that long. | None (stall < guest timeout) | None |
+| **One storage switch down** | Keep-alive (KATO); the CVM never sees the carrier loss | Every path through that switch is lost after KATO: with access array ports, all of one VLAN's paths; with trunked array ports, half of every interface's paths. New IO then moves to the other fabric. In-flight commands retry at 3 × KATO + CQT, so the worst case is about 45 s (§6.4c); with round-robin the guest pauses for that long. | None (stall < guest timeout) | None |
 | **FA primary controller down** | Secondary sees claim expiry in about 1 s, then promotes | Array-wide pause from a few seconds up to about 16 s. The controller's ports disappear. | None, if the pause is under the guest timeout | None |
 | **FA secondary controller down** | Keep-alive (KATO): a crash is silent | Only IO on its paths stalls, then retries on the primary's paths at 3 × KATO + CQT (§6.4c). A graceful reboot (NDU) closes the connections instead: its paths are lost at once and in-flight IO waits CQT. | None | None |
 | **FA IO stall on primary** | IO delay timeout of 15 s, then giveback | Pause of 15 s plus promotion | None | None |
@@ -647,10 +646,8 @@ The VM → redirector → Stargate leg behaves as in T2. The differences come fr
 - **Options:**
   - **Bond mode** for `vs1`: Active-Backup, MAC pinning (default), or LACP. LACP needs an MLAG toggle; LACP without MLAG across two switches is a misconfiguration.
   - **Multipath policy:** active-active (default) or active-passive. This is an `assumption` until lab L12.
-  - **VLAN placement:** strict A/B (default) or tagged on both switches.
-    - In strict A/B, a node NIC failure can't be saved by the bond: the VLAN-A vNIC has nowhere to go, so the VLAN-A paths are lost through keep-alive and multipath carries the IO on VLAN B.
-    - **MAC-pinning placement is VLAN-aware** (`assumption`): a storage vNIC is pinned, rebalanced and failed over only onto a member whose switch carries its VLAN. Without this, the vendors' reference design (MAC pinning + isolated VLANs) would strand vNICs on rebalance. An "OVS-literal" toggle shows that hazard.
-    - Bonded-lab validation is needed; the test drive is single-NIC.
+  - **Storage VLAN placement is derived, not an option.** A bonded `vs1` trunks both storage VLANs on both switches and the ISL: OVS pins, rebalances and fails over a storage interface without checking which VLANs a member reaches (`docs/research/ovs-bond-behavior.md`), so isolated per-switch VLANs under a bond are a broken configuration and are not modeled.
+  - **Array data port VLANs:** access ports, one IP each (4 data IPs, default), or trunks with one IP per storage VLAN on every port (8 data IPs).
   - **Single-VLAN** misconfiguration.
   - **MTU** 1500 vs 9000 mismatch.
 
@@ -687,7 +684,7 @@ export default defineScenario({
   id: 't1-switch-a-fail',
   title: 'Storage switch A fails',
   topology: 't1-ahv-flasharray',
-  options: { fabric: 'strict-ab' },
+  options: { 'storage-vswitch-layout': 'per-fabric' },
   timeline: [
     { at: 0,  action: { kind: 'switch.fail', target: 'sw-a' } },
   ],
@@ -719,7 +716,7 @@ The same file serves two uses:
 
 T1 (AHV + FlashArray):
 
-1. One storage NIC fails on a node, in strict A/B mode vs trunked mode.
+1. One storage NIC fails on a node (one bonded `vs1`, both storage VLANs trunked).
 2. Storage switch A fails.
 3. FA primary controller crashes.
 4. FA secondary controller crashes.
@@ -734,7 +731,7 @@ T1 (AHV + FlashArray):
 13. The FA mgmt API is unreachable, so snapshots fail while IO continues.
 14. **Bond comparison, steady state.** The same VM under Active-Backup, MAC pinning and LACP, showing which uplinks its vDisk's paths and connections use, combined with the active-active and active-passive multipath policies.
 15. **Bond comparison, one node NIC down.** In each mode, check whether any NVMe path is lost, how long the blip lasts, and how the load redistributes.
-16. **MAC pinning + strict A/B.** A rebalance pins the VLAN-A vNIC to the uplink on Switch B, and its paths blackhole with no hardware failure (misconfiguration).
+16. Removed. Isolated per-switch storage VLANs under a bond are a broken configuration and are not modeled: OVS pins, fails over and rebalances without checking VLANs, so a bonded `vs1` always trunks both storage VLANs (`docs/research/ovs-bond-behavior.md`).
 17. **LACP across two switches without MLAG** (misconfiguration).
 18. **LACP slow rate with a hung switch** (no carrier loss): hashes blackhole for up to 90 s, compared with about 3 s on the fast rate. The slow variant is a host rate set outside Prism.
 19. Misconfiguration: switch flow control (PFC or global pause) enabled.
@@ -894,7 +891,7 @@ Questions 1, 2, 4 and 5 are resolved: AHV only, public repo, React, and the newe
 3. **Logos.** Are any Everpure or Nutanix logos or brand assets cleared for use?
 6. **T1, one CVM loses all NVMe paths.** The deployment guide says IO retries until the array responds, unless a per-VM force-shutdown timeout is set. Before that point, does the iSCSI redirector move VM IO to a remote CVM whose Stargate still has paths, or does the VM stall? The default model is a stall, labeled `assumption`.
 7. **T1, full array loss.** Do VMs pause, or do guests see IO errors, and when? Is there a public source for the integration's NVMe keep-alive, reconnect and controller-loss values and its path policy?
-8. **T1 bond default.** The proposal is MAC pinning (Everpure KB) with both VLANs tagged on both switches, with LACP and strict A/B as options. Confirm this, or pick LACP (Nutanix's preference).
+8. **T1 bond default.** The proposal is MAC pinning (Everpure KB) with both VLANs tagged on both switches, with LACP as an option. Confirm this, or pick LACP (Nutanix's preference).
 9. **Scope.** Is ActiveCluster or ActiveDR wanted in v1, or later?
 
 ---
@@ -992,7 +989,7 @@ Stream H raised these while writing the acceptance scenarios. Each is labeled wi
 
 - **New actions:**
   - `vm.snapshot` (T1-13), owned by the FlashArray domain.
-  - `vswitch.rebalance {vnic, member}` (T1-16), owned by the engine bond runtime, so the stranded-vNIC case is deterministic.
+  - `vswitch.rebalance {vnic, member}`, owned by the engine bond runtime: force one MAC-pinning move deterministically.
 - **New option:** `path-loss-force-shutdown-s` for T1 and T1-lab. It sets `vm.pathLossForceShutdownS` on all VMs.
 - **New profile fields:** `flasharray.controllerRebootS`, `externalStorage.ioTimeoutS`, `cluster.cvmBootS`.
 - **View fields:** the view-field contract in `docs/view-fields.md` is adopted. Domain streams must produce those fields and event codes.
@@ -1007,14 +1004,14 @@ Owner-supplied field practice from deployment walkthroughs. The full comparison 
 
 | Layout (`storage-vswitch-layout`) | Shape | Source | What a node NIC failure does |
 |---|---|---|---|
-| `single-bond` + MAC pinning (default) | One storage vswitch, both NICs, Active-Active MAC pinning | Everpure NET KB, Cisco Validated Design | Strict A/B: that VLAN's paths are lost after KATO (§6.4c). Tagged-both: the bond saves the path. |
+| `single-bond` + MAC pinning (default) | One storage vswitch, both NICs, Active-Active MAC pinning | Everpure NET KB, Cisco Validated Design | Both storage VLANs are trunked on both switches and the ISL, so the bond saves the path. |
 | `single-bond` + LACP | One vswitch, LACP over MLAG | Nutanix deployment guide ("LACP when available") | The hash moves; LACP fast/slow detection only applies to failures without carrier loss. |
 | `per-fabric` | **One vswitch per fabric, each "No Uplink Bond"** with one NIC and one storage segment (VLAN). Multipathing is left entirely to NVMe. | Field practice, AHV Admin Guide (No Uplink Bond), NET KB (no-bond allowed as an exception) | That fabric's paths are lost after KATO; IO continues on the other fabric. There is no bond layer at all. |
 
 - **Array data ports (`array-data-ports`).** `all` (default) cables both data ports of each controller. `first-only` cables only the first (eth10, Switch A side); the second keeps its address but is not connected, by design, so each CVM has two live array paths and portals that never answer. The bonded catalog entry uses `first-only`.
-- **ISL.** Field practice keeps storage VLANs **off the ISL** (single hop from node to array; the ISL adds latency and can become a bottleneck). The Cisco Validated Design allows storage traffic on the ISL. The option `isl-storage-vlans`: pruned | allowed.
+- **Storage VLAN placement (derived, not an option).** With `single-bond`, every node storage port and the ISL trunk both storage VLANs: OVS never checks a member's VLANs, so isolated per-switch VLANs on a bond are a broken configuration and are not offered. `per-fabric` with access array ports keeps VLAN A on Switch A and VLAN B on Switch B, off the ISL (field practice: single hop; the ISL adds latency and can become a bottleneck).
+- **Array data port VLANs (`array-port-vlans`).** `access` (default): eth10 on VLAN A, eth11 on VLAN B, one IP each (4 data IPs). `trunked`: every data port carries both storage VLANs with one IP per VLAN (8 data IPs), so every storage interface has two portals on each switch. The UI shows the share of storage IO that crosses the ISL on the ISL edge.
 - **Switch ports.** FA data ports are typically access ports (untagged) on the switch, while node ports are trunks.
-- **MAC pinning + isolated VLANs.** With isolated VLANs, `per-fabric` and VLAN-aware MAC pinning reach the same failure outcome, by different mechanisms.
 - **`vs0` and a hung switch.** No storage layout protects management: `vs0` is Active/Backup, which never detects a hung switch. Which switch each host's `vs0` is active on decides whether a hang costs the whole cluster (T1-20) or only the hosts on that switch (T1-21). See `docs/research/storage-network-configs.md`, "The hung switch and `vs0`".
 
 ### 15.2 Backlog from field input

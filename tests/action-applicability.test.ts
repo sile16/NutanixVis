@@ -21,17 +21,17 @@ describe('action applicability and MLAG pairing (UI bug-hunt findings)', () => {
     expect(fresh.eventLog().some((e) => e.code === 'action.rejected')).toBe(false);
   });
 
-  it('VLAN-aware member selection is only offered for MAC pinning and active-backup bonds', () => {
+  it('Force MAC-pinning rebalance is only offered for MAC pinning bonds', () => {
     const { sim } = loadSimulation({ topologyId: 't1-ahv-flasharray' });
     sim.tick(1);
-    expect(kinds(sim, 'node-1.vs1')).toContain('vswitch.set-slb-vlan-aware');
+    expect(kinds(sim, 'node-1.vs1')).toContain('vswitch.rebalance');
     sim.applyAction({
       kind: 'vswitch.set-bond-mode',
       target: 'node-1.vs1',
       params: { mode: 'balance-tcp' },
     });
     sim.tick(1);
-    expect(kinds(sim, 'node-1.vs1')).not.toContain('vswitch.set-slb-vlan-aware');
+    expect(kinds(sim, 'node-1.vs1')).not.toContain('vswitch.rebalance');
   });
 
   it('Start Stargate is only offered when Stargate is not up', () => {

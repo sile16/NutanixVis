@@ -97,7 +97,7 @@ export interface Trace {
   readonly dst?: EndpointId;
   /** Illustrative path latency (sum of link latencies). */
   readonly latencyMs?: number;
-  /** Finer drop cause, e.g. `different-vlan`, `no-uplink-carries-vlan`, `endpoint-mtu`. */
+  /** Finer drop cause, e.g. `different-vlan`, `no-live-uplink`, `endpoint-mtu`. */
   readonly detail?: string;
   /** Egress NIC selected at the source, if the frame left the host. */
   readonly egress?: string;

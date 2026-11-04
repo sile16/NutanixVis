@@ -14,7 +14,6 @@ import s12 from './12-mtu-mismatch';
 import s13 from './13-fa-mgmt-unreachable';
 import s14 from './14-bond-comparison-steady';
 import s15 from './15-bond-comparison-nic-down';
-import s16 from './16-slb-rebalance-strict-ab';
 import s17 from './17-lacp-no-mlag';
 import s18 from './18-lacp-rate-hung-switch';
 import s19 from './19-flow-control';
@@ -34,7 +33,7 @@ import s32 from './32-steps-both-storage-nics-down';
 import s33 from './33-steps-one-storage-nic-dual-fabric-vs-bond';
 import s34 from './34-steps-bond-does-not-fail-back';
 
-/** T1 (AHV + FlashArray): SPEC §7.2 items 1–30 (19: flow-control misconfiguration), 31 (rolling maintenance) and 32–34 (steps view). */
+/** T1 (AHV + FlashArray): SPEC §7.2 items 1–30 (19: flow-control misconfiguration; 16 removed: isolated VLANs on a bond are not modeled), 31 (rolling maintenance) and 32–34 (steps view). */
 export const t1Scenarios: readonly ScenarioDef[] = [
   s01,
   s02,
@@ -51,7 +50,6 @@ export const t1Scenarios: readonly ScenarioDef[] = [
   s13,
   s14,
   s15,
-  s16,
   s17,
   s18,
   s19,

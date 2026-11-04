@@ -43,7 +43,6 @@ function dualFabric(): ScenarioDef {
       'node-count': 3,
       'vm-layout': 'two',
       'storage-vswitch-layout': 'per-fabric',
-      'vlan-placement': 'strict-ab',
     },
     durationS: END,
     timeline,
@@ -124,8 +123,6 @@ function bond(): ScenarioDef {
     options: {
       'node-count': 3,
       'vm-layout': 'two',
-      'vlan-placement': 'tagged-both',
-      'isl-storage-vlans': 'allowed',
       'vs1-bond-mode': 'balance-slb',
       'storage-vlans': 'single',
     },

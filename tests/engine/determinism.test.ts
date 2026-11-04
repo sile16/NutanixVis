@@ -31,7 +31,6 @@ const ACTIONS: readonly ActionRequest[] = [
   { kind: 'vswitch.set-lacp-rate', target: 'h1.vs1', params: { rate: 'slow' } },
   { kind: 'vswitch.set-uplinks', target: 'h2.vs1', params: { uplinks: 'h2.eth1' } },
   { kind: 'fabric.set-mlag', target: 'sw-a', params: { enabled: 'off' } },
-  { kind: 'vswitch.set-slb-vlan-aware', target: 'h1.vs1', params: { enabled: 'off' } },
 ];
 
 type Step = { readonly actions: readonly number[]; readonly ticks: number };

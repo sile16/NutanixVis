@@ -54,21 +54,17 @@ describe('active-backup', () => {
     expect(snap.devices['h1.vs1']?.fields['member.h1.eth0']).toBe('backup');
   });
 
-  it('VLAN-aware: uses a backup for a VLAN the active uplink does not carry', () => {
+  it('not VLAN-aware (OVS): a VLAN the active uplink’s switch does not carry is dropped there', () => {
     const strictAB: FabricOptions = { vlansA: [10], vlansB: [20] };
     const probes = [
       { src: H1, dst: 'tgt.ep0' },
       { src: 'h1.cvm.ep20', dst: 'tgt.ep20' },
     ];
-    const aware = probeSim(fabric(strictAB), probes).tick();
-    expect(traceOf(aware, H1, 'tgt.ep0')).toMatchObject({ result: 'delivered', egress: 'h1.eth0' });
-    expect(traceOf(aware, 'h1.cvm.ep20', 'tgt.ep20')).toMatchObject({
+    const literal = probeSim(fabric(strictAB), probes).tick();
+    expect(traceOf(literal, H1, 'tgt.ep0')).toMatchObject({
       result: 'delivered',
-      egress: 'h1.eth1',
-      links: ['l-h1-eth1', 'l-tgt-p1'],
+      egress: 'h1.eth0',
     });
-
-    const literal = probeSim(fabric({ ...strictAB, slbVlanAware: false }), probes).tick();
     expect(traceOf(literal, 'h1.cvm.ep20', 'tgt.ep20')).toMatchObject({
       result: 'dropped',
       reason: 'vlan-not-carried',
@@ -117,7 +113,7 @@ describe('balance-slb (MAC pinning)', () => {
     expect(new Set([after[0], after[2]])).toEqual(new Set(['h1.eth0', 'h1.eth1']));
   });
 
-  it('VLAN-aware rebalance never moves a VLAN onto an uplink that lacks it; OVS-literal does', () => {
+  it('pinning and rebalance ignore VLANs: a VLAN can sit on an uplink that lacks it (OVS)', () => {
     const base: FabricOptions = {
       mode: 'balance-slb',
       h1Vms: 3,
@@ -130,12 +126,7 @@ describe('balance-slb (MAC pinning)', () => {
       ...flows('h1.vm1', 'tgt.ep0', 5),
       ...flows('h1.vm2', 'tgt.ep0', 5),
     ];
-    const aware = probeSim(fabric(base), probes);
-    aware.tick(6);
-    expect(egresses(traces(aware.getSnapshot()))).toEqual(['h1.eth0']);
-    expect(dropped(traces(aware.getSnapshot()))).toEqual([]);
-
-    const literal = probeSim(fabric({ ...base, slbVlanAware: false }), probes);
+    const literal = probeSim(fabric(base), probes);
     expect(dropped(traces(literal.tick()))).toHaveLength(5); // vm1 pinned to eth1 from the start
     literal.tick(5);
     const lost = dropped(traces(literal.getSnapshot()));
@@ -175,25 +166,26 @@ describe('hashed-bond failover (SPEC §5.3 "On failover")', () => {
     const ev = snap.events.find((e) => e.code === 'net.bond.failover');
     expect(ev?.deviceId).toBe('h1.vs1');
     expect(s.causalChain(`e${ev?.seq}`)[0]?.code).toBe('action.fail');
-    expect(codes(snap)).not.toContain('net.bond.vlan-stranded');
   });
 
-  it('balance-slb, isolated VLANs (VLAN-aware): a vNIC with no surviving carrier is stranded', () => {
+  it('balance-slb, isolated VLANs: failover moves a vNIC onto a member that blackholes it (OVS)', () => {
     const s = probeSim(fabric({ mode: 'balance-slb', vlansA: [10], vlansB: [20] }), [
       { src: H1, dst: 'tgt.ep0' },
       { src: 'h1.cvm.ep20', dst: 'tgt.ep20' },
     ]);
-    expect(pinning(s.tick())).toEqual({ [H1]: 'h1.eth0', 'h1.cvm.ep20': 'h1.eth1' });
-    s.applyAction({ kind: 'fail', target: 'h1.eth0' });
+    const before = pinning(s.tick());
+    const victim = before[H1] ?? '';
+    const survivor = victim === 'h1.eth0' ? 'h1.eth1' : 'h1.eth0';
+    s.applyAction({ kind: 'fail', target: victim });
     const snap = s.tick();
-    expect(pinning(snap)).toEqual({ 'h1.cvm.ep20': 'h1.eth1' });
-    expect(codes(snap)).toContain('net.bond.vlan-stranded');
-    expect(codes(snap)).not.toContain('net.bond.failover');
-    expect(traceOf(snap, H1, 'tgt.ep0')).toMatchObject({
-      result: 'dropped',
-      reason: 'bond-no-member',
-      detail: 'no-uplink-carries-vlan',
-    });
+    expect(pinning(snap)[H1]).toBe(survivor);
+    expect(codes(snap)).toContain('net.bond.failover');
+    if (survivor === 'h1.eth1') {
+      expect(traceOf(snap, H1, 'tgt.ep0')).toMatchObject({
+        result: 'dropped',
+        reason: 'vlan-not-carried',
+      });
+    }
   });
 
   it('balance-tcp: an LACP timeout moves the hung member’s flows, caused by the timeout', () => {
@@ -410,18 +402,5 @@ describe('runtime bond configuration', () => {
     s.applyAction({ kind: 'link-down', target: 'l-h1-eth0' });
     snap = s.tick();
     expect(dropped(traces(snap)).map((t) => t.reason)).toEqual(Array(4).fill('bond-no-member'));
-  });
-
-  it('toggles VLAN awareness at runtime', () => {
-    const s = probeSim(fabric({ vlansA: [10], vlansB: [20] }), [
-      { src: 'h1.cvm.ep20', dst: 'tgt.ep20' },
-    ]);
-    expect(s.tick().traces[0]?.result).toBe('delivered');
-    s.applyAction({
-      kind: 'vswitch.set-slb-vlan-aware',
-      target: 'h1.vs1',
-      params: { enabled: 'off' },
-    });
-    expect(s.tick().traces[0]?.reason).toBe('vlan-not-carried');
   });
 });

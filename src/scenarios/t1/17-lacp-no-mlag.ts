@@ -21,9 +21,6 @@ export default defineScenario({
   title: 'T1 misconfiguration: LACP across two switches without MLAG',
   topology: T1.topology,
   options: {
-    'vlan-placement': 'tagged-both',
-    // The bond can only save a path if the ISL carries the storage VLANs.
-    'isl-storage-vlans': 'allowed',
     'vs1-bond-mode': 'balance-tcp',
     mlag: false,
   },

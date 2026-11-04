@@ -172,7 +172,6 @@ All of these are scalars.
 | `net.bond.lacp-timeout` | vswitch | LACP timed out a member that had no carrier loss. |
 | `net.bond.lacp-no-mlag` | vswitch | The members see different LACP partners (no MLAG). |
 | `net.bond.lacp-fallback` / `net.bond.lacp-negotiated` | vswitch | A balance-tcp bond fell back to active-backup because no member is negotiated, or left that fallback. |
-| `net.bond.vlan-stranded` | vswitch | A vNIC's VLAN is carried by no surviving member (VLAN-aware MAC pinning under isolated VLANs), so it is left unpinned and its traffic is dropped until a member returns (`assumption`, SPEC §6.5). |
 | `net.bond.mode-changed` | vswitch | The runtime bond mode changed. |
 | `net.mtu.mismatch` | link or switch | A large frame was dropped for MTU. Emit it once per link, not per frame. |
 | `switch.flow-control.unsupported` | switch | Flow control other than `off` is set (Everpure NET KB). |
@@ -263,7 +262,7 @@ Until this lands, `src/scenarios/context.ts` provides the bridge. `withCtx(fn)` 
 ### 2. New action kinds
 
 - `vm.snapshot` (target: vm) takes an array snapshot through the FA management API. T1-13 uses it.
-- `vswitch.rebalance` (target: vswitch; params `vnic`, `member`) forces the next balance-slb rebalance to move one vNIC. T1-16 uses it to show a rebalance stranding a vNIC under isolated A/B VLANs, deterministically.
+- `vswitch.rebalance` (target: vswitch; params `vnic`, `member`) forces the next balance-slb rebalance to move one vNIC. Use it to put an interface on a chosen member deterministically (e.g. the swapped placement that sends all storage IO over the ISL).
 
 ### 3. New topology option
 

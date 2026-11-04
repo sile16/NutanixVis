@@ -164,12 +164,12 @@ test('traffic filter: toggles hide glow, presets, persists across topology switc
 
 test('topology hash: picking writes it, editing it switches', async ({ page }) => {
   await open(page, 't1-ahv-flasharray');
-  // The dropdown offers the two storage-network configurations only.
-  await expect(page.getByTestId('topology-select').locator('option')).toHaveCount(2);
-  await page.getByTestId('topology-select').selectOption('t1-bonded-single');
-  await expect(page).toHaveURL(/#topology=t1-bonded-single$/);
+  // The dropdown offers the three storage-network configurations only.
+  await expect(page.getByTestId('topology-select').locator('option')).toHaveCount(5);
+  await page.getByTestId('topology-select').selectOption('t1-bonded-lacp');
+  await expect(page).toHaveURL(/#topology=t1-bonded-lacp$/);
   await page.reload();
-  await expect(page.getByTestId('topology-select')).toHaveValue('t1-bonded-single');
+  await expect(page.getByTestId('topology-select')).toHaveValue('t1-bonded-lacp');
   await page.evaluate(() => {
     window.location.hash = 'topology=t1-ahv-flasharray';
   });
@@ -254,7 +254,13 @@ test('traffic dots keep streaming slowly while the simulation is paused', async 
   await expect(page.getByTestId('sim-clock')).toHaveText(clock ?? '');
 });
 
-for (const id of ['t1-ahv-flasharray', 't1-bonded-single']) {
+for (const id of [
+  't1-ahv-flasharray',
+  't1-bonded-slb',
+  't1-bonded-slb-8ip',
+  't1-bonded-lacp',
+  't1-bonded-lacp-8ip',
+]) {
   test(`${id}: IO is already flowing when the page loads (step 0)`, async ({ page }) => {
     await open(page, id);
     await expect(page.getByTestId('sim-clock')).toHaveAttribute('data-step', '0');

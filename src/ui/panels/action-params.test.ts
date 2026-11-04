@@ -32,8 +32,6 @@ describe('action params', () => {
     expect(initialParams(mode, device({ bondMode: 'balance-slb' }))).toEqual({
       mode: 'balance-slb',
     });
-    const vlanAware = spec('vswitch.set-slb-vlan-aware', 'enabled', ['on', 'off']);
-    expect(currentChoice(vlanAware, 'enabled', device({ slbVlanAware: false }))).toBe('off');
     const mlag = spec('fabric.set-mlag', 'enabled', ['on', 'off']);
     expect(currentChoice(mlag, 'enabled', device({ mlagDomain: null }))).toBe('off');
     expect(currentChoice(mlag, 'enabled', device({ mlagDomain: 'pod-1' }))).toBe('on');

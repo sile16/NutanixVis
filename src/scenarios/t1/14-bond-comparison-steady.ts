@@ -64,12 +64,8 @@ function variant(mode: Mode, policy: Policy): ScenarioDef {
     id: `t1-14-bond-steady-${mode}-${policy}`,
     title: `T1 bond comparison (steady): ${mode}, multipath ${policy}`,
     topology: T1.topology,
-    // Both storage VLANs on both switches: under isolated A/B VLANs only correctly pinned MAC
-    // pinning carries both VLANs, so the comparison is made on the trunked fabric.
+    // Both storage VLANs are trunked on both switches (the T1 bond layout always is).
     options: {
-      'vlan-placement': 'tagged-both',
-      // The bond can only save a path if the ISL carries the storage VLANs.
-      'isl-storage-vlans': 'allowed',
       'vs1-bond-mode': mode,
       'multipath-policy': policy,
       ...(mode === 'balance-tcp' ? { mlag: true } : {}),

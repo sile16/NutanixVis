@@ -8,6 +8,7 @@ import { type CatalogEntry, fixtureCatalog } from '../../fixtures/catalog';
 import { loadSimulation } from '../../loader/simulation';
 import type { ScenarioDef } from '../../scenarios/define';
 import { buildTopology, type TopologyId, topologies, topologyIds } from '../../topologies';
+import type { Choice } from '../../topologies/options';
 import type { Topology } from '../../topologies/schema';
 
 const TITLES: Readonly<Record<TopologyId, string>> = {
@@ -71,36 +72,76 @@ const realEntries: CatalogEntry[] = topologyIds.map((id) => {
 });
 
 /**
- * T1 variant: ONE storage network and one virtual switch with both NICs bonded (MAC pinning), so
- * the bond, its two members and the active member are visible. Only the first data port of each
- * array controller is cabled, so each CVM has two live paths and the other two portals are not
- * connected (by design). Same topology and models as T1,
+ * T1 variants with ONE storage virtual switch (vs1 = eth2 + eth3 bonded) and two storage VLANs,
+ * one CVM storage interface and IP per VLAN (DEPLOY-GUIDE "Creating an Internal Interface"; NET:
+ * at least two storage VLANs). The node switch ports and the ISL trunk both storage VLANs (the
+ * topology always does this for a bond), so either bond member reaches either VLAN. The array
+ * ports are either access ports (VLAN A on eth10 / Switch A, VLAN B on eth11 / Switch B, 4 data
+ * IPs) or trunks with one IP per VLAN on every port (8 data IPs). Same topology and models as T1,
  * built from its options (declarative data, no engine change).
  */
 const BONDED_OPTIONS = {
   ...SIMPLE_OPTIONS,
   'storage-vswitch-layout': 'single-bond',
-  'storage-vlans': 'single',
-  'vlan-placement': 'tagged-both',
-  'isl-storage-vlans': 'allowed',
+  'storage-vlans': 'two',
 } as const;
-const bondedEntry: CatalogEntry = {
-  id: 't1-bonded-single',
-  title: 'One storage vSwitch (vs1), bonded NICs · single subnet, MAC pinning',
-  hasFlashArray: true,
-  layout: absoluteLeafLayout(buildTopology('t1-ahv-flasharray', BONDED_OPTIONS)),
-  createSimulation: (versions) =>
-    loadSimulation({
-      topologyId: 't1-ahv-flasharray',
-      options: BONDED_OPTIONS,
-      versions: {
-        nutanix: versions.nutanix,
-        ...(versions.flasharray ? { flasharray: versions.flasharray } : {}),
-      },
-    }).sim,
-};
 
-/** Fixture demos (scripted traffic); not offered while the simulator covers two configurations. */
+/** Active-Active with MAC pinning (OVS balance-slb): each storage interface pinned to one NIC. */
+const SLB_OPTIONS = { ...BONDED_OPTIONS, 'vs1-bond-mode': 'balance-slb' } as const;
+
+/**
+ * Active-Active (OVS balance-tcp with LACP, AHV Admin Guide 11.2 Table 9): flows hashed per
+ * connection across both NICs. LACP across the two switches needs MLAG/vPC.
+ */
+const LACP_OPTIONS = { ...BONDED_OPTIONS, 'vs1-bond-mode': 'balance-tcp', mlag: true } as const;
+
+function t1Variant(
+  id: string,
+  title: string,
+  options: Readonly<Record<string, Choice>>,
+): CatalogEntry {
+  return {
+    id,
+    title,
+    hasFlashArray: true,
+    layout: absoluteLeafLayout(buildTopology('t1-ahv-flasharray', options)),
+    createSimulation: (versions) =>
+      loadSimulation({
+        topologyId: 't1-ahv-flasharray',
+        options,
+        versions: {
+          nutanix: versions.nutanix,
+          ...(versions.flasharray ? { flasharray: versions.flasharray } : {}),
+        },
+      }).sim,
+  };
+}
+
+const ACCESS = { 'array-port-vlans': 'access' } as const;
+const TRUNKED = { 'array-port-vlans': 'trunked' } as const;
+const ARRAY_4 = 'array access ports, 4 data IPs';
+const ARRAY_8 = 'array trunked ports, 8 data IPs';
+
+const bondedEntries: CatalogEntry[] = [
+  t1Variant('t1-bonded-slb', `One storage vSwitch (vs1), MAC pinning · ${ARRAY_4}`, {
+    ...SLB_OPTIONS,
+    ...ACCESS,
+  }),
+  t1Variant('t1-bonded-slb-8ip', `One storage vSwitch (vs1), MAC pinning · ${ARRAY_8}`, {
+    ...SLB_OPTIONS,
+    ...TRUNKED,
+  }),
+  t1Variant('t1-bonded-lacp', `One storage vSwitch (vs1), Active-Active LACP · ${ARRAY_4}`, {
+    ...LACP_OPTIONS,
+    ...ACCESS,
+  }),
+  t1Variant('t1-bonded-lacp-8ip', `One storage vSwitch (vs1), Active-Active LACP · ${ARRAY_8}`, {
+    ...LACP_OPTIONS,
+    ...TRUNKED,
+  }),
+];
+
+/** Fixture demos (scripted traffic); not offered in the UI. */
 export const demoEntries: CatalogEntry[] = fixtureCatalog.map((e) => ({
   ...e,
   id: `demo-${e.id}`,
@@ -108,15 +149,19 @@ export const demoEntries: CatalogEntry[] = fixtureCatalog.map((e) => ({
 }));
 
 /** Every topology the loader can build, for tests and tooling. */
-export const fullCatalog: readonly CatalogEntry[] = [...realEntries, bondedEntry, ...demoEntries];
+export const fullCatalog: readonly CatalogEntry[] = [
+  ...realEntries,
+  ...bondedEntries,
+  ...demoEntries,
+];
 
 /**
- * What the UI offers: the two storage-network configurations being compared. Other topologies
+ * What the UI offers: the five storage-network configurations being compared. Other topologies
  * (T1-lab, HCI, T3) and the demo entries stay buildable through `fullCatalog`.
  */
 export const catalog: readonly CatalogEntry[] = [
   ...realEntries.filter((e) => e.id === 't1-ahv-flasharray'),
-  bondedEntry,
+  ...bondedEntries,
 ];
 
 /** A guided scenario as a catalog entry: its topology built with the scenario's own options. */

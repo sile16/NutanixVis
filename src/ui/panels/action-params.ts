@@ -27,7 +27,6 @@ export function currentParamValue(kind: string, key: string, view: DeviceView | 
     case 'seconds':
       return f.pathLossForceShutdownS === null ? 'off' : f.pathLossForceShutdownS;
     case 'enabled':
-      if (kind === 'vswitch.set-slb-vlan-aware') return onOff(f.slbVlanAware);
       if (kind === 'fabric.set-mlag') {
         if ('mlagEnabled' in f) return onOff(f.mlagEnabled);
         return f.mlagDomain ? 'on' : 'off';

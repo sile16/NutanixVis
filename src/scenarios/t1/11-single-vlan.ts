@@ -25,8 +25,6 @@ export default defineScenario({
   topology: T1.topology,
   options: {
     'storage-vlans': 'single',
-    'vlan-placement': 'tagged-both',
-    'isl-storage-vlans': 'allowed',
   },
   durationS: END,
   timeline: [{ at: T0, action: { kind: 'switch.fail', target: SW_A }, note: 'Switch A fails.' }],

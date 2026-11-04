@@ -81,27 +81,16 @@ describe('L2 delivery', () => {
     expect(traceOf(snap, H1, 'tgt.ep1').result).toBe('delivered');
   });
 
-  it('strict A/B: losing the only uplink that carries a VLAN drops it at the bond (VLAN-aware)', () => {
+  it('strict A/B: losing the only uplink that carries a VLAN fails over onto one that blackholes it (OVS)', () => {
     const net = fabric();
-    const strict = (vlanAware: boolean) => ({
+    const strict = () => ({
       ...net,
       links: (net.links ?? []).map((l) =>
         l.id === 'l-h1-eth1' ? { ...l, allowedVlans: [20] } : l,
       ),
-      bonds: (net.bonds ?? []).map((b) => ({ ...b, slbVlanAware: vlanAware })),
     });
-    const aware = probeSim(strict(true), [{ src: H1, dst: 'tgt.ep0' }]);
-    expect(traceOf(aware.tick(), H1, 'tgt.ep0').result).toBe('delivered');
-    aware.applyAction({ kind: 'link-down', target: 'l-h1-eth0' });
-    expect(traceOf(aware.tick(), H1, 'tgt.ep0')).toMatchObject({
-      result: 'dropped',
-      reason: 'bond-no-member',
-      dropAt: 'h1.vs1',
-      detail: 'no-uplink-carries-vlan',
-    });
-
     // OVS-literal: the bond fails over onto an uplink that does not carry the VLAN.
-    const literal = probeSim(strict(false), [{ src: H1, dst: 'tgt.ep0' }]);
+    const literal = probeSim(strict(), [{ src: H1, dst: 'tgt.ep0' }]);
     literal.applyAction({ kind: 'link-down', target: 'l-h1-eth0' });
     expect(traceOf(literal.tick(), H1, 'tgt.ep0')).toMatchObject({
       result: 'dropped',

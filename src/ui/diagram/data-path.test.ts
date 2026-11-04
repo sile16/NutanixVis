@@ -67,11 +67,7 @@ describe('I/O data path (T1)', () => {
   });
 
   it('bond member loss: traffic moves to the surviving NIC with no stalled step', () => {
-    const { sim, steps } = run({
-      'storage-vlans': 'single',
-      'vlan-placement': 'tagged-both',
-      'isl-storage-vlans': 'allowed',
-    });
+    const { sim, steps } = run({ 'storage-vlans': 'single' });
     sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
     sim.tick(60);
     const s = sim.getSnapshot();
@@ -108,46 +104,53 @@ describe('I/O data path (T1)', () => {
     expect(hop(m, 'node-1.redirector', 'node-1.host-mgmt')?.redirected).toBe(true);
   });
 
-  it('bonded single-network variant: four live array paths per CVM, the far-side ones cross the ISL', () => {
-    const entry = catalog.find((e) => e.id === 't1-bonded-single');
-    expect(entry).toBeDefined();
-    if (!entry) throw new Error('catalog entry missing');
-    const sim = entry.createSimulation(toVersionSelection(matrix, defaultVersions(matrix), true));
-    const steps = new StepTracker(sim);
-    sim.tick(60);
-    const s = sim.getSnapshot();
-    const paths = JSON.parse(String(s.devices['node-1.cvm']?.fields.nvmePaths)) as Record<
-      string,
-      string
-    >;
-    expect(Object.values(paths)).toEqual(['live', 'live', 'live', 'live']);
-    const m = buildDataPath(s);
-    for (const id of [
-      'fa.ct0.eth10.v10',
-      'fa.ct1.eth10.v10',
-      'fa.ct0.eth11.v10',
-      'fa.ct1.eth11.v10',
-    ]) {
-      expect(m.notes.get(id)?.text).not.toBe('not connected (by design)');
-    }
-    // half of the paths end on Switch B's array ports, so they traverse the switch interconnect
-    let islStorage = 0;
-    for (let i = 0; i < 20; i++) {
-      for (const t of sim.tick(1).traces) {
-        if (t.links.includes('l-sw-a--sw-b') && t.category.startsWith('nvme')) islStorage++;
+  for (const [id, mode, ips] of [
+    ['t1-bonded-slb', 'balance-slb', 4],
+    ['t1-bonded-slb-8ip', 'balance-slb', 8],
+    ['t1-bonded-lacp', 'balance-tcp', 4],
+    ['t1-bonded-lacp-8ip', 'balance-tcp', 8],
+  ] as const) {
+    it(`${id}: one bonded vs1, two VLAN interfaces, ${ips} live paths; one NIC down is no interruption`, () => {
+      const entry = catalog.find((e) => e.id === id);
+      expect(entry).toBeDefined();
+      if (!entry) throw new Error('catalog entry missing');
+      const sim = entry.createSimulation(toVersionSelection(matrix, defaultVersions(matrix), true));
+      const steps = new StepTracker(sim);
+      sim.tick(60);
+      const s = sim.getSnapshot();
+      expect(s.devices['node-1.vs1']?.fields.bondMode).toBe(mode);
+      expect(s.devices['node-1.vs2']).toBeUndefined();
+      // one storage interface per VLAN, both on vs1
+      expect(s.devices['node-1.cvm.storage-a']).toBeDefined();
+      expect(s.devices['node-1.cvm.storage-b']).toBeDefined();
+      const paths = JSON.parse(String(s.devices['node-1.cvm']?.fields.nvmePaths)) as Record<
+        string,
+        string
+      >;
+      expect(Object.values(paths)).toEqual(Array(ips).fill('live'));
+      const m = buildDataPath(s);
+      const ports = ['ct0', 'ct1'].flatMap((c) =>
+        ips === 8
+          ? ['eth10', 'eth11'].flatMap((e) => [10, 20].map((v) => `fa.${c}.${e}.v${v}`))
+          : [`fa.${c}.eth10.v10`, `fa.${c}.eth11.v20`],
+      );
+      for (const port of ports) {
+        expect(m.notes.get(port)?.text).not.toBe('not connected (by design)');
       }
-    }
-    expect(islStorage).toBeGreaterThan(0);
-    expect(sim.eventLog().some((e) => e.code === 'nvme.path.lost')).toBe(false);
-    expect(buildImpact(steps.view(), s).steps).toBe(0);
-    // both storage NICs down: every remaining path is lost, the VM stalls then is redirected
-    sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
-    sim.applyAction({ kind: 'fail', target: 'node-1.eth3' });
-    sim.tick(120);
-    const after = sim.getSnapshot();
-    const impact = buildImpact(steps.view(), after);
-    expect(impact.rows.some((r) => r.vm === 'node-1.vm-1')).toBe(true);
-  });
+      expect(sim.eventLog().some((e) => e.code === 'nvme.path.lost')).toBe(false);
+      expect(buildImpact(steps.view(), s).steps).toBe(0);
+      // one storage NIC down: the trunked survivor carries both VLANs, so no path is lost
+      sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
+      sim.tick(60);
+      expect(sim.eventLog().some((e) => e.code === 'nvme.path.lost')).toBe(false);
+      expect(buildImpact(steps.view(), sim.getSnapshot()).rows).toHaveLength(0);
+      // both storage NICs down: every path is lost, the VM stalls then is redirected
+      sim.applyAction({ kind: 'fail', target: 'node-1.eth3' });
+      sim.tick(120);
+      const impact = buildImpact(steps.view(), sim.getSnapshot());
+      expect(impact.rows.some((r) => r.vm === 'node-1.vm-1')).toBe(true);
+    });
+  }
 });
 
 describe('I/O data path with a failed CVM', () => {

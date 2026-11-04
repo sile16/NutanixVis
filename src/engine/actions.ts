@@ -323,7 +323,7 @@ export function builtinActions(env: BuiltinEnv): ActionDefinition[] {
         kind: 'vswitch.rebalance',
         label: 'Force MAC-pinning rebalance',
         description:
-          'Move one vNIC (source MAC) onto a member, as a balance-slb load rebalance would. Plain OVS: the move ignores which VLANs the member’s switch carries.',
+          'Move one vNIC (source MAC) onto a member, as a balance-slb load rebalance would. OVS does not check which VLANs the member’s switch carries.',
         appliesTo: (t) => isBond(t) && net.bond(t.id)?.mode === 'balance-slb',
         params: {
           vnic: { label: 'vNIC endpoint', choices: [] },
@@ -332,24 +332,6 @@ export function builtinActions(env: BuiltinEnv): ActionDefinition[] {
       },
       apply: (req, ctx) => {
         ctx.net.forceSlbPin(req.target, stringParam(req, 'vnic'), stringParam(req, 'member'));
-      },
-    },
-    {
-      spec: {
-        kind: 'vswitch.set-slb-vlan-aware',
-        label: 'Set VLAN-aware member selection',
-        description:
-          'On: MAC pinning and active-backup only use uplinks that carry the VLAN. Off: plain OVS, which can pin a VLAN onto an uplink that blackholes it.',
-        // Only meaningful where member choice is per MAC (MAC pinning) or per VLAN (active-backup).
-        appliesTo: (t) =>
-          isBond(t) &&
-          'fields' in t &&
-          (t.fields.mode === 'balance-slb' || t.fields.mode === 'active-backup'),
-        params: { enabled: { label: 'VLAN-aware', choices: ['on', 'off'] } },
-      },
-      apply: (req, ctx) => {
-        const on = boolParam(req, 'enabled');
-        forGroup(req.target, (id) => ctx.net.setSlbVlanAware(id, on));
       },
     },
     {

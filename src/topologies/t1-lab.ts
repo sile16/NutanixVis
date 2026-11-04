@@ -7,7 +7,7 @@
  * to Switch A and even nodes to Switch B; MTU 1500 everywhere.
  */
 import { computeLayout } from './layout';
-import { optionSpecs, type ParamsOf, resolveParams } from './options';
+import { option, optionSpecs, type ParamsOf, resolveParams } from './options';
 import {
   buildHost,
   type DeviceInput,
@@ -28,7 +28,13 @@ export const t1LabOptions = {
   nodeCount: nodeCountOption('node-count', 'AHV nodes', 3),
   // Single NIC per node: both storage VLANs must reach every node's switch, so the lab defaults to
   // tagged-both. strict-ab here demonstrates the resulting reachability gap.
-  vlanPlacement: { ...t1Options.vlanPlacement, default: 'tagged-both' },
+  vlanPlacement: option(
+    'vlan-placement',
+    'Storage VLAN placement',
+    ['strict-ab', 'tagged-both'],
+    'tagged-both',
+    true,
+  ),
   multipathPolicy: t1Options.multipathPolicy,
   pathSelector: t1Options.pathSelector,
   pathLossForceShutdownS: t1Options.pathLossForceShutdownS,

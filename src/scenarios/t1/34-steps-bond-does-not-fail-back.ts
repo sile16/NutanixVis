@@ -28,8 +28,6 @@ export default defineScenario({
   options: {
     'node-count': 3,
     'vm-layout': 'two',
-    'vlan-placement': 'tagged-both',
-    'isl-storage-vlans': 'allowed',
     'vs1-bond-mode': 'balance-slb',
     'storage-vlans': 'single',
   },

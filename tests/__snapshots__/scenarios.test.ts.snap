@@ -1,18 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`scenario acceptance > t1-01-storage-nic-strict-ab: T1: one vs1 storage NIC fails (isolated A/B VLANs) 1`] = `
-[
-  "11	action.fail@node-1.eth2",
-  "11	device.failed@node-1.eth2",
-  "11	net.link.down",
-  "11	net.bond.member-down@node-1.vs1",
-  "11	net.bond.vlan-stranded@node-1.vs1",
-  "15	nvme.path.lost@node-1.cvm",
-  "15	nvme.path.lost@node-1.cvm",
-]
-`;
-
-exports[`scenario acceptance > t1-01-storage-nic-tagged-both: T1: one vs1 storage NIC fails (VLANs tagged on both switches) 1`] = `
+exports[`scenario acceptance > t1-01-storage-nic: T1: one vs1 storage NIC fails 1`] = `
 [
   "11	action.fail@node-1.eth2",
   "11	device.failed@node-1.eth2",
@@ -41,19 +29,19 @@ exports[`scenario acceptance > t1-02-switch-a-fails: T1: storage switch A fails 
   "11	net.bond.member-down@node-1.vs0",
   "11	net.bond.failover@node-1.vs0",
   "11	net.bond.member-down@node-1.vs1",
-  "11	net.bond.vlan-stranded@node-1.vs1",
+  "11	net.bond.failover@node-1.vs1",
   "11	net.bond.member-down@node-2.vs0",
   "11	net.bond.failover@node-2.vs0",
   "11	net.bond.member-down@node-2.vs1",
-  "11	net.bond.vlan-stranded@node-2.vs1",
+  "11	net.bond.failover@node-2.vs1",
   "11	net.bond.member-down@node-3.vs0",
   "11	net.bond.failover@node-3.vs0",
   "11	net.bond.member-down@node-3.vs1",
-  "11	net.bond.vlan-stranded@node-3.vs1",
+  "11	net.bond.failover@node-3.vs1",
   "11	net.bond.member-down@node-4.vs0",
   "11	net.bond.failover@node-4.vs0",
   "11	net.bond.member-down@node-4.vs1",
-  "11	net.bond.vlan-stranded@node-4.vs1",
+  "11	net.bond.failover@node-4.vs1",
   "15	nvme.path.lost@node-1.cvm",
   "15	nvme.path.lost@node-1.cvm",
   "15	nvme.path.lost@node-2.cvm",
@@ -218,7 +206,7 @@ exports[`scenario acceptance > t1-09-node-storage-uplinks-lost: T1: a node loses
   "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
-  "11	net.bond.vlan-stranded@node-1.vs1",
+  "11	net.bond.failover@node-1.vs1",
   "11	action.fail@node-1.eth3",
   "11	device.failed@node-1.eth3",
   "11	net.link.down",
@@ -265,7 +253,7 @@ exports[`scenario acceptance > t1-09-node-storage-uplinks-lost-hades-off: T1: a 
   "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
-  "11	net.bond.vlan-stranded@node-1.vs1",
+  "11	net.bond.failover@node-1.vs1",
   "11	action.fail@node-1.eth3",
   "11	device.failed@node-1.eth3",
   "11	net.link.down",
@@ -419,19 +407,19 @@ exports[`scenario acceptance > t1-10-both-switches: T1: both storage switches fa
   "11	net.bond.member-down@node-1.vs0",
   "11	net.bond.failover@node-1.vs0",
   "11	net.bond.member-down@node-1.vs1",
-  "11	net.bond.vlan-stranded@node-1.vs1",
+  "11	net.bond.failover@node-1.vs1",
   "11	net.bond.member-down@node-2.vs0",
   "11	net.bond.failover@node-2.vs0",
   "11	net.bond.member-down@node-2.vs1",
-  "11	net.bond.vlan-stranded@node-2.vs1",
+  "11	net.bond.failover@node-2.vs1",
   "11	net.bond.member-down@node-3.vs0",
   "11	net.bond.failover@node-3.vs0",
   "11	net.bond.member-down@node-3.vs1",
-  "11	net.bond.vlan-stranded@node-3.vs1",
+  "11	net.bond.failover@node-3.vs1",
   "11	net.bond.member-down@node-4.vs0",
   "11	net.bond.failover@node-4.vs0",
   "11	net.bond.member-down@node-4.vs1",
-  "11	net.bond.vlan-stranded@node-4.vs1",
+  "11	net.bond.failover@node-4.vs1",
   "11	action.fail@sw-b",
   "11	device.failed@sw-b",
   "11	net.link.down",
@@ -738,7 +726,7 @@ exports[`scenario acceptance > t1-14-bond-steady-balance-tcp-active-active: T1 b
 
 exports[`scenario acceptance > t1-14-bond-steady-balance-tcp-active-passive: T1 bond comparison (steady): balance-tcp, multipath active-passive 1`] = `[]`;
 
-exports[`scenario acceptance > t1-15-bond-nic-down-active-backup-tagged-both: T1 bond comparison: one node NIC down under active-backup (VLANs on both switches) 1`] = `
+exports[`scenario acceptance > t1-15-bond-nic-down-active-backup: T1 bond comparison: one node NIC down under active-backup 1`] = `
 [
   "11	action.fail@node-1.eth2",
   "11	device.failed@node-1.eth2",
@@ -748,19 +736,7 @@ exports[`scenario acceptance > t1-15-bond-nic-down-active-backup-tagged-both: T1
 ]
 `;
 
-exports[`scenario acceptance > t1-15-bond-nic-down-balance-slb-strict-ab: T1 bond comparison: one node NIC down under balance-slb (isolated A/B VLANs) 1`] = `
-[
-  "11	action.fail@node-1.eth2",
-  "11	device.failed@node-1.eth2",
-  "11	net.link.down",
-  "11	net.bond.member-down@node-1.vs1",
-  "11	net.bond.vlan-stranded@node-1.vs1",
-  "15	nvme.path.lost@node-1.cvm",
-  "15	nvme.path.lost@node-1.cvm",
-]
-`;
-
-exports[`scenario acceptance > t1-15-bond-nic-down-balance-slb-tagged-both: T1 bond comparison: one node NIC down under balance-slb (VLANs on both switches) 1`] = `
+exports[`scenario acceptance > t1-15-bond-nic-down-balance-slb: T1 bond comparison: one node NIC down under balance-slb 1`] = `
 [
   "11	action.fail@node-1.eth2",
   "11	device.failed@node-1.eth2",
@@ -770,22 +746,13 @@ exports[`scenario acceptance > t1-15-bond-nic-down-balance-slb-tagged-both: T1 b
 ]
 `;
 
-exports[`scenario acceptance > t1-15-bond-nic-down-balance-tcp-tagged-both: T1 bond comparison: one node NIC down under balance-tcp (VLANs on both switches) 1`] = `
+exports[`scenario acceptance > t1-15-bond-nic-down-balance-tcp: T1 bond comparison: one node NIC down under balance-tcp 1`] = `
 [
   "11	action.fail@node-1.eth2",
   "11	device.failed@node-1.eth2",
   "11	net.link.down",
   "11	net.bond.member-down@node-1.vs1",
   "11	net.bond.failover@node-1.vs1",
-]
-`;
-
-exports[`scenario acceptance > t1-16-slb-rebalance-strict-ab: T1 misconfiguration: MAC-pinning rebalance strands the VLAN-A vNIC (isolated A/B VLANs) 1`] = `
-[
-  "11	action.vswitch.rebalance@node-1.vs1",
-  "11	net.bond.rebalance@node-1.vs1",
-  "15	nvme.path.lost@node-1.cvm",
-  "15	nvme.path.lost@node-1.cvm",
 ]
 `;
 
@@ -841,40 +808,49 @@ exports[`scenario acceptance > t1-18-lacp-slow-hung-switch: T1: LACP slow rate w
   "15	nvme.path.lost@node-3.cvm",
   "15	nvme.path.lost@node-4.cvm",
   "15	nvme.path.lost@node-4.cvm",
-  "47	nvme.path.lost@node-2.cvm",
+  "28	nvme.path.lost@node-1.cvm",
+  "44	nvme.io.released@node-1.cvm",
+  "48	nvme.path.restored@node-1.cvm",
   "56	nvme.io.timeout@node-1.cvm",
   "56	nvme.path.lost@node-1.cvm",
   "56	nvme.io.timeout@node-3.cvm",
   "56	nvme.path.lost@node-3.cvm",
+  "57	nvme.io.timeout@node-2.cvm",
+  "57	nvme.path.lost@node-2.cvm",
+  "57	nvme.io.timeout@node-2.cvm",
+  "57	nvme.path.lost@node-2.cvm",
+  "57	nvme.all-paths.lost@node-2.cvm",
   "57	nvme.io.timeout@node-4.cvm",
   "57	nvme.path.lost@node-4.cvm",
   "57	nvme.io.timeout@node-4.cvm",
   "57	nvme.path.lost@node-4.cvm",
   "57	nvme.all-paths.lost@node-4.cvm",
-  "57	nvme.path.restored@node-2.cvm",
-  "58	nvme.io.released@node-2.cvm",
+  "57	zk.not-active@node-2.cvm",
+  "58	nvme.io.timeout@node-3.cvm",
+  "58	nvme.path.lost@node-3.cvm",
+  "58	nvme.all-paths.lost@node-3.cvm",
+  "58	zk.quorum.lost@cluster",
+  "58	ha.leader.lost@node-1",
   "66	nvme.path.restored@node-1.cvm",
+  "67	nvme.path.restored@node-2.cvm",
   "67	nvme.path.restored@node-4.cvm",
+  "67	zk.quorum.restored@cluster",
+  "67	zk.leader.elected@node-1.cvm",
+  "68	nvme.path.restored@node-3.cvm",
   "72	vm.io.guest-timeout@node-1.vm-2",
-  "72	vm.io.guest-timeout@node-2.vm-2",
+  "73	vm.io.guest-timeout@node-2.vm-2",
+  "73	vm.io.guest-timeout@node-3.vm-2",
   "73	vm.io.guest-timeout@node-4.vm-1",
+  "73	vm.io.guest-timeout@node-4.vm-2",
   "74	vm.io.guest-timeout@node-1.vm-1",
-  "74	vm.io.guest-timeout@node-2.vm-1",
-  "75	vm.io.guest-timeout@node-4.vm-2",
-  "76	nvme.io.timeout@node-2.cvm",
-  "76	nvme.path.lost@node-2.cvm",
-  "76	nvme.io.timeout@node-3.cvm",
-  "76	nvme.path.lost@node-3.cvm",
-  "76	nvme.all-paths.lost@node-3.cvm",
   "76	nvme.path.restored@node-3.cvm",
+  "77	vm.io.guest-timeout@node-3.vm-1",
+  "78	ha.leader.elected@node-1",
+  "87	nvme.path.restored@node-2.cvm",
   "87	nvme.path.restored@node-4.cvm",
-  "91	vm.io.guest-timeout@node-2.vm-1",
-  "92	vm.io.guest-timeout@node-3.vm-2",
-  "96	nvme.io.timeout@node-1.cvm",
-  "96	nvme.path.lost@node-1.cvm",
-  "96	nvme.path.restored@node-2.cvm",
-  "96	nvme.path.restored@node-3.cvm",
-  "97	vm.io.guest-timeout@node-3.vm-1",
+  "89	vm.io.guest-timeout@node-2.vm-1",
+  "95	nvme.io.timeout@node-1.cvm",
+  "95	nvme.path.lost@node-1.cvm",
   "101	net.bond.lacp-timeout@node-1.vs1",
   "101	net.bond.member-down@node-1.vs1",
   "101	net.bond.failover@node-1.vs1",
@@ -887,10 +863,7 @@ exports[`scenario acceptance > t1-18-lacp-slow-hung-switch: T1: LACP slow rate w
   "101	net.bond.lacp-timeout@node-4.vs1",
   "101	net.bond.member-down@node-4.vs1",
   "101	net.bond.failover@node-4.vs1",
-  "103	nvme.io.timeout@node-2.cvm",
-  "103	nvme.path.lost@node-2.cvm",
-  "106	nvme.path.restored@node-1.cvm",
-  "113	nvme.path.restored@node-2.cvm",
+  "105	nvme.path.restored@node-1.cvm",
 ]
 `;
 
@@ -932,19 +905,19 @@ exports[`scenario acceptance > t1-20-hung-switch-vs0: T1: Switch A hangs with ca
   "61	net.bond.member-down@node-1.vs0",
   "61	net.bond.failover@node-1.vs0",
   "61	net.bond.member-down@node-1.vs1",
-  "61	net.bond.vlan-stranded@node-1.vs1",
+  "61	net.bond.failover@node-1.vs1",
   "61	net.bond.member-down@node-2.vs0",
   "61	net.bond.failover@node-2.vs0",
   "61	net.bond.member-down@node-2.vs1",
-  "61	net.bond.vlan-stranded@node-2.vs1",
+  "61	net.bond.failover@node-2.vs1",
   "61	net.bond.member-down@node-3.vs0",
   "61	net.bond.failover@node-3.vs0",
   "61	net.bond.member-down@node-3.vs1",
-  "61	net.bond.vlan-stranded@node-3.vs1",
+  "61	net.bond.failover@node-3.vs1",
   "61	net.bond.member-down@node-4.vs0",
   "61	net.bond.failover@node-4.vs0",
   "61	net.bond.member-down@node-4.vs1",
-  "61	net.bond.vlan-stranded@node-4.vs1",
+  "61	net.bond.failover@node-4.vs1",
   "61	zk.quorum.restored@cluster",
   "61	zk.leader.elected@node-1.cvm",
   "61	ha.leader.elected@node-1",
@@ -2019,9 +1992,6 @@ exports[`scenario acceptance > t2-05-uplink-active-backup: T2: one node uplink f
 exports[`scenario acceptance > t2-06-lacp-fast-member-failure: T2: LACP fast rate, member failure without carrier loss 1`] = `
 [
   "11	action.switch.hang@sw-a",
-  "11	zk.not-active@node-2.cvm",
-  "11	cluster.cvm.unreachable@node-2.cvm",
-  "11	cluster.cvm.unreachable@node-4.cvm",
   "11	ha.resources.insufficient@cluster",
   "14	net.bond.lacp-timeout@node-1.vs0",
   "14	net.bond.member-down@node-1.vs0",
@@ -2041,30 +2011,18 @@ exports[`scenario acceptance > t2-06-lacp-fast-member-failure: T2: LACP fast rat
 exports[`scenario acceptance > t2-06-lacp-slow-member-failure: T2: LACP slow rate, member failure without carrier loss 1`] = `
 [
   "11	action.switch.hang@sw-a",
-  "11	zk.not-active@node-2.cvm",
-  "11	cluster.cvm.unreachable@node-2.cvm",
-  "11	cluster.cvm.unreachable@node-4.cvm",
   "11	ha.resources.insufficient@cluster",
+  "31	cluster.cvm.unreachable@node-4.cvm",
   "31	ha.host.disconnected@node-2",
-  "31	ha.host.disconnected@node-3",
   "31	ha.host.disconnected@node-4",
-  "31	hci.data.unavailable@node-1.cvm",
-  "31	cluster.services.down@cluster",
-  "41	hci.data.available@node-1.cvm",
-  "41	cluster.services.up@cluster",
-  "51	cluster.cvm.unreachable@node-4.cvm",
   "61	zk.not-active@node-2.cvm",
   "61	cluster.cvm.unreachable@node-2.cvm",
-  "61	ha.host.connected@node-3",
-  "71	dnd.node.degraded@node-4.cvm",
+  "61	ha.host.connected@node-4",
   "71	ha.host.fenced@node-2",
-  "71	ha.host.fenced@node-4",
-  "71	hci.data.unavailable@node-1.cvm",
-  "81	cluster.cvm.unreachable@node-4.cvm",
-  "81	ha.host.connected@node-2",
-  "81	hci.data.available@node-1.cvm",
-  "97	ha.vm.self-terminated@node-4.vm-1",
-  "97	ha.vm.self-terminated@node-4.vm-2",
+  "72	vm.io.guest-timeout@node-1.vm-1",
+  "72	vm.io.guest-timeout@node-1.vm-2",
+  "91	dnd.node.degraded@node-4.cvm",
+  "91	ha.resources.insufficient@cluster",
   "101	net.bond.lacp-timeout@node-1.vs0",
   "101	net.bond.member-down@node-1.vs0",
   "101	net.bond.failover@node-1.vs0",
@@ -2077,9 +2035,8 @@ exports[`scenario acceptance > t2-06-lacp-slow-member-failure: T2: LACP slow rat
   "101	net.bond.lacp-timeout@node-4.vs0",
   "101	net.bond.member-down@node-4.vs0",
   "101	net.bond.failover@node-4.vs0",
-  "101	ha.host.connected@node-4",
-  "101	ha.vm.restarted@node-4.vm-1",
-  "101	ha.vm.restarted@node-4.vm-2",
+  "101	ha.host.connected@node-2",
+  "121	dnd.node.degraded@node-2.cvm",
 ]
 `;
 

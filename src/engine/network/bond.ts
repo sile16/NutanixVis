@@ -14,10 +14,12 @@
  * In both hashed modes an unassigned bucket (or one whose member died) is assigned to the next
  * usable member round-robin, and buckets are periodically rebalanced by load.
  *
- * VLAN awareness (`slbVlanAware`, default on; owner decision for isolated storage VLANs):
- * `balance-slb` pinning, rebalancing and failover, and the `active-backup` choice of member for
- * a VLAN, only use members whose link and partner switch carry that VLAN. With it off the bond
- * behaves like plain OVS and may pin a VLAN onto a member that blackholes it.
+ * No VLAN awareness: OVS never checks whether a member reaches a bucket's VLAN when it pins, fails
+ * over or rebalances (OVS `ofproto/bond.c`; docs/research/ovs-bond-behavior.md rule 3). The
+ * topologies therefore trunk every storage VLAN on both bond members' switch ports.
+ *
+ * Not modeled: OVS accepts broadcast/multicast only on the SLB active member (rule 9); the model
+ * carries no broadcast frames.
  *
  * Failure detection: carrier loss removes a member immediately in every mode (OVS
  * `bond_downdelay` default 0, "disable the interface immediately"; ovs-vswitchd.conf.db(5)).
@@ -64,8 +66,6 @@ export interface BondEnv {
   readonly timers: TimerQueue;
   config(): NetworkConfig;
   probe(nic: string): MemberProbe;
-  /** Whether the member's link and partner switch carry `vlan` (configuration, not state). */
-  carries(nic: string, vlan: number): boolean;
   emit(draft: Omit<EventDraft, 'causeIds' | 'cite'> & { causeIds?: readonly string[] }): string;
   causes(): readonly string[];
   withCauses(causes: readonly string[], fn: () => void): void;
@@ -93,7 +93,6 @@ export class BondRuntime {
   private uplinksValue: string[];
   private readonly cabledValue: readonly string[];
   private rate: LacpRate;
-  private vlanAwareValue: boolean;
   private readonly initialActiveValue: string | undefined;
   /** balance-tcp with no negotiated member: running active-backup (`lacp-fallback-ab`). */
   private fallbackValue = false;
@@ -107,8 +106,7 @@ export class BondRuntime {
   private misconfigValue: string | null = null;
   private buckets: (string | null)[] = new Array<string | null>(BOND_BUCKETS).fill(null);
   private bucketLoad: number[] = new Array<number>(BOND_BUCKETS).fill(0);
-  private bucketVlans = new Map<number, Set<number>>();
-  /** Buckets pinned by `forcePin` (vswitch.rebalance): plain-OVS pins that ignore VLAN awareness. */
+  /** Buckets pinned by `forcePin` (vswitch.rebalance). */
   private forced = new Map<number, string>();
   private rr = 0;
   private lastRebalance: SimTime;
@@ -126,7 +124,6 @@ export class BondRuntime {
     this.uplinksValue = [...spec.uplinks];
     this.cabledValue = [...(spec.members ?? spec.uplinks)];
     this.rate = spec.lacpRate ?? 'fast';
-    this.vlanAwareValue = spec.slbVlanAware ?? true;
     this.initialActiveValue = spec.initialActive;
     this.lastRebalance = env.now();
   }
@@ -145,9 +142,6 @@ export class BondRuntime {
   get lacpRate(): LacpRate {
     return this.rate;
   }
-  get slbVlanAware(): boolean {
-    return this.vlanAwareValue;
-  }
   get activeMember(): string | null {
     return this.active;
   }
@@ -159,7 +153,7 @@ export class BondRuntime {
   get lacpFallback(): boolean {
     return this.fallbackValue;
   }
-  /** Uplinks that may carry traffic, in uplink order (before VLAN filtering). */
+  /** Uplinks that may carry traffic, in uplink order. */
   get eligible(): readonly string[] {
     return this.eligibleList;
   }
@@ -172,13 +166,6 @@ export class BondRuntime {
   }
   private get hashed(): boolean {
     return this.modeValue === 'balance-slb' || this.modeValue === 'balance-tcp';
-  }
-  /** VLAN filtering applies to balance-slb and active-backup when the flag is on. */
-  private get filtersVlans(): boolean {
-    return (
-      this.vlanAwareValue &&
-      (this.modeValue === 'balance-slb' || this.modeValue === 'active-backup')
-    );
   }
   /** Forwarding uses one active member: active-backup, or balance-tcp in LACP fallback. */
   private get singleActive(): boolean {
@@ -229,17 +216,6 @@ export class BondRuntime {
     });
   }
 
-  setSlbVlanAware(on: boolean): void {
-    if (on === this.vlanAwareValue) return;
-    this.vlanAwareValue = on;
-    this.env.emit({
-      severity: 'info',
-      deviceId: this.id,
-      code: 'net.bond.vlan-aware-changed',
-      text: `${this.label}: VLAN-aware member selection ${on ? 'on' : 'off (plain OVS)'}`,
-    });
-  }
-
   private resetForwarding(): void {
     for (const nic of [...this.lacpTimers.keys()]) this.cancelLacpTimer(nic);
     this.lacpDown.clear();
@@ -247,7 +223,6 @@ export class BondRuntime {
     this.fallbackValue = false;
     this.buckets = new Array<string | null>(BOND_BUCKETS).fill(null);
     this.bucketLoad = new Array<number>(BOND_BUCKETS).fill(0);
-    this.bucketVlans = new Map();
     this.forced = new Map();
     this.rr = 0;
   }
@@ -422,27 +397,18 @@ export class BondRuntime {
    * Hashed-mode failover (SPEC §5.3 "On failover, the vNICs or flows on the dead member move to a
    * survivor"; OVS bonding: buckets of a disabled member are redistributed at once). Buckets that
    * were on a member that just left service move to a survivor now, so the view and the switches'
-   * MAC learning follow immediately. With VLAN awareness (balance-slb) a bucket only moves to a
-   * member that carries all its VLANs; if none does it is left unassigned (`stranded`), which is
-   * the isolated-VLAN case of SPEC §6.5 (`assumption`). Emits `net.bond.failover` if anything
-   * moved, and `net.bond.vlan-stranded` for buckets with nowhere to go.
+   * MAC learning follow immediately. Emits `net.bond.failover` if anything moved.
    */
   private failoverBuckets(gone: readonly string[], causesOf: (m: string) => readonly string[]) {
     const lost = new Set(gone);
     const moves = new Map<string, number>();
-    let stranded = 0;
-    const strandedVlans = new Set<number>();
     for (let b = 0; b < BOND_BUCKETS; b++) {
       const from = this.buckets[b];
       if (from == null || !lost.has(from)) continue;
-      const to = this.eligibleList.filter((m) => this.canHost(b, m));
+      const to = this.eligibleList;
       const pick = to.length > 0 ? (to[this.rr++ % to.length] ?? null) : null;
       this.buckets[b] = pick;
-      if (pick === null) {
-        stranded++;
-        for (const v of this.bucketVlans.get(b) ?? []) strandedVlans.add(v);
-        continue;
-      }
+      if (pick === null) continue;
       const key = `${from} → ${pick}`;
       moves.set(key, (moves.get(key) ?? 0) + 1);
     }
@@ -456,18 +422,6 @@ export class BondRuntime {
         text: `${this.label}: ${what} hash buckets moved off failed member(s): ${[...moves]
           .map(([k, n]) => `${n} ${k}`)
           .join(', ')}`,
-        causeIds,
-      });
-    }
-    // With no member left at all, `net.bond.down` already says everything.
-    if (stranded > 0 && this.eligibleList.length > 0) {
-      this.env.emit({
-        severity: 'warn',
-        deviceId: this.id,
-        code: 'net.bond.vlan-stranded',
-        text: `${this.label}: ${stranded} vNIC hash bucket(s) on VLAN ${[...strandedVlans]
-          .sort((x, y) => x - y)
-          .join(', ')} have no surviving member that carries the VLAN; their traffic stops`,
         causeIds,
       });
     }
@@ -522,31 +476,16 @@ export class BondRuntime {
 
   // ── Forwarding ────────────────────────────────────────────────────────────
 
-  /** Members usable for frames on `vlan` (VLAN-filtered when VLAN awareness applies). */
-  usableFor(vlan: number): readonly string[] {
-    return this.filtersVlans
-      ? this.eligibleList.filter((m) => this.env.carries(m, vlan))
-      : this.eligibleList;
-  }
-
-  /** The active-backup member used for `vlan`: the active one, or (VLAN-aware) a backup. */
-  private activeFor(vlan: number): string | null {
-    if (this.active === null) return null;
-    if (this.fallbackValue) return this.active;
-    if (!this.filtersVlans || this.env.carries(this.active, vlan)) return this.active;
-    return this.usableFor(vlan)[0] ?? null;
-  }
-
   /**
    * Side-effect-free view of where a source MAC on `vlan` egresses (view field `pinning`):
    * per-MAC modes only; `balance-tcp` hashes per flow, so it returns `null`. An SLB bucket that
    * has not carried traffic yet is unpinned (`null`).
    */
   viewPin(mac: string, vlan: number): string | null {
-    if (this.fallbackValue) return this.activeFor(vlan);
+    if (this.fallbackValue) return this.active;
     switch (this.modeValue) {
       case 'active-backup':
-        return this.activeFor(vlan);
+        return this.active;
       case 'no-bond':
         return this.eligibleList[0] ?? null;
       case 'balance-slb': {
@@ -554,7 +493,7 @@ export class BondRuntime {
         const forced = this.forced.get(b);
         if (forced !== undefined) return forced;
         const m = this.buckets[b] ?? null;
-        return m !== null && this.usableFor(vlan).includes(m) ? m : null;
+        return m !== null && this.eligibleList.includes(m) ? m : null;
       }
       case 'balance-tcp':
         return null;
@@ -563,17 +502,17 @@ export class BondRuntime {
 
   /** Egress member for a flow on frame VLAN `vlan`, or `null` if none is usable. */
   selectEgress(flow: FlowId, vlan: number, weight = 1): string | null {
-    if (this.fallbackValue) return this.activeFor(vlan);
+    if (this.fallbackValue) return this.active;
     switch (this.modeValue) {
       case 'active-backup':
-        return this.activeFor(vlan);
+        return this.active;
       case 'no-bond':
         return this.eligibleList[0] ?? null;
       case 'balance-slb':
       case 'balance-tcp': {
         const b = this.bucketOf(flow, vlan);
         const pinned = this.modeValue === 'balance-slb' ? this.forced.get(b) : undefined;
-        const usable = pinned === undefined ? this.usableFor(vlan) : [pinned];
+        const usable = pinned === undefined ? this.eligibleList : [pinned];
         if (usable.length === 0) return null;
         let m = this.buckets[b] ?? null;
         if (m === null || !usable.includes(m)) {
@@ -582,12 +521,6 @@ export class BondRuntime {
           this.buckets[b] = m;
         }
         this.bucketLoad[b] = (this.bucketLoad[b] ?? 0) + weight;
-        let vl = this.bucketVlans.get(b);
-        if (!vl) {
-          vl = new Set();
-          this.bucketVlans.set(b, vl);
-        }
-        vl.add(vlan);
         return m;
       }
     }
@@ -598,22 +531,17 @@ export class BondRuntime {
    * MAC. Unknown MACs (SLB bucket not yet used) flood, so any usable member works.
    */
   ingress(mac: string, vlan: number): readonly string[] {
-    if (this.fallbackValue) {
-      const a = this.activeFor(vlan);
-      return a === null ? [] : [a];
-    }
+    if (this.fallbackValue) return this.active === null ? [] : [this.active];
     switch (this.modeValue) {
-      case 'active-backup': {
-        const a = this.activeFor(vlan);
-        return a === null ? [] : [a];
-      }
+      case 'active-backup':
+        return this.active === null ? [] : [this.active];
       case 'no-bond':
       case 'balance-tcp':
         return this.eligibleList;
       case 'balance-slb': {
         const pinned = this.forced.get(slbBucket(mac, vlan));
         if (pinned !== undefined) return [pinned];
-        const usable = this.usableFor(vlan);
+        const usable = this.eligibleList;
         const m = this.buckets[slbBucket(mac, vlan)] ?? null;
         return m !== null && usable.includes(m) ? [m] : usable;
       }
@@ -628,66 +556,65 @@ export class BondRuntime {
         ) % BOND_BUCKETS;
   }
 
-  /** May bucket `b` move to member `m` (VLAN awareness: `m` carries all its VLANs)? */
-  private canHost(b: number, m: string): boolean {
-    if (!this.filtersVlans) return true;
-    for (const v of this.bucketVlans.get(b) ?? []) if (!this.env.carries(m, v)) return false;
-    return true;
-  }
-
   /**
-   * Periodic rebalance (hashed modes), following OVS `bond_rebalance` (OVS bonding docs):
-   * repeatedly move one bucket from the most-loaded member H to a less-loaded member L allowed
-   * to take it, then reset the load counters. Returns buckets moved. A move needs:
-   * - H to carry at least 2 hashes with traffic ("shifting load away from it would be
-   *   pointless" otherwise);
-   * - H's extra load over L to be at least 3 % of L's (OVS: `overload < to >> 5` stops);
-   * - the move to narrow the gap by at least a tenth of the distance to an even split.
-   * OVS also skips imbalances under about 1 Mbps; loads here are message counts, not bytes, so
-   * that floor is not modeled.
+   * Periodic rebalance (hashed modes), a port of OVS `bond_rebalance` and
+   * `choose_entries_to_migrate` (OVS `ofproto/bond.c`, branch-3.3; docs/research/ovs-bond-behavior.md
+   * rule 8). Each member's buckets with traffic are sorted heaviest first; members are sorted by
+   * load. While the most-loaded member `from` carries more than the least-loaded `to`:
+   * - stop if the overload is under ~3 % of `to`'s load (`overload < to >> 5`);
+   * - a member with a single bucket gives nothing away ("shifting load away from it would be
+   *   pointless") and drops out of consideration;
+   * - take `from`'s buckets heaviest first while the total stays within half the gap; if none
+   *   fits, take the lightest one;
+   * - move them only if the new low side is above `to` by at least a tenth of the ideal shift,
+   *   then re-sort the members and repeat.
+   * With two buckets on one member and an empty member, the heavier bucket is more than half the
+   * gap, so the LIGHTER one moves (if it is at least 5 % of the total). Afterwards every bucket's
+   * load is halved (`tx_bytes /= 2`), so the load seen is a history with a one-interval
+   * half-life. Not modeled: OVS's ~100 kB (≈1 Mbps) floor, because loads here are message
+   * weights, not bytes. Returns the number of buckets moved.
    */
   maybeRebalance(now: SimTime): number {
     if (now - this.lastRebalance < this.env.config().slbRebalanceIntervalS) return 0;
     this.lastRebalance = now;
     let moved = 0;
     if (this.hashed && !this.fallbackValue && this.eligibleList.length > 1) {
-      for (let guard = 0; guard < BOND_BUCKETS; guard++) {
-        const load = new Map<string, number>(this.eligibleList.map((m) => [m, 0]));
-        this.buckets.forEach((m, b) => {
-          if (m !== null && load.has(m))
-            load.set(m, (load.get(m) ?? 0) + (this.bucketLoad[b] ?? 0));
-        });
-        let from = this.eligibleList[0] ?? '';
-        for (const m of this.eligibleList) if ((load.get(m) ?? 0) > (load.get(from) ?? 0)) from = m;
-        const fromLoad = load.get(from) ?? 0;
-        let hashes = 0;
-        for (let b = 0; b < BOND_BUCKETS; b++) {
-          if (this.buckets[b] === from && (this.bucketLoad[b] ?? 0) > 0) hashes++;
+      const tx = new Map<string, number>(this.eligibleList.map((m) => [m, 0]));
+      const entries = new Map<string, number[]>(this.eligibleList.map((m) => [m, []]));
+      for (let b = 0; b < BOND_BUCKETS; b++) {
+        const m = this.buckets[b];
+        const l = this.bucketLoad[b] ?? 0;
+        if (m == null || l <= 0 || !tx.has(m)) continue;
+        tx.set(m, (tx.get(m) ?? 0) + l);
+        entries.get(m)?.push(b);
+      }
+      const byLoad = (a: number, b: number) =>
+        (this.bucketLoad[b] ?? 0) - (this.bucketLoad[a] ?? 0);
+      for (const list of entries.values()) list.sort(byLoad);
+      const load = (m: string) => tx.get(m) ?? 0;
+      // Stable sort: members with equal load keep uplink order.
+      let bals = [...this.eligibleList].sort((a, b) => load(b) - load(a));
+      for (let guard = 0; bals.length > 1 && guard < BOND_BUCKETS; guard++) {
+        const from = bals[0] ?? '';
+        const to = bals[bals.length - 1] ?? '';
+        const overload = load(from) - load(to);
+        if (overload <= 0 || overload < load(to) / 32) break;
+        const picks = this.chooseEntriesToMigrate(entries.get(from) ?? [], load(from), load(to));
+        if (picks.length === 0) {
+          bals = bals.slice(1);
+          continue;
         }
-        if (hashes < 2) break;
-        let pick = -1;
-        let pickTo = '';
-        let pickGap = Number.POSITIVE_INFINITY;
-        for (let b = 0; b < BOND_BUCKETS; b++) {
+        for (const b of picks) {
           const l = this.bucketLoad[b] ?? 0;
-          if (this.buckets[b] !== from || l <= 0 || this.forced.has(b)) continue;
-          for (const to of this.eligibleList) {
-            const toLoad = load.get(to) ?? 0;
-            const delta = fromLoad - toLoad;
-            if (to === from || !this.canHost(b, to) || delta * 32 < toLoad) continue;
-            const newLow = Math.min(fromLoad - l, toLoad + l);
-            if (newLow <= toLoad || newLow - toLoad < delta / 20) continue;
-            const gap = Math.abs(delta - 2 * l);
-            if (gap < pickGap) {
-              pick = b;
-              pickTo = to;
-              pickGap = gap;
-            }
-          }
+          this.buckets[b] = to;
+          tx.set(from, load(from) - l);
+          tx.set(to, load(to) + l);
+          const list = entries.get(from) ?? [];
+          list.splice(list.indexOf(b), 1);
+          // OVS does not add moved entries to `to`'s list during this pass.
+          moved++;
         }
-        if (pick < 0) break;
-        this.buckets[pick] = pickTo;
-        moved++;
+        bals = [...bals].sort((a, b) => load(b) - load(a));
       }
       if (moved > 0) {
         this.env.emit({
@@ -698,15 +625,48 @@ export class BondRuntime {
         });
       }
     }
-    this.bucketLoad.fill(0);
+    for (let b = 0; b < BOND_BUCKETS; b++) this.bucketLoad[b] = (this.bucketLoad[b] ?? 0) / 2;
     return moved;
   }
 
   /**
+   * OVS `choose_entries_to_migrate`: buckets of `from` (sorted heaviest first) to move to `to`.
+   * Empty if `from` has at most one bucket, or if the move would not bring the low side closer to
+   * the midpoint by at least a tenth of the ideal shift.
+   */
+  private chooseEntriesToMigrate(
+    sorted: readonly number[],
+    fromLoad: number,
+    toLoad: number,
+  ): number[] {
+    if (sorted.length <= 1) return [];
+    const idealDelta = (fromLoad + toLoad) / 2 - toLoad;
+    const threshold = idealDelta / 10;
+    const movable = sorted.filter((b) => !this.forced.has(b));
+    const picks: number[] = [];
+    let delta = 0;
+    for (const b of movable) {
+      const l = this.bucketLoad[b] ?? 0;
+      if (delta + l <= idealDelta) {
+        picks.push(b);
+        delta += l;
+      }
+      if (idealDelta - delta < threshold) break;
+    }
+    if (picks.length === 0) {
+      const closest = movable[movable.length - 1];
+      if (closest === undefined) return [];
+      picks.push(closest);
+      delta = this.bucketLoad[closest] ?? 0;
+    }
+    const newLow = Math.min(fromLoad - delta, toLoad + delta);
+    return newLow > toLoad && newLow - toLoad >= threshold ? picks : [];
+  }
+
+  /**
    * `vswitch.rebalance`: move the balance-slb bucket of one source MAC + VLAN onto `member`, as a
-   * load rebalance would (SPEC §7.2 T1-16). Plain-OVS semantics: the pin ignores VLAN awareness,
-   * so a VLAN can be stranded on a member whose switch does not carry it (OVS bonding docs:
-   * rebalancing moves hash buckets by load only). Periodic rebalancing leaves the bucket alone;
+   * load rebalance would (OVS bonding docs: rebalancing moves hash buckets by load only, with no
+   * check of the member's VLANs). Periodic rebalancing leaves the bucket alone;
    * the pin lasts until `member` leaves service. Emits `net.bond.rebalance`; returns its id.
    */
   forcePin(mac: string, vlan: number, member: string, vnic: string): string {
@@ -720,12 +680,6 @@ export class BondRuntime {
     const from = this.buckets[b] ?? null;
     this.buckets[b] = member;
     this.forced.set(b, member);
-    let vl = this.bucketVlans.get(b);
-    if (!vl) {
-      vl = new Set();
-      this.bucketVlans.set(b, vl);
-    }
-    vl.add(vlan);
     return this.env.emit({
       severity: 'info',
       deviceId: this.id,
@@ -781,9 +735,6 @@ export class BondRuntime {
     };
     if (this.group !== undefined) f.group = this.group;
     f.lacpRate = this.usesLacp ? this.rate : null;
-    if (this.modeValue === 'balance-slb' || this.modeValue === 'active-backup') {
-      f.slbVlanAware = this.vlanAwareValue;
-    }
     if (this.singleActive) f.active = this.active;
     for (const m of this.cabledValue) f[`member.${m}`] = this.memberState(m);
     // View-field contract names (docs/view-fields.md, vswitch).

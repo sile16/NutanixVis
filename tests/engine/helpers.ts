@@ -30,7 +30,6 @@ export interface FabricOptions {
   readonly config?: Partial<NetworkConfig>;
   /** Extra MACs (VM vNICs) on h1's bond, VLAN 10: ids `h1.vm<i>`. */
   readonly h1Vms?: number;
-  readonly slbVlanAware?: boolean;
 }
 
 /**
@@ -81,7 +80,6 @@ export function fabric(o: FabricOptions = {}): NetworkSpec {
       owner: h,
       mode: o.mode ?? 'active-backup',
       uplinks: [`${h}.eth0`, `${h}.eth1`],
-      ...(o.slbVlanAware === undefined ? {} : { slbVlanAware: o.slbVlanAware }),
       lacpRate: o.lacpRate ?? 'fast',
       group: 'vs1',
     })),

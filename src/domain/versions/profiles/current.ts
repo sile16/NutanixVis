@@ -379,10 +379,10 @@ export const current: Profile = {
       'Host-side slow rate, which can only be set outside Prism (manage_ovs or the AHV installer). A slow rate on the switch only slows the switch side; the host still detects in 3 s (inferred).',
     ),
     slbRebalanceIntervalS: c(
-      10,
-      'assumption',
+      30,
+      'inferred',
       ['ovs-bonding', 'ovs-vswitchd-conf', 'ntnx-community-slb-rebalance'],
-      'OVS default ("Every 10 seconds, vswitchd rebalances"); whether AHV tunes bond-rebalance-interval is not published. A Nutanix technical marketing post (2020) recommends 30 s.',
+      'AHV sets other_config:bond-rebalance-interval=30000 on its balance-slb bonds (read on an AHV 11.2 host; not in the Admin Guide), matching the 30 s a Nutanix technical marketing post (2020) recommends. The OVS default is 10 s.',
     ),
     lacpFallbackAb: c(
       true,

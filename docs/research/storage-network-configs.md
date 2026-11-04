@@ -9,27 +9,27 @@ All of these designs share some rules:
 - **PFC and global pause off.**
 - A single L2 hop from node to array.
 
-In every design, NVMe multipathing runs inside the CVM (Stargate's NVMe/TCP initiator) across one path per (CVM storage interface × FA target port on the same VLAN). The design only changes **what sits under** those paths. Each design is a simulator option (`storage-vswitch-layout`, `vs1-bond-mode`, `vlan-placement`, `isl-storage-vlans`).
+In every design, NVMe multipathing runs inside the CVM (Stargate's NVMe/TCP initiator) across one path per (CVM storage interface × FA target port on the same VLAN). The design only changes **what sits under** those paths. Each design is a simulator option (`storage-vswitch-layout`, `vs1-bond-mode`, `array-port-vlans`).
 
 ## The designs
 
 ### A. One storage vswitch, Active-Active with MAC pinning (`balance-slb`)
 
-**Shape:** one vswitch holds both storage NICs (one to each switch). Each CVM storage interface (one per VLAN) is pinned to one uplink.
+**Shape:** one vswitch holds both storage NICs (one to each switch). Both node switch ports are 802.1Q trunks carrying both storage VLANs, and so is the ISL. OVS places each CVM storage interface (one source MAC per VLAN) on one uplink; AHV offers no way to choose which (`docs/research/ovs-bond-behavior.md`).
 
 **Pros**
 - Matches the Everpure KB and the Cisco Validated Design.
 - No switch-side LAG or MLAG needed.
-- Both uplinks carry traffic, since each storage interface is pinned to a different NIC.
-- With VLANs on both switches **and the storage VLANs allowed on the ISL**, a single NIC or cable failure is absorbed by the bond, and no NVMe path is lost. The moved interface reaches the FA ports on the other switch across the ISL. With the ISL pruned, those paths are lost anyway.
+- Both uplinks usually carry traffic, when the two storage interfaces land on different NICs.
+- A single NIC or cable failure is absorbed by the bond and no NVMe path is lost: the moved interface reaches its VLAN's FA ports across the ISL.
 
 **Cons**
-- The bond isn't VLAN-aware. With **isolated** VLANs (VLAN A only on switch A), a failover or rebalance can move an interface onto a switch that doesn't carry its VLAN. Its paths then go silent and are lost after KATO.
-- A rebalance can strand an interface even without a failure (the simulator's "OVS-literal" toggle). OVS is conservative about it: it only moves a hash off a member that carries at least 2 hashes with traffic, when that member carries at least 3 % (and about 1 Mbps) more than the lighter one, and only if the move narrows the gap (OVS bonding docs). Each CVM storage interface is one source MAC per VLAN, so a 2-member storage bond has about 2 hashes, and a rebalance can only move one if both started on the same member (`inferred`). The simulator models the 2-hash and 3 % rules; loads are message counts, so the 1 Mbps floor is not modeled.
-- Rebalance interval: the OVS default is 10 s (`bond-rebalance-interval`). A Nutanix technical marketing post (2020, Nutanix Community) says Nutanix recommends 30 s. No public source says whether Prism-created vswitches change it, so the simulator keeps 10 s as an `assumption` (lab L13: `ovs-vsctl get port <bond> other_config`).
+- The bond isn't VLAN-aware: it pins, fails over and rebalances an interface without checking which VLANs a member reaches. Isolated VLANs (VLAN A only on switch A) under a bond are therefore a broken configuration, and the simulator does not offer them: every bonded layout trunks both storage VLANs on both switches and the ISL.
+- Which member each interface lands on, and so how much storage IO crosses the ISL, is up to OVS. With access array ports (VLAN A only on switch A's array ports) it ranges from none (each interface on its own VLAN's switch) to all of it (both swapped). A NIC or switch failure and its restore can leave the placement swapped; OVS rebalancing moves a hash only off a member with at least 2 loaded hashes, by at least 3 % of load, and only if the move narrows the gap (OVS bonding docs; `docs/research/ovs-bond-behavior.md`). With trunked array ports (one IP per VLAN on every port, 8 data IPs) every interface has two portals on each switch, so active-active multipathing sends about half its IO over the ISL whatever the placement. The UI shows the share on the ISL edge.
+- Rebalance interval: the OVS default is 10 s (`bond-rebalance-interval`). A Nutanix technical marketing post (2020, Nutanix Community) says Nutanix recommends 30 s, and AHV sets 30 s on its balance-slb bonds (`inferred`).
 - **Multicast and broadcast** are accepted on only one member ("accepting multicast and broadcast packets on only the active member", OVS bonding docs). The AHV 11.2 Admin Guide lists MAC pinning as "Works with caveats for multicast traffic". A Nutanix Community answer adds that inbound multicast then arrives on one adapter only, so IGMP snooping on the switches can drop it: disable snooping or configure static IGMP groups. NVMe/TCP is unicast, so this matters for VM traffic on the same vswitch, not for storage paths.
 - OVS documents active-backup as "the only bonding mode in which interfaces may be plugged into different upstream switches". The two-switch MAC-pinning design works because the switches relearn MACs: on carrier loss OVS moves the dead member's hashes at once (`bond_downdelay` default 0) and sends a RARP "gratuitous learning packet" for each moved MAC on the new member.
-- To get the bond benefit, both storage VLANs have to be carried on both switches, which usually means crossing the ISL.
+- Both storage VLANs have to be carried on both switches and the ISL, so the ISL is part of the storage path.
 - Two failure layers (bond, then NVMe) make behavior harder to reason about.
 
 **Simulator:** `storage-vswitch-layout: single-bond`, `vs1-bond-mode: balance-slb`.
@@ -61,7 +61,7 @@ In every design, NVMe multipathing runs inside the CVM (Stargate's NVMe/TCP init
 - The simplest failure model, closest to classic iSCSI/NVMe host design: fail one port or switch and that fabric's paths are lost, while IO continues on the other fabric.
 - Keeps the A and B fabrics truly independent, with no shared bond, LAG or MLAG.
 - No risk of a stranded interface.
-- Works naturally with isolated VLANs and storage VLANs kept off the ISL.
+- Works naturally with isolated VLANs and storage VLANs kept off the ISL (0 % of storage IO on the ISL with access array ports).
 
 **Cons**
 - Everpure's KB discourages no-bond modes (exceptions are allowed; check with the Nutanix team).
@@ -74,17 +74,17 @@ In every design, NVMe multipathing runs inside the CVM (Stargate's NVMe/TCP init
 
 | Choice | Options | Trade-off |
 |---|---|---|
-| VLAN placement (`vlan-placement`) | **Isolated** (VLAN A only on switch A, B only on B; default) vs **both VLANs on both switches** | Isolated keeps fabrics independent and is the typical storage design. Both-on-both lets a MAC-pinning bond save a path on NIC failure, but **only if the ISL carries the storage VLANs** (`isl-storage-vlans: allowed`). |
-| Storage VLANs on the ISL (`isl-storage-vlans`) | **Pruned** (default) vs allowed | Pruned keeps a single hop and avoids ISL latency and bottlenecks. Allowed (permitted by the Cisco Validated Design) adds redundancy for design A with both-on-both. |
-| Switch-port mode | Node ports trunk, FA ports **access** (untagged) | It's simpler to tag on the switch side. An untagged CVM interface on an access port avoids most "network validation failed" setup errors. |
+| Storage VLAN placement (derived) | Bonded `vs1`: both storage VLANs on both switches and the ISL. Per-fabric with access array ports: VLAN A only on switch A, B only on B, off the ISL | A bond does not check VLANs, so it needs every storage VLAN on every member. Per-fabric keeps fabrics independent and single-hop. |
+| Array data ports (`array-port-vlans`) | **Access** (one IP per port, 4 data IPs; default) vs **trunked** (one IP per storage VLAN on every port, 8 data IPs) | Access: the ISL share depends on where OVS placed each interface (0 % to 100 %). Trunked: every interface reaches portals on both switches, a switch failure costs only half of each interface's paths, and about half the storage IO crosses the ISL. |
+| Switch-port mode | Node ports trunk, FA ports **access** (untagged) or trunk | It's simpler to tag on the switch side. An untagged CVM interface on an access port avoids most "network validation failed" setup errors. |
 | MTU | 9000 everywhere (fabric 9216) vs 1500 | A mismatch anywhere fails large IO while small IO and keep-alives still work, which is hard to diagnose. Verify with `ping -M do -s 8972` (see `docs/commands.md`). |
 | Flow control | Off (required) | PFC and global pause are not supported by the FlashArray for NVMe/TCP. |
 
-## Same failure, three designs (isolated VLANs)
+## Same failure, three designs (access array ports)
 
 | Failure | A: MAC pinning | B: LACP + MLAG | C: per-fabric no-bond |
 |---|---|---|---|
-| One node NIC or cable | VLAN-A interface has nowhere to go, so its paths are lost after KATO. IO continues on VLAN B. | LAG survives on the other member. Paths survive if VLAN A reaches switch B through MLAG. | That fabric's paths are lost after KATO. IO continues on the other fabric. |
+| One node NIC or cable | The interface moves to the other NIC and reaches its portals over the ISL; no path is lost. | LAG survives on the other member; no path is lost. | That fabric's paths are lost after KATO. IO continues on the other fabric. |
 | One switch | All of one VLAN's paths are lost after KATO. | LAG survives; paths to FA ports on the dead switch are lost. | All of one fabric's paths are lost after KATO. |
 | Hung switch (carrier up) | Paths through it are lost after KATO. | Flows hashed to it blackhole until the LACP timeout (≤3 s fast / ≤90 s slow), then move. | Paths through it are lost after KATO. |
 | Hung switch, seen by `vs0` (Active/Backup mgmt) | Every host whose active `vs0` member is on that switch is cut off; see below. | Same | Same |

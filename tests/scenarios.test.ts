@@ -28,6 +28,8 @@ import { buildTopology, isTopologyId } from '../src/topologies';
 
 /** SPEC §7.2 backlog sizes. */
 const BACKLOG: Readonly<Record<ScenarioFamily, number>> = { t1: 34, t2: 13, t3: 7, t1lab: 4 };
+/** SPEC §7.2 items removed from the backlog (T1-16: isolated VLANs on a bond, not modeled). */
+const REMOVED: Readonly<Partial<Record<ScenarioFamily, readonly number[]>>> = { t1: [16] };
 
 const ACTION_KINDS = new Set([
   'fail',
@@ -55,7 +57,6 @@ const ACTION_KINDS = new Set([
   'vswitch.set-uplinks',
   'vswitch.set-lacp-rate',
   'fabric.set-mlag',
-  'fabric.set-vlan-placement',
   'link.flap',
   'link.set-loss',
   'fa.interface.flap',
@@ -98,7 +99,10 @@ describe('scenario registry', () => {
           .map((s) => backlogRef(s.id))
           .flatMap((r) => (r?.family === family ? [r.item] : [])),
       );
-      for (let i = 1; i <= size; i++) expect(items.has(i), `${family} item ${i}`).toBe(true);
+      const removed = REMOVED[family as ScenarioFamily] ?? [];
+      for (let i = 1; i <= size; i++) {
+        expect(items.has(i), `${family} item ${i}`).toBe(!removed.includes(i));
+      }
     }
   });
 

@@ -304,39 +304,24 @@ describe('reservations (fencing)', () => {
   });
 });
 
-describe('storage NIC loss: strict A/B vs tagged on both switches', () => {
-  it('strict A/B: the VLAN-A vNIC has nowhere to go, its paths are lost after KATO', () => {
-    const r = loadWithStubs(T1, { 'vlan-placement': 'strict-ab' });
-    runTo(r, T0);
-    r.sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
-    const w = watch(r, T0 + HOLD + 10);
-    const lost = r.events('nvme.path.lost');
-    expect(new Set(lost.map((e) => e.deviceId))).toEqual(new Set(['node-1.cvm']));
-    expect(lost.map((e) => e.text.split(' ')[0]).sort()).toEqual([
-      'node-1.cvm.storage-a~fa.ct0.eth10.v10',
-      'node-1.cvm.storage-a~fa.ct1.eth10.v10',
-    ]);
-    expect(lost.every((e) => e.t <= T0 + 1 + KATO)).toBe(true);
-    expect(w.maxPending).toBeLessThanOrEqual(HOLD);
-    for (const st of r.stubs.values()) expect(st.errors()).toHaveLength(0);
-  });
-
-  it('tagged both: the bond moves the vNIC and no NVMe path is lost', () => {
-    // The moved vNIC lands on sw-b while the VLAN-A FA ports are on sw-a, so the ISL must carry
-    // the storage VLANs for the bond to save the path.
-    const r = loadWithStubs(T1, {
-      'vlan-placement': 'tagged-both',
-      'isl-storage-vlans': 'allowed',
-    });
-    runTo(r, T0);
-    r.sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
-    const w = watch(r, T0 + KATO + CQT + 10);
-    expect(r.events('nvme.path.lost')).toHaveLength(0);
-    expect(allLive(r)).toBe(true);
-    expect(w.maxPending).toBe(0);
-    const up = r.backend(1).uplinksFor('node-1.vm-1.vd-1');
-    expect(up).toEqual(['node-1.eth3']);
-  });
+describe('storage NIC loss on the trunked bond', () => {
+  it.each(['access', 'trunked'] as const)(
+    'array ports %s: the bond moves the vNIC and no NVMe path is lost',
+    (ports) => {
+      // The moved vNIC lands on sw-b. With access array ports the VLAN-A FA ports are on sw-a, so
+      // the path crosses the ISL, which the bond layout always trunks.
+      const r = loadWithStubs(T1, { 'array-port-vlans': ports });
+      runTo(r, T0);
+      expect(Object.keys(r.backend(1).nvme.pathStates())).toHaveLength(ports === 'trunked' ? 8 : 4);
+      r.sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
+      const w = watch(r, T0 + KATO + CQT + 10);
+      expect(r.events('nvme.path.lost')).toHaveLength(0);
+      expect(allLive(r)).toBe(true);
+      expect(w.maxPending).toBe(0);
+      const up = r.backend(1).uplinksFor('node-1.vm-1.vd-1');
+      expect(up).toEqual(['node-1.eth3']);
+    },
+  );
 });
 
 describe('T1-lab', () => {
@@ -405,10 +390,7 @@ describe('flow control', () => {
 
 describe('path usage (SPEC §6.4b)', () => {
   it('MAC pinning + active-active: IO uses every path, uplinks are the vNICs’ pinned members', () => {
-    const r = loadWithStubs(T1, {
-      'vlan-placement': 'tagged-both',
-      'vs1-bond-mode': 'balance-slb',
-    });
+    const r = loadWithStubs(T1, { 'vs1-bond-mode': 'balance-slb' });
     runTo(r, T0);
     const b = r.backend(1);
     expect(b.nvme.pathsFor('node-1.vm-1.vd-1')).toHaveLength(4);
@@ -425,11 +407,7 @@ describe('path usage (SPEC §6.4b)', () => {
   });
 
   it('LACP + active-active: the paths’ connections hash across both uplinks', () => {
-    const r = loadWithStubs(T1, {
-      'vlan-placement': 'tagged-both',
-      'vs1-bond-mode': 'balance-tcp',
-      mlag: true,
-    });
+    const r = loadWithStubs(T1, { 'vs1-bond-mode': 'balance-tcp', mlag: true });
     runTo(r, T0);
     expect(r.backend(1).uplinksFor('node-1.vm-1.vd-1')).toEqual(['node-1.eth2', 'node-1.eth3']);
   });
@@ -457,26 +435,6 @@ describe('determinism', () => {
 });
 
 describe('scenario-shaped checks', () => {
-  it('T1-16: a forced rebalance strands the VLAN-A vNIC; its paths are lost after KATO', () => {
-    const r = loadWithStubs(T1, { 'vlan-placement': 'strict-ab', 'vs1-bond-mode': 'balance-slb' });
-    runTo(r, T0);
-    r.sim.applyAction({
-      kind: 'vswitch.rebalance',
-      target: 'node-1.vs1',
-      params: { vnic: 'node-1.cvm.storage-a', member: 'node-1.eth3' },
-    });
-    const w = watch(r, T0 + HOLD + 5);
-    expect(r.events('net.bond.rebalance').map((e) => e.deviceId)).toEqual(['node-1.vs1']);
-    expect(r.events('net.link.down')).toHaveLength(0);
-    const lost = r.events('nvme.path.lost');
-    expect(lost.map((e) => e.text.split(' ')[0]).sort()).toEqual([
-      'node-1.cvm.storage-a~fa.ct0.eth10.v10',
-      'node-1.cvm.storage-a~fa.ct1.eth10.v10',
-    ]);
-    expect(lost.every((e) => e.t > T0 + 1 && e.t <= T0 + 1 + KATO)).toBe(true);
-    expect(w.maxPending).toBeLessThanOrEqual(HOLD);
-  });
-
   it('T1-12: MTU mismatch keeps keep-alive up while large IO never completes', () => {
     const r = loadWithStubs(T1, { mtu: '1500-mismatch' });
     runTo(r, 70);

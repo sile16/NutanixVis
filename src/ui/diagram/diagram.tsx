@@ -32,6 +32,7 @@ import {
   usePreviousSnapshot,
   useTraceHistory,
 } from './hooks';
+import { islLabel, islShares } from './isl-share';
 import { computeLayout, type LayoutMap, moveDevice, portKey } from './layout';
 import { LayoutEditPanel } from './layout-edit-panel';
 import { Legend } from './legend';
@@ -158,6 +159,11 @@ export function Diagram({
 
   const edgeLabels = useMemo(() => {
     const out = new Map<string, string>();
+    // Always on: how much of the storage IO crosses the inter-switch link.
+    for (const isl of islShares(win.snapshot)) {
+      const label = islLabel(isl);
+      if (label) out.set(isl.linkId, label);
+    }
     if (!bondUtilHost) return out;
     for (const bond of bondUtilization(win.snapshot, bondUtilHost)) {
       for (const m of bond.members) {

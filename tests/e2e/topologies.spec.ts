@@ -181,34 +181,36 @@ test('real T1: a failed CVM carries no I/O; a remote CVM serves the VM; failback
   );
 });
 
-test('bonded single-network topology: a member loss is a 0-step, no-interruption event', async ({
-  page,
-}) => {
-  await page.goto('./#topology=t1-bonded-single');
-  await expect(page.getByTestId('node-node-1.vs1')).toBeVisible();
-  await page.getByTestId('device-picker').selectOption('node-1.eth2');
-  await page.getByTestId('action-fail').click();
-  for (let i = 0; i < 6; i++) await page.getByTestId('step').click();
-  await expect(page.getByTestId('sim-clock')).toHaveAttribute('data-step', '0');
-  await expect(page.getByTestId('impact-bond')).toContainText('no interruption');
-  await expect(page.getByTestId('impact-summary')).toContainText('no VM interrupted');
-  await expect(page.getByTestId('node-node-1.eth3').getByTestId('node-note')).toHaveText('active');
-  await expect(page.getByTestId('node-node-1.eth2').getByTestId('node-note')).toHaveText('down');
-});
+for (const id of ['t1-bonded-slb', 't1-bonded-slb-8ip', 't1-bonded-lacp', 't1-bonded-lacp-8ip']) {
+  test(`${id}: a member loss is a 0-step, no-interruption event`, async ({ page }) => {
+    await page.goto(`./#topology=${id}`);
+    await expect(page.getByTestId('node-node-1.vs1')).toBeVisible();
+    await page.getByTestId('device-picker').selectOption('node-1.eth2');
+    await page.getByTestId('action-fail').click();
+    for (let i = 0; i < 6; i++) await page.getByTestId('step').click();
+    await expect(page.getByTestId('sim-clock')).toHaveAttribute('data-step', '0');
+    await expect(page.getByTestId('impact-bond')).toContainText('no interruption');
+    await expect(page.getByTestId('impact-summary')).toContainText('no VM interrupted');
+    await expect(page.getByTestId('node-node-1.eth3').getByTestId('node-note')).toHaveText(
+      'active',
+    );
+    await expect(page.getByTestId('node-node-1.eth2').getByTestId('node-note')).toHaveText('down');
+  });
+}
 
-test('bonded single-network variant: all four array ports connected, both NICs down', async ({
+test('MAC-pinning trunk variant: all four array ports connected, both NICs down', async ({
   page,
 }) => {
   test.slow();
-  await page.goto('./#topology=t1-bonded-single');
+  await page.goto('./#topology=t1-bonded-slb');
   await expect(page.getByTestId('node-node-1.vs1')).toBeVisible();
   await page.getByTestId('step').click();
   // All four array ports are cabled: none is marked as not connected.
   for (const id of [
     'fa.ct0.eth10.v10',
     'fa.ct1.eth10.v10',
-    'fa.ct0.eth11.v10',
-    'fa.ct1.eth11.v10',
+    'fa.ct0.eth11.v20',
+    'fa.ct1.eth11.v20',
   ]) {
     await expect(page.getByTestId(`node-${id}`)).not.toHaveAttribute(
       'title',
@@ -243,4 +245,14 @@ test('guided steps scenario loads its topology and injects the failure', async (
   await page.getByTestId('scenario-apply-0').click();
   await expect(page.getByTestId('scenario-group').first()).toHaveAttribute('data-state', 'applied');
   await expect(page.getByTestId('node-node-1.eth2')).toHaveAttribute('data-status', 'failed');
+});
+
+test('the ISL edge shows the share of storage IO crossing it', async ({ page }) => {
+  await page.goto('./#topology=t1-bonded-slb-8ip');
+  await expect(page.getByTestId('edge-label-l-sw-a--sw-b')).toContainText(
+    /ISL · 5\d% of storage IO/,
+  );
+  await page.goto('./#topology=t1-ahv-flasharray');
+  await page.reload();
+  await expect(page.getByTestId('edge-label-l-sw-a--sw-b')).toHaveText('ISL · 0% of storage IO');
 });

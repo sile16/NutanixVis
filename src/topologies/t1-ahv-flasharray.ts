@@ -57,16 +57,6 @@ export const t1Options = {
   // vs0 is Active-Backup (DEPLOY-GUIDE Table 2); which member is active decides who is cut off
   // when a switch hangs with carrier up (SPEC §7.2 T1-20, T1-21).
   vs0ActiveMember: vs0ActiveMemberOption(),
-  // Default: isolated storage VLANs (fabric A/B), the typical storage design. NET lists
-  // "dedicated switches for each VLAN" as a supported option. tagged-both carries both storage
-  // VLANs on both switches.
-  vlanPlacement: option(
-    'vlan-placement',
-    'Storage VLAN placement',
-    ['strict-ab', 'tagged-both'],
-    'strict-ab',
-    true,
-  ),
   // NET: "Do not enable Priority Flow Control (PFC) or Global Pause ... not supported by
   // Everpure FlashArray in NVMe/TCP environments." Non-off values are misconfigurations.
   flowControl: option(
@@ -148,13 +138,14 @@ export const t1Options = {
     ['all', 'first-only'],
     'all',
   ),
-  // Field practice keeps storage off the ISL ("single hop"); the Cisco Validated Design allows
-  // it. Only matters with vlan-placement tagged-both.
-  islStorageVlans: option(
-    'isl-storage-vlans',
-    'Storage VLANs on the ISL',
-    ['pruned', 'allowed'],
-    'pruned',
+  // `access`: eth10 on storage VLAN A and eth11 on VLAN B, one IP per port (4 data IPs).
+  // `trunked`: every data port carries both storage VLANs with one IP per VLAN (8 data IPs), so
+  // each CVM storage interface has a portal on both switches (NET).
+  arrayPortVlans: option(
+    'array-port-vlans',
+    'Array data port VLANs',
+    ['access', 'trunked'],
+    'access',
   ),
 } as const;
 
@@ -232,8 +223,15 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
     hostBoxes.push(host.layout);
   }
 
+  // Where the storage VLANs live. With one bonded storage vSwitch, every node storage port is an
+  // 802.1Q trunk carrying both storage VLANs, and so is the ISL: OVS pins, fails over and
+  // rebalances a storage interface onto either member without checking its VLAN (OVS
+  // `ofproto/bond.c`), so isolated per-switch VLANs on a bond are not a working design and are
+  // not offered. Trunked array ports need the same. Only two unbonded storage vSwitches with
+  // access array ports keep VLAN A on Switch A and VLAN B on Switch B, off the ISL ("single hop").
+  const trunked = p.storageVswitchLayout === 'single-bond' || p.arrayPortVlans === 'trunked';
   const base = [VLAN.mgmt, VLAN.vm];
-  const strict = p.vlanPlacement === 'strict-ab';
+  const strict = !trunked;
   const sw = switchPair({
     vlansA: [...base, ...storage.filter((v) => !strict || v === VLAN.storageA)],
     vlansB: [...base, ...storage.filter((v) => !strict || v === VLAN.storageB)],
@@ -244,6 +242,7 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
 
   // ct0/ct1.eth10 → Switch A, ct0/ct1.eth11 → Switch B, plus mgmt (SPEC §6.5; NET). With a
   // single storage VLAN every data port sits on that VLAN.
+  const arrayTrunk = p.arrayPortVlans === 'trunked';
   const fa = flashArray({
     model: '//X70',
     ports: [
@@ -260,7 +259,7 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
         to: ['sw-a', 'sw-a'],
         speedGbps: 25,
         mtu: jumbo,
-        vlans: [VLAN.storageA],
+        vlans: arrayTrunk ? storage : [VLAN.storageA],
         service: 'nvme-tcp',
       },
       {
@@ -268,7 +267,7 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
         to: ['sw-b', 'sw-b'],
         speedGbps: 25,
         mtu: jumbo,
-        vlans: [storage[1] ?? VLAN.storageA],
+        vlans: arrayTrunk ? storage : [storage[1] ?? VLAN.storageA],
         service: 'nvme-tcp',
         cabled: p.arrayDataPorts === 'all',
       },
@@ -290,19 +289,18 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
       VLANS.vm,
     ],
     devices: [...devices, ...sw.devices, ...fa.devices],
-    links: [...links, ...islPlan(sw.links, storage, p.islStorageVlans), ...fa.links],
+    links: [
+      ...links,
+      ...(trunked ? sw.links : pruneStorageFromIsl(sw.links, storage)),
+      ...fa.links,
+    ],
     options: optionSpecs(t1Options, p),
     layout: computeLayout({ hosts: hostBoxes, switches: ['sw-a', 'sw-b'], fa: fa.layout }),
   });
 }
 
-/** Prune the storage VLANs from the ISL (`isl-storage-vlans: pruned`): storage stays single-hop. */
-function islPlan(
-  links: readonly LinkInput[],
-  storage: readonly number[],
-  mode: 'pruned' | 'allowed',
-): LinkInput[] {
-  if (mode === 'allowed') return [...links];
+/** Prune the storage VLANs from the ISL: storage stays single-hop. */
+function pruneStorageFromIsl(links: readonly LinkInput[], storage: readonly number[]): LinkInput[] {
   const keep = [VLAN.mgmt, VLAN.vm].filter((v) => !storage.includes(v));
   return links.map((l) => (l.id === ISL_ID ? { ...l, allowedVlans: keep } : l));
 }

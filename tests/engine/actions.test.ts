@@ -27,7 +27,6 @@ describe('action registry', () => {
       'vswitch.set-bond-mode',
       'vswitch.set-uplinks',
       'vswitch.set-lacp-rate',
-      'vswitch.set-slb-vlan-aware',
     ]);
     expect(s.availableActions('nope')).toEqual([]);
 

@@ -82,14 +82,11 @@ export interface BondInfo {
   /** Cabled NICs (superset of `uplinks`). */
   readonly members: readonly string[];
   readonly eligible: readonly string[];
-  readonly slbVlanAware: boolean;
   readonly activeMember: string | null;
   readonly lacpRate: LacpRate;
   readonly misconfig: string | null;
   readonly group: string | undefined;
   memberState(nic: string): MemberState;
-  /** Eligible members that may carry `vlan` (after VLAN-aware filtering). */
-  usableFor(vlan: number): readonly string[];
   pinnedMember(mac: string, vlan: number): string | null;
   bucketSpread(): Readonly<Record<string, number>>;
 }
@@ -278,7 +275,6 @@ export class NetworkRuntime implements NetworkQuery {
           timers: this.host.timers,
           config: () => this.config,
           probe: (nic) => this.probeMember(nic),
-          carries: (nic, vlan) => this.memberCarries(nic, vlan),
           emit: (d) =>
             this.host.emit({ ...d, causeIds: d.causeIds ?? this.host.causes(), cite: [] }),
           causes: () => this.host.causes(),
@@ -338,13 +334,11 @@ export class NetworkRuntime implements NetworkQuery {
       uplinks: b.uplinks,
       members: b.members,
       eligible: b.eligible,
-      slbVlanAware: b.slbVlanAware,
       activeMember: b.activeMember,
       lacpRate: b.lacpRate,
       misconfig: b.misconfig,
       group: b.group,
       memberState: (nic) => b.memberState(nic),
-      usableFor: (vlan) => b.usableFor(vlan),
       pinnedMember: (mac, vlan) => b.pinnedMember(mac, vlan),
       bucketSpread: () => b.bucketSpread(),
     };
@@ -559,11 +553,6 @@ export class NetworkRuntime implements NetworkQuery {
     this.reconcile();
   }
 
-  setSlbVlanAware(id: string, on: boolean): void {
-    this.requireBond(id).setSlbVlanAware(on);
-    this.reconcile();
-  }
-
   /**
    * Re-home an endpoint (e.g. a floating VIP moving to the new primary controller's NIC).
    * Emits `net.endpoint.moved`; returns the event id.
@@ -740,8 +729,7 @@ export class NetworkRuntime implements NetworkQuery {
       const bond = this.requireBond(sa.id);
       const m = bond.selectEgress(req.flow, vlan, req.size === 'large' ? 8 : 1);
       if (m === null) {
-        const detail = bond.eligible.length > 0 ? 'no-uplink-carries-vlan' : 'no-live-uplink';
-        return drop([], [], { reason: 'bond-no-member', at: bond.id, detail });
+        return drop([], [], { reason: 'bond-no-member', at: bond.id, detail: 'no-live-uplink' });
       }
       egress = m;
     } else {
@@ -942,16 +930,6 @@ export class NetworkRuntime implements NetworkQuery {
   }
 
   /** Configuration check: does the member's link and partner switch carry `vlan`? */
-  private memberCarries(nic: string, vlan: number): boolean {
-    const linkId = this.nicLink.get(nic);
-    const l = linkId === undefined ? undefined : this.links.get(linkId);
-    if (!l) return false;
-    if (l.allowed && !l.allowed.has(vlan)) return false;
-    const peer = l.spec.a === nic ? l.spec.b : l.spec.a;
-    const sw = this.switches.get(peer);
-    return !sw || sw.vlans.has(vlan);
-  }
-
   private partnerKey(peer: string): string {
     const sw = this.switches.get(peer);
     if (!sw) return `nic:${peer}`;

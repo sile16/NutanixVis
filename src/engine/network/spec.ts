@@ -69,11 +69,6 @@ export interface BondSpec {
   readonly uplinks: readonly string[];
   /** Cabled NICs that `vswitch.set-uplinks` may choose from. Default: `uplinks`. */
   readonly members?: readonly string[];
-  /**
-   * VLAN-aware member choice for `balance-slb` and `active-backup` (default `true`): only use
-   * members whose link and partner switch carry the frame's VLAN. `false` = plain OVS.
-   */
-  readonly slbVlanAware?: boolean;
   /** LACP rate, used only in `balance-tcp`. Default `fast`. */
   readonly lacpRate?: LacpRate;
   /**

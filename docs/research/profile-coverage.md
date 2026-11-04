@@ -12,9 +12,9 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | Confidence | Count |
 |---|---|
 | verified | 39 |
-| inferred | 15 |
+| inferred | 16 |
 | unverified | 1 |
-| assumption | 35 |
+| assumption | 34 |
 | lab-observed | 0 |
 | **Total** | **90** |
 
@@ -79,7 +79,7 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `hci.diskOfflineWindowS` | 3600 | verified | `ntnx-bible-4i` | "3 times within an hour". |
 | `bond.lacpFastDetectS` | 3 | verified | `ntnx-ahv-admin-11.2`, `ovs-lacp-source` | Prism Active-Active always sets the fast rate (one LACPDU per second, timeout 3 × that). Liveness is LACPDU receipt only, so a switch that hangs but keeps sending LACPDUs is never detected. |
 | `bond.lacpSlowDetectS` | 90 | verified | `ntnx-ahv-admin-11.2`, `ovs-vswitchd-conf` | Host-side slow rate, which can only be set outside Prism (manage_ovs or the AHV installer). A slow rate on the switch only slows the switch side; the host still detects in 3 s (inferred). |
-| `bond.slbRebalanceIntervalS` | 10 | assumption | `ovs-bonding`, `ovs-vswitchd-conf`, `ntnx-community-slb-rebalance` | OVS default ("Every 10 seconds, vswitchd rebalances"); whether AHV tunes bond-rebalance-interval is not published. A Nutanix technical marketing post (2020) recommends 30 s. |
+| `bond.slbRebalanceIntervalS` | 30 | inferred | `ovs-bonding`, `ovs-vswitchd-conf`, `ntnx-community-slb-rebalance` | AHV sets other_config:bond-rebalance-interval=30000 on its balance-slb bonds (read on an AHV 11.2 host; not in the Admin Guide), matching the 30 s a Nutanix technical marketing post (2020) recommends. The OVS default is 10 s. |
 | `bond.lacpFallbackAb` | true | verified | `ntnx-ahv-admin-11.2`, `ovs-lacp-source` | Prism Active-Active sets LACP fallback to active-backup on every host, and it cannot be changed afterwards. A timed-out member is detached while another is negotiated; with none negotiated the bond runs active-backup. |
 | `externalStorage.vdiskVolumeMapping` | '1:1' | verified | `ntnx-ncp-everpure-deploy-7.6`, `everpure-nutanix-rn` | Every vDisk is one FA volume, no metadata/CBT volume. Requires AOS 7.6 with Purity//FA 6.11.8+ or 6.12.0+. |
 | `externalStorage.maxVdisksPerCluster` | 10000 | verified | `ntnx-ncp-everpure-deploy-7.6`, `everpure-nutanix-req` |  |
@@ -120,7 +120,6 @@ These are the values the lab plan (`lab-validation-plan.md`) should upgrade firs
 |---|---|---|---|
 | `redirector.redirectStallS` | 3 s | No AHV figure is published. A few ticks covers the initiator's (Frodo/QEMU) re-login to the remote Stargate after the redirect decision. | L3 |
 | `redirector.missesToUnhealthy` / `missWindowS` | 2 / 30 s | The hypervisor-agnostic Autopath rule (2014 Nutanix blog). The AHV redirector's count is not published. | L3 |
-| `bond.slbRebalanceIntervalS` | 10 s | The documented Open vSwitch default ("Every 10 seconds, vswitchd rebalances"). Whether AHV tunes `bond-rebalance-interval` is not public. | L13 |
 | `externalStorage.multipathPolicy` | active-active | The policy Nutanix configures for Stargate is not public. SPDK supports active-passive and active-active. The selector (`pathSelector`, queue-depth, `inferred`) is a separate field. | L12 |
 | `externalStorage.lostPathHoldKatoMultiplier` | 3 | NVMe 2.1 §9.6.2: wait 2 × KATT (command-based keep-alive) or 3 × KATT (traffic-based) before CQT. The conservative traffic-based case; which mode the array uses is not published. All in-flight IO is held, although the spec lets reads retry at detection. | L5, L12 |
 | `externalStorage.reconnectDelayS` | 10 s | Linux `NVMF_DEF_RECONNECT_DELAY`, the default of the CVM's kernel initiator. SPDK has no default (its multipath example uses `-o 20`). | L5 |

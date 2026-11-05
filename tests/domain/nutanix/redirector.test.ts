@@ -217,8 +217,10 @@ describe('redirector on compute-only hosts (T3)', () => {
       h.f(v, 'ownerCvm'),
     );
     expect(owners).toEqual(['node-4.cvm', 'node-5.cvm', 'node-6.cvm', 'node-7.cvm']);
-    // The CO host's bond is in the storage path.
-    expect(JSON.parse(String(h.f('node-1.vm-1', 'ioUplinks')))).toEqual(['node-1.eth0']);
+    // The CO host's bond is in the storage path (vs0 LACP hashes the iSCSI connection onto a member).
+    const up = JSON.parse(String(h.f('node-1.vm-1', 'ioUplinks'))) as string[];
+    expect(up).toHaveLength(1);
+    expect(['node-1.eth0', 'node-1.eth1']).toContain(up[0]);
   });
 
   it('detects a dead remote Stargate with the same initiator rules (SPEC §14 #5)', () => {

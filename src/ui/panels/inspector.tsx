@@ -19,7 +19,7 @@ import {
   computePathUsage,
   isBondKind,
 } from '../diagram/path-usage';
-import { trafficStyle } from '../diagram/traffic';
+import { GUI_HIDDEN_CATEGORIES, trafficStyle } from '../diagram/traffic';
 import { useSim, useSimControls, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import { currentChoice, initialParams, rejectionReason } from './action-params';
@@ -369,7 +369,7 @@ function BondSection({ hostId }: { hostId: string }) {
   if (bonds.length === 0) return null;
   const on = bondUtilHost === hostId;
   return (
-    <Section title="Bond member utilization" testId="bond-util">
+    <Section title="Bond member share of traffic" testId="bond-util">
       <Button
         size="sm"
         aria-pressed={on}
@@ -388,17 +388,38 @@ function BondSection({ hostId }: { hostId: string }) {
           </div>
           <div className="flex flex-col gap-1">
             {b.members.map((m) => (
-              <ShareBar
-                key={m.nicId}
-                label={m.label}
-                share={m.share}
-                down={m.status === 'down'}
-                detail={Object.entries(m.byCategory)
-                  .map(([c, n]) => `${trafficStyle(c).label}: ${n}`)
-                  .join(', ')}
-              />
+              <div key={m.nicId}>
+                <ShareBar
+                  label={m.label}
+                  share={m.share}
+                  down={m.status === 'down'}
+                  detail={
+                    b.basis === 'throughput'
+                      ? `${m.label}: ${Math.round(m.share * 100)}% of ${b.label} traffic now`
+                      : Object.entries(m.byCategory)
+                          .map(([c, n]) => `${trafficStyle(c).label}: ${n}`)
+                          .join(', ')
+                  }
+                />
+                {b.basis === 'throughput' && m.capacityGbps ? (
+                  <div
+                    className="pl-[7rem] font-mono text-[11px] text-ink-muted"
+                    data-testid="bond-member-line-rate"
+                  >
+                    of {m.capacityGbps} Gb line rate: in {Math.round(m.inGbps ?? 0)} Gb (
+                    {Math.round((100 * (m.inGbps ?? 0)) / m.capacityGbps)}%) · out{' '}
+                    {Math.round(m.outGbps ?? 0)} Gb (
+                    {Math.round((100 * (m.outGbps ?? 0)) / m.capacityGbps)}%)
+                  </div>
+                ) : null}
+              </div>
             ))}
           </div>
+          <p className="mt-1 text-[11px] text-ink-muted">
+            {b.basis === 'throughput'
+              ? 'Share of storage Gb/s carried now (throughput model). Line rate is per direction.'
+              : 'Share of sampled messages of every kind over recent activity.'}
+          </p>
         </div>
       ))}
     </Section>
@@ -534,7 +555,11 @@ function LinkInspector({ link }: { link: LinkView }) {
   // Utilization over the same activity window as the diagram glow.
   const activityTicks = useUi((s) => s.activityTicks);
   const win = useActivityWindow(activityTicks);
-  const util = win.snapshot.links[link.id]?.util ?? link.util;
+  const util = Object.fromEntries(
+    Object.entries(win.snapshot.links[link.id]?.util ?? link.util).filter(
+      ([c]) => !GUI_HIDDEN_CATEGORIES.has(c),
+    ),
+  );
   const total = Object.values(util).reduce((s, v) => s + v, 0);
   const windowLabel = 'recent activity';
   return (

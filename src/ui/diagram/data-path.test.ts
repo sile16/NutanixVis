@@ -27,7 +27,8 @@ describe('I/O data path (T1)', () => {
     expect(hop(m, 'node-1.cvm.stargate', 'node-1.cvm.storage-a')?.state).toBe('active');
     expect(hop(m, 'node-1.cvm.storage-a', 'node-1.vs1')?.state).toBe('active');
     expect(hop(m, 'node-1.vs1', 'node-1.eth2')?.state).toBe('active');
-    expect(hop(m, 'node-1.vs0', 'node-1.eth1')?.state).toBe('standby');
+    // vs0 is LACP: both members are in service; eth1 carries no IO in steady state.
+    expect(hop(m, 'node-1.vs0', 'node-1.eth1')?.state).toBe('idle');
     expect(Object.keys(m.devices)).toContain('node-1.cvm.stargate');
     // every hop is an I/O link with its own port ids, and only active hops animate
     expect(Object.keys(hopLinks(m)).every(isIoLink)).toBe(true);

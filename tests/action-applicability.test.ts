@@ -6,7 +6,7 @@ const kinds = (sim: ReturnType<typeof loadSimulation>['sim'], id: string) =>
 
 describe('action applicability and MLAG pairing (UI bug-hunt findings)', () => {
   it('enabling MLAG on an unpaired switch pairs it with its ISL peer; disabling twice is a no-op', () => {
-    const { sim } = loadSimulation({ topologyId: 't1-ahv-flasharray' }); // mlag off by default
+    const { sim } = loadSimulation({ topologyId: 't1-ahv-flasharray', options: { mlag: false } });
     sim.tick(1);
     sim.applyAction({ kind: 'fabric.set-mlag', target: 'sw-a', params: { enabled: 'on' } });
     let s = sim.tick(1);
@@ -14,7 +14,10 @@ describe('action applicability and MLAG pairing (UI bug-hunt findings)', () => {
     expect(s.devices['sw-b']?.fields.mlagDomain).toBe('mlag:sw-a+sw-b');
     expect(sim.eventLog().some((e) => e.code === 'action.rejected')).toBe(false);
 
-    const { sim: fresh } = loadSimulation({ topologyId: 't1-ahv-flasharray' });
+    const { sim: fresh } = loadSimulation({
+      topologyId: 't1-ahv-flasharray',
+      options: { mlag: false },
+    });
     fresh.applyAction({ kind: 'fabric.set-mlag', target: 'sw-a', params: { enabled: 'off' } });
     s = fresh.tick(1);
     expect(fresh.eventLog().some((e) => e.code === 'net.mlag.changed')).toBe(false);

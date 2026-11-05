@@ -44,10 +44,9 @@ function variant(rate: 'fast' | 'slow'): ScenarioDef {
     timeline: [
       {
         at: T0,
-        // Switch B, not A: every host's vs0 (mgmt, Active-Backup per DEPLOY-GUIDE Table 2) runs
-        // on its Switch A uplink, and Active-Backup cannot detect a hang (SPEC §5.3), so hanging
-        // Switch A would also blackhole all cluster traffic and lose ZK quorum. That is a
-        // different lesson (T1-20); this scenario isolates the vs1 LACP rate.
+        // vs0 is Active-Active LACP at the fast rate Prism sets, whatever `lacp-rate` says (it
+        // applies to vs1), so management detects the hang in about 3 s either way (T1-20); this
+        // scenario isolates the vs1 LACP rate.
         action: { kind: 'switch.hang', target: SW_B },
         note: 'Switch B stops forwarding but its ports keep carrier.',
       },
@@ -67,8 +66,8 @@ function variant(rate: 'fast' | 'slow'): ScenarioDef {
       at(by(settled), 'in the end only the paths to FA ports on Switch B are lost', (s) =>
         allCvms(s, (c) => onlyPathsLostTo(c, faInterfacesBehind(s, SW_B))),
       ),
-      alwaysFrom(T0, 'vs0 is untouched: management stays on the Switch A uplinks', (s) =>
-        T1.nodes.every((n) => vswitch(s, `node-${n}.vs0`).activeMember === `node-${n}.eth0`),
+      at(by(P.bond.lacpFastDetectS), 'vs0 (fast LACP) has detached its Switch B member', (s) =>
+        T1.nodes.every((n) => vswitch(s, `node-${n}.vs0`).activeMembers === 1),
       ),
       at(by(settled), 'all VMs are running', (s) => allVms(s, isRunning)),
       ...(rate === 'fast'
@@ -97,7 +96,7 @@ function variant(rate: 'fast' | 'slow'): ScenarioDef {
     ],
     narrative:
       rate === 'fast'
-        ? 'Switch B hangs without dropping carrier, so only LACP can notice. At the fast rate the vs1 bonds stop receiving LACP PDUs and detach the Switch B member within about 3 s, before any keep-alive timeout, so connections hashed onto it recover on eth2. The paths to the FA ports behind Switch B are lost after the keep-alive timeout, and IO continues on Switch A. Management on vs0 is untouched because its active uplinks are on Switch A: Active-Backup cannot detect a hang, so a hung Switch A would have cut the cluster apart.'
+        ? 'Switch B hangs without dropping carrier, so only LACP can notice. At the fast rate the vs1 bonds stop receiving LACP PDUs and detach the Switch B member within about 3 s, before any keep-alive timeout, so connections hashed onto it recover on eth2. The paths to the FA ports behind Switch B are lost after the keep-alive timeout, and IO continues on Switch A. Management on vs0 runs LACP at the fast rate too, so it detaches the Switch B member in the same few seconds.'
         : 'Switch B hangs without dropping carrier, and the host bonds run the slow LACP rate, which can only be set outside Prism (Prism Active-Active always uses fast, and a slow rate on the switch alone would still leave the host detecting in about 3 s). At the slow rate LACP takes up to 90 s to detach the member, and until then every TCP connection hashed onto it, including IO queues of paths whose keep-alive still gets through, is blackholed. Those commands wait for the NVMe IO timeout, which resets their path so it reconnects on fresh connections, far longer than at the fast rate, which is why the fast rate is the default.',
     cite: ['ntnx-ahv-admin-11.2', 'ovs-bonding', 'nvme-base-spec'],
     status: 'active',

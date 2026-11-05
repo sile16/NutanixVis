@@ -17,9 +17,14 @@ import {
 } from './parts';
 import type { BondMode } from './schema';
 
-/** Bond default active-backup on br0/vs0 (AHV Administration Guide 11.2, Table 9). Runtime. */
+/**
+ * vs0 (br0) bond. Default Active-Active, i.e. LACP balance-tcp over an MLAG/vPC switch pair
+ * (owner decision 2026-11-05: a hung switch is then detected by LACP within ~3 s instead of never).
+ * AHV's own default, and the NCP with Everpure FlashArray Deployment Guide 7.6 Table 2, is
+ * Active-Backup (AHV Administration Guide 11.2, Table 9); it stays selectable. Runtime.
+ */
 export const vs0BondOption = () =>
-  option('vs0-bond-mode', 'vs0 uplink bond', BOND_MODES, 'active-backup', true);
+  option('vs0-bond-mode', 'vs0 uplink bond', BOND_MODES, 'balance-tcp', true);
 
 /** Per-node disks: 2 NVMe + 4 SSD (illustrative capacities). */
 export const HCI_DISKS: readonly DiskPlan[] = [

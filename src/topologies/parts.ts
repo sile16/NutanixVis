@@ -74,7 +74,8 @@ export function vs0InitialActive(
 }
 export const mlagOption = () =>
   // LACP across two switches needs MLAG/vPC; MAC pinning does not (AHV Admin Guide 11.2 Table 9).
-  option('mlag', 'MLAG / vPC between switches', [false, true], false, true);
+  // Default on: vs0 runs LACP (Active-Active) across the switch pair (`vs0BondOption`).
+  option('mlag', 'MLAG / vPC between switches', [true, false], true, true);
 export const nodeCountOption = (id: string, label: string, def: 3 | 4) =>
   option(id, label, [3, 4, 5, 6, 7, 8], def);
 

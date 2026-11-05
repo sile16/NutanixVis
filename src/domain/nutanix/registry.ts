@@ -34,6 +34,9 @@ export type NutanixClusterView = ClusterView;
 /** A VM's throughput as the flows device last solved it. */
 export interface VmFlowView {
   readonly offeredGbps: number | null;
+  /** Offered and achieved IOs per second (rate ÷ the model's IO size). */
+  readonly offeredIops: number | null;
+  readonly iops: number;
   readonly readPct: number;
   readonly gbps: number;
   readonly readGbps: number;
@@ -60,6 +63,10 @@ export class Registry implements NutanixClusterView, VmEnv {
   readonly backends = new Map<string, StorageBackend>();
   /** Throughput model: each VM's offered load (`null` = line rate) and read share (`vm.set-load`). */
   readonly vmLoad = new Map<string, { readonly gbps: number | null; readonly readPct: number }>();
+  /** Workload slider: offered IOPS per VM applied to every VM (`workload.set-iops`), if set. */
+  iopsPerVm: number | null = null;
+  /** Read share a VM uses until `vm.set-load` changes it (topology option `read-pct`). */
+  defaultReadPct = 70;
   /** Throughput model results of the last tick, per VM (flows device). */
   readonly vmFlow = new Map<string, VmFlowView>();
   /** vDisk → owning CVM. */

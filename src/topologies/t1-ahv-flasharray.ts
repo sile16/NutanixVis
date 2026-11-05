@@ -6,6 +6,8 @@
  * - NET: Everpure, "Network Configuration for NCP with FlashArray".
  * - AHV-ADMIN: "AHV Administration Guide" 11.2, Table 9 "Bond Types".
  */
+
+import { vs0BondOption } from './hci-parts';
 import { computeLayout } from './layout';
 import { option, optionSpecs, type ParamsOf, resolveParams } from './options';
 import {
@@ -74,8 +76,10 @@ export const t1Options = {
   ),
   lacpRate: lacpRateOption(),
   mlag: mlagOption(),
-  // vs0 is Active-Backup (DEPLOY-GUIDE Table 2); which member is active decides who is cut off
-  // when a switch hangs with carrier up (SPEC §7.2 T1-20, T1-21).
+  // vs0 (management, CVM-to-CVM, redirects): Active-Active LACP by default (`vs0BondOption`);
+  // DEPLOY-GUIDE Table 2 specifies Active-Backup, still selectable. With Active-Backup, which
+  // member is active decides who is cut off when a switch hangs with carrier up.
+  vs0BondMode: vs0BondOption(),
   vs0ActiveMember: vs0ActiveMemberOption(),
   // NET: "Do not enable Priority Flow Control (PFC) or Global Pause ... not supported by
   // Everpure FlashArray in NVMe/TCP environments." Non-off values are misconfigurations.
@@ -221,11 +225,12 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
         { eth: 3, speedGbps: NODE_NIC_GBPS, mtu: jumbo, to: 'sw-b' },
       ],
       vswitches: [
-        // vs0: mgmt, live migration, DR, apps; Active/Backup, MTU 1500 (DEPLOY-GUIDE Table 2).
+        // vs0: mgmt, live migration, DR, apps; MTU 1500 (DEPLOY-GUIDE Table 2). LACP at the fast
+        // rate Prism always sets (AHV Admin Guide 11.2); `lacp-rate` applies to vs1 only.
         {
           name: 'vs0',
-          bondMode: 'active-backup',
-          lacpRate: p.lacpRate,
+          bondMode: p.vs0BondMode,
+          lacpRate: 'fast',
           mtu: 1500,
           nics: [0, 1],
           initialActive: vs0InitialActive(p.vs0ActiveMember, n, 0, 1),

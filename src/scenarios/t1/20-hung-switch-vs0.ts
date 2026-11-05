@@ -6,97 +6,86 @@ import {
   at,
   atCtx,
   baseInvariants,
+  before,
   by,
   derived,
-  eventsMatching,
+  eventSeen,
   faInterfacesBehind,
   hosts,
+  isRunning,
   neverSeen,
   onlyPathsLostTo,
+  SLACK,
   T0,
   t1Steady,
   vms,
   vswitch,
 } from '../helpers';
 import { SW_A, T1 } from '../ids';
-import { KATO, P } from '../timers';
+import { KATO, P, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
 
-/**
- * The admin powers Switch A off 50 s after it hangs, before the 60 s Linux guest SCSI timeout
- * (AHV Admin Guide 11.2) would turn the stalled writes into guest IO errors.
- */
-const POWER_OFF = T0 + 50;
-const END = by(30, POWER_OFF);
+const DETECT = P.bond.lacpFastDetectS;
+const END = by(PATH_LOSS_WORST) + 30;
 const vs0 = (n: number): string => `node-${n}.vs0`;
 
 export default defineScenario({
   id: 't1-20-hung-switch-vs0',
-  title: 'T1: Switch A hangs with carrier up; every host is active on it',
+  title: 'T1: Switch A hangs with carrier up; vs0 LACP detects it',
   topology: T1.topology,
-  // OVS default: each host's active-backup vs0 starts on eth0, which is cabled to Switch A.
-  options: { 'vs0-active-member': 'first' },
   durationS: END,
   timeline: [
     {
       at: T0,
       action: { kind: 'switch.hang', target: SW_A },
-      note: 'Switch A stops forwarding but keeps carrier on every port.',
-    },
-    {
-      at: POWER_OFF,
-      action: { kind: 'switch.fail', target: SW_A },
-      note: 'The admin powers Switch A off: carrier drops, so the bonds fail over.',
+      note: 'Switch A stops forwarding (and sending LACPDUs) but keeps carrier on every port.',
     },
   ],
   expect: [
     ...t1Steady(),
-    at(T0, 'every vs0 starts on its Switch A member (eth0)', (s) =>
-      T1.nodes.every((n) => vswitch(s, vs0(n)).activeMember === `node-${n}.eth0`),
+    at(T0, 'every vs0 is an LACP bond over both switches (MLAG), both members negotiated', (s) =>
+      T1.nodes.every((n) => {
+        const v = vswitch(s, vs0(n));
+        return (
+          v.bondMode === 'balance-tcp' && v.lacpState === 'negotiated' && v.activeMembers === 2
+        );
+      }),
     ),
-    at(by(0), 'CVMs cannot reach each other over vs0: Zookeeper quorum is lost', (s) => {
-      return !derived(s).zkQuorum;
-    }),
-    // Services are declared down once the ZK sessions time out (`cluster.zkSessionTimeoutS`).
-    at(by(P.cluster.zkSessionTimeoutS), 'cluster services are down', (s) => {
-      return derived(s).clusterServices === 'down';
-    }),
-    at(by(KATO), 'the NVMe paths through Switch B stay live; only VLAN-A paths are lost', (s) =>
-      allCvms(s, (c) => onlyPathsLostTo(c, faInterfacesBehind(s, SW_A))),
+    at(before(DETECT), 'until the LACP timeout the Switch A member still counts as up', (s) =>
+      T1.nodes.every((n) => vswitch(s, vs0(n)).activeMembers === 2),
     ),
-    alwaysFrom(T0, 'until the power-off no vs0 bond notices anything', (s) =>
-      s.simTime > POWER_OFF
-        ? true
-        : T1.nodes.every((n) => vswitch(s, vs0(n)).activeMember === `node-${n}.eth0`),
-    ),
-    atCtx(POWER_OFF, 'no bond event on any vs0 while the switch is hung', (_s, ctx) =>
-      T1.nodes.every((n) =>
-        eventsMatching(ctx, 'net.bond.failover', { device: vs0(n) }).every((e) => e.t > POWER_OFF),
+    atCtx(by(DETECT), 'every vs0 detaches its Switch A member at the fast LACP timeout', (s, ctx) =>
+      T1.nodes.every(
+        (n) =>
+          vswitch(s, vs0(n)).activeMembers === 1 &&
+          eventSeen(ctx, 'net.bond.lacp-timeout', { device: vs0(n) }),
       ),
     ),
-    at(POWER_OFF, 'every VM has had writes stalled since the hang', (s) =>
-      allVms(s, (v) => v.writePendingS >= POWER_OFF - T0 - KATO),
+    alwaysFrom(
+      T0,
+      'Zookeeper quorum and cluster services stay up (the blip is shorter than a ZK session)',
+      (s) => {
+        const d = derived(s);
+        return d.zkQuorum === true && d.clusterServices === 'up';
+      },
     ),
-    alwaysFrom(T0, 'no host is ever marked disconnected (no quorum side to judge it)', (s) =>
+    at(
+      by(KATO),
+      'storage loses only the paths behind Switch A (MAC pinning on vs1 cannot see a hang)',
+      (s) => allCvms(s, (c) => onlyPathsLostTo(c, faInterfacesBehind(s, SW_A))),
+    ),
+    alwaysFrom(T0, 'VMs keep running', (s) => allVms(s, isRunning)),
+    alwaysFrom(T0, `no command waits longer than ${PATH_LOSS_RULE}`, (s) =>
+      vms(s).every((v) => v.ioPendingS <= PATH_LOSS_WORST + SLACK),
+    ),
+    alwaysFrom(T0, 'no host is ever marked disconnected', (s) =>
       hosts(s).every((h) => h.haState === 'connected'),
-    ),
-    at(by(0, POWER_OFF), 'carrier loss: every vs0 fails over to eth1 at once', (s) =>
-      T1.nodes.every((n) => vswitch(s, vs0(n)).activeMember === `node-${n}.eth1`),
-    ),
-    at(by(0, POWER_OFF), 'quorum and cluster services are back', (s) => {
-      const d = derived(s);
-      return d.zkQuorum && d.clusterServices === 'up';
-    }),
-    at(by(KATO, POWER_OFF), 'writes complete again on every VM, on the same hosts', (s) =>
-      vms(s).every(
-        (v) => v.writePendingS === 0 && v.host !== null && v.id.startsWith(`${v.host}.`),
-      ),
     ),
     neverSeen(END, 'ha.vm.restarted'),
     neverSeen(END, 'ha.vm.self-terminated'),
     ...baseInvariants(),
   ],
   narrative:
-    'Switch A hangs but keeps carrier, and every host runs its active-backup vs0 on eth0 to Switch A, which is what OVS picks by default. Active-backup only watches carrier, so no bond notices: every CVM is cut off from every other, Zookeeper quorum is lost and writes stop cluster-wide, even though each CVM still has live NVMe paths through Switch B. No side has quorum, so AHV HA restarts nothing. Powering Switch A off turns the hang into carrier loss, every vs0 fails over to Switch B at once, and the cluster recovers.',
-  cite: ['ovs-bonding', 'ovs-vswitchd-conf', 'ntnx-ahv-admin-11.2', 'ntnx-ncp-everpure-deploy-7.6'],
+    'Switch A hangs but keeps carrier. Every host runs vs0 as Active-Active LACP over the MLAG pair, and OVS judges LACP liveness by LACPDU receipt: the hung switch stops sending them, so at the fast rate each vs0 detaches its Switch A member within about 3 s and carries management, CVM-to-CVM and redirect traffic on Switch B. That is shorter than a Zookeeper session, so quorum and cluster services never drop and AHV HA does nothing; storage is different: vs1 uses MAC pinning, which only watches carrier, so the VLAN-A interfaces stay pinned to Switch A, their paths are lost after the keep-alive timeout, and IO continues on VLAN B. With Active-Backup on vs0 (the deployment guide default) no bond would notice the hang, and every CVM would be cut off from every other.',
+  cite: ['ovs-lacp-source', 'ovs-bonding', 'ntnx-ahv-admin-11.2', 'ntnx-ncp-everpure-deploy-7.6'],
   status: 'active',
 });

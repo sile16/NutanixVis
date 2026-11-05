@@ -33,10 +33,13 @@ describe('t1-ahv-flasharray', () => {
     expect(count(t, 'fa-controller')).toBe(2);
     const vs0 = get(t, 'node-1.vs0', 'vswitch');
     const vs1 = get(t, 'node-1.vs1', 'vswitch');
+    // vs0 Active-Active (LACP, fast rate) over the MLAG pair by default.
     expect(vs0).toMatchObject({
-      bondMode: 'active-backup',
+      bondMode: 'balance-tcp',
+      lacpRate: 'fast',
       uplinks: ['node-1.eth0', 'node-1.eth1'],
     });
+    expect(get(t, 'sw-a', 'switch').mlagDomain).toBe('mlag-1');
     expect(vs1).toMatchObject({ bondMode: 'balance-slb', uplinks: ['node-1.eth2', 'node-1.eth3'] });
     expect(t.links.map((l) => l.id)).toEqual(
       expect.arrayContaining([
@@ -115,7 +118,7 @@ describe('t1-ahv-flasharray', () => {
     });
     expect(get(lacp, 'sw-a', 'switch').mlagDomain).toBe('mlag-1');
     expect(get(lacp, 'sw-b', 'switch').mlagDomain).toBe('mlag-1');
-    expect(get(t, 'sw-a', 'switch').mlagDomain).toBeUndefined();
+    expect(get(buildT1({ mlag: false }), 'sw-a', 'switch').mlagDomain).toBeUndefined();
     expect(get(t, 'node-1.vs1', 'vswitch').lacpRate).toBeUndefined();
     const nb = buildT1({ vs1BondMode: 'no-bond' });
     expect(get(nb, 'node-1.vs1', 'vswitch').uplinks).toEqual(['node-1.eth2']);
@@ -209,12 +212,12 @@ describe('t1-lab', () => {
 
 describe('t2-hci-ahv', () => {
   const t = topologies['t2-hci-ahv'];
-  it('4 HCI nodes, 2 NVMe + 4 SSD each, active-backup vs0 on eth0 (A) + eth1 (B)', () => {
+  it('4 HCI nodes, 2 NVMe + 4 SSD each, LACP vs0 on eth0 (A) + eth1 (B)', () => {
     expect(roles(t)).toEqual(['hci', 'hci', 'hci', 'hci']);
     const disks = ofKind(t, 'disk').filter((d) => d.parent === 'node-1');
     expect(disks.map((d) => d.media)).toEqual(['nvme', 'nvme', 'ssd', 'ssd', 'ssd', 'ssd']);
     expect(get(t, 'node-1.vs0', 'vswitch')).toMatchObject({
-      bondMode: 'active-backup',
+      bondMode: 'balance-tcp',
       uplinks: ['node-1.eth0', 'node-1.eth1'],
     });
     expect(get(t, 'node-1.eth0', 'nic').speedGbps).toBe(25);

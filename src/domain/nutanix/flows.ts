@@ -109,6 +109,7 @@ export class FlowsDevice implements Device<Profile> {
       gbps: typeof load === 'number' ? load : load === 'line-rate' ? null : 10,
       readPct: typeof read === 'number' ? read : 70,
     };
+    reg.defaultReadPct = this.defaultLoad.readPct;
   }
 
   postTick(ctx: Ctx): void {
@@ -160,7 +161,7 @@ export class FlowsDevice implements Device<Profile> {
     const first = this.ends.get(links[0] ?? '');
     if (!first) return null;
     const second = links[1] === undefined ? undefined : this.ends.get(links[1]);
-    let node = second && second.includes(first[0]) ? first[1] : first[0];
+    let node = second?.includes(first[0]) ? first[1] : first[0];
     const dirs: DirKey[] = [];
     let switchHops = 0;
     for (const id of links) {
@@ -297,8 +298,11 @@ export class FlowsDevice implements Device<Profile> {
         };
       });
       const load = this.loadOf(f.id);
+      const ioBits = THROUGHPUT.ioSizeKiB.value * 1024 * 8;
       this.reg.vmFlow.set(f.id, {
         offeredGbps: load.gbps,
+        offeredIops: load.gbps === null ? null : (load.gbps * G) / ioBits,
+        iops: res.bps / ioBits,
         readPct: load.readPct,
         gbps: res.bps / G,
         readGbps: (res.bps * f.readFraction) / G,

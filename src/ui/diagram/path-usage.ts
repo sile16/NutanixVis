@@ -7,6 +7,7 @@
  * is the storage traffic that starts or ends on its host's NICs.
  */
 import type { DeviceView, LinkView, Snapshot, Trace, TrafficCategory } from '../../engine/types';
+import { linkUsage, nicLoad } from './flow-data';
 import { isStorageCategory } from './traffic';
 
 export interface Share {
@@ -224,20 +225,34 @@ export interface BondMember {
   readonly status: LinkView['status'];
   readonly total: number;
   readonly byCategory: Readonly<Record<TrafficCategory, number>>;
+  /** This member's share of the bond's traffic, 0..1. */
   readonly share: number;
+  /** Throughput model: Gb/s received and sent now, and the NIC's line rate. */
+  readonly inGbps?: number;
+  readonly outGbps?: number;
+  readonly capacityGbps?: number;
 }
 
 export interface BondUtilization {
   readonly vswitchId: string;
   readonly label: string;
   readonly bondMode: string;
+  /**
+   * `throughput`: shares are Gb/s now (both directions) from the throughput model;
+   * `messages`: shares are sampled messages of every kind over the activity window.
+   */
+  readonly basis: 'throughput' | 'messages';
   readonly members: readonly BondMember[];
 }
 
-/** Bond member utilization per virtual switch of a host, from `LinkView.util`. */
+/**
+ * Bond member utilization per virtual switch of a host. With the throughput model (T1), from the
+ * Gb/s each member carries now; otherwise from sampled messages (`LinkView.util`) over the window.
+ */
 export function bondUtilization(snapshot: Snapshot, hostId: string): BondUtilization[] {
   const out: BondUtilization[] = [];
   const links = Object.values(snapshot.links);
+  const usage = linkUsage(snapshot);
   const vswitches = Object.values(snapshot.devices)
     .filter((d) => isBondKind(d.kind) && d.parent === hostId)
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -249,20 +264,32 @@ export function bondUtilization(snapshot: Snapshot, hostId: string): BondUtiliza
       const total = Object.values(byCategory).reduce((s, v) => s + v, 0);
       return { nicId, l, byCategory, total };
     });
-    const sum = raw.reduce((s, r) => s + r.total, 0);
+    const loads = raw.map((r) => (r.l ? nicLoad(usage?.get(r.l.id), r.nicId) : null));
+    const gbps = loads.map((x) => (x ? x.inGbps + x.outGbps : 0));
+    const gbSum = gbps.reduce((s, v) => s + v, 0);
+    const throughput = gbSum > 0;
+    const sum = throughput ? gbSum : raw.reduce((s, r) => s + r.total, 0);
     out.push({
       vswitchId: vs.id,
       label: vs.label,
       bondMode: String(vs.fields.bondMode ?? 'unknown'),
-      members: raw.map((r) => ({
-        nicId: r.nicId,
-        label: snapshot.devices[r.nicId]?.label ?? r.nicId,
-        linkId: r.l?.id,
-        status: r.l?.status ?? 'down',
-        total: r.total,
-        byCategory: r.byCategory,
-        share: sum > 0 ? r.total / sum : 0,
-      })),
+      basis: throughput ? 'throughput' : 'messages',
+      members: raw.map((r, i) => {
+        const x = loads[i];
+        const total = throughput ? (gbps[i] ?? 0) : r.total;
+        return {
+          nicId: r.nicId,
+          label: snapshot.devices[r.nicId]?.label ?? r.nicId,
+          linkId: r.l?.id,
+          status: r.l?.status ?? 'down',
+          total,
+          byCategory: r.byCategory,
+          share: sum > 0 ? total / sum : 0,
+          ...(throughput && x
+            ? { inGbps: x.inGbps, outGbps: x.outGbps, capacityGbps: x.capacityGbps }
+            : {}),
+        };
+      }),
     });
   }
   return out;

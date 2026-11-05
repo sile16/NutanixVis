@@ -249,24 +249,59 @@ test('guided steps scenario loads its topology and injects the failure', async (
   await expect(page.getByTestId('node-node-1.eth2')).toHaveAttribute('data-status', 'failed');
 });
 
-test('the ISL edge shows Gb/s each way and the share of storage IO crossing it', async ({
+test('the ISL edge shows its speeds each way, line-rate bars, and the share of storage IO', async ({
   page,
 }) => {
   await page.goto('./#topology=t1-bonded-slb-8ip');
   await expect(page.getByTestId('node-node-1.vs1')).toBeVisible();
   for (let i = 0; i < 2; i++) await page.getByTestId('step').click();
-  await expect(page.getByTestId('edge-label-l-sw-a--sw-b')).toContainText(
-    /ISL 200 Gb: A→B \d+ · B→A \d+ · 5\d% of storage IO/,
-  );
+  const isl = page.getByTestId('edge-label-l-sw-a--sw-b');
+  await expect(isl).toContainText(/→\d+ ←\d+ Gb\s+5\d% of storage IO crosses/);
+  await expect(isl.getByTestId('line-bars')).toBeVisible();
   await page.goto('./#topology=t1-ahv-flasharray');
   await page.reload();
   await expect(page.getByTestId('edge-label-l-sw-a--sw-b')).toContainText('0% of storage IO');
-  // Line-rate VMs fill their node NICs: those cable labels are marked full.
+  // Line-rate VMs fill their node NICs: the inbound bar is full.
   await expect(
-    page.getByTestId('edge-label-l-node-1.eth2--sw-a').locator('[data-tone="full"]'),
+    page.getByTestId('node-node-1.eth2').locator('[data-testid="line-bars"] [data-tone="full"]'),
   ).toBeVisible();
 });
 
+test('a failed bond member: the bond bar shows 100% on the survivor', async ({ page }) => {
+  await page.goto('./#topology=t1-bonded-slb');
+  await expect(page.getByTestId('node-node-1.vs1')).toBeVisible();
+  await page.getByTestId('device-picker').selectOption('node-1.eth2');
+  await page.getByTestId('action-fail').click();
+  for (let i = 0; i < 3; i++) await page.getByTestId('step').click();
+  await expect(page.getByTestId('node-node-1.vs1').getByTestId('share-bars')).toHaveAttribute(
+    'aria-label',
+    /eth2 0% · eth3 100%/,
+  );
+  await expect(page.getByTestId('edge-label-l-node-1.eth3--sw-b')).toContainText(/↓21 ↑50 Gb/);
+  await expect(
+    page.getByTestId('node-node-1.cvm.stargate').getByTestId('share-bars'),
+  ).toBeVisible();
+});
+
+test('speeds toggle, IOPS slider, and no NVMe keep-alives in the legend', async ({ page }) => {
+  await page.goto('./#topology=t1-bonded-slb');
+  await expect(page.getByTestId('node-node-1.vs1')).toBeVisible();
+  await expect(page.getByTestId('edge-label-l-node-1.eth2--sw-a')).toContainText('Gb');
+  await page.getByTestId('toggle-speeds').click();
+  await expect(page.getByTestId('edge-label-l-node-1.eth2--sw-a')).toHaveCount(0);
+  await expect(page.getByTestId('node-node-1.eth2').getByTestId('line-bars')).toBeVisible();
+  await page.getByTestId('toggle-speeds').click();
+  const slider = page.getByTestId('iops-slider');
+  await slider.focus();
+  await slider.press('Home');
+  await slider.press('ArrowRight');
+  await slider.press('ArrowRight');
+  await expect(page.getByTestId('iops-value')).toContainText('5k');
+  for (let i = 0; i < 2; i++) await page.getByTestId('step').click();
+  await page.getByTestId('device-picker').selectOption('node-1.vm-1');
+  await expect(page.getByTestId('vm-throughput-summary')).toContainText('10.5 Gb/s');
+  await expect(page.getByText('NVMe keep-alive')).toHaveCount(0);
+});
 test('the spare VM powers on and the inspector explains its paths', async ({ page }) => {
   await page.goto('./#topology=t1-bonded-slb');
   await expect(page.getByTestId('node-node-3.vm-1')).toBeVisible();

@@ -1,41 +1,23 @@
 /**
- * Link usage labels (pure). Reads the throughput model's per-direction link loads (the `flows`
- * device, `links` field: docs/research/link-congestion.md) and turns them into edge labels:
- * Gb/s each way, a tone for busy and full directions, and the queueing delay a full direction
- * adds. Between switches the label also says what share of all storage IO crosses.
+ * Link speed labels (pure). From the throughput model's per-direction link loads (`flow-data.ts`,
+ * docs/research/link-congestion.md): the Gb/s each way with an arrow for the direction as drawn
+ * (`↓21 ↑50 Gb`), and on the ISL the share of all storage IO that crosses. The % of line rate is
+ * drawn as bars (`meters.ts`); a full direction is colored and names the queueing delay it adds.
  */
 import type { Snapshot } from '../../engine/types';
+import { type DirUsage, linkUsage } from './flow-data';
+import { buildMeters } from './meters';
 
-export const FLOWS_DEVICE = 'flows';
-
-export interface DirUsage {
-  readonly from: string;
-  readonly to: string;
-  readonly gbps: number;
-  readonly capacityGbps: number;
-  readonly delayUs: number;
-  readonly dropGbps: number;
-}
+export { type DirUsage, FLOWS_DEVICE, linkUsage } from './flow-data';
 
 export type UsageTone = 'ok' | 'busy' | 'full';
 
 export interface LinkUsageLabel {
+  /** One or two lines (`\n`). */
   readonly text: string;
   readonly tone: UsageTone;
   /** Busiest direction's share of line rate, 0..1. */
   readonly util: number;
-}
-
-/** Per-link direction loads, or null when the topology has no throughput model. */
-export function linkUsage(snapshot: Snapshot): ReadonlyMap<string, readonly DirUsage[]> | null {
-  const raw = snapshot.devices[FLOWS_DEVICE]?.fields.links;
-  if (typeof raw !== 'string') return null;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, DirUsage[]>;
-    return new Map(Object.entries(parsed));
-  } catch {
-    return null;
-  }
 }
 
 const FULL_UTIL = 0.97;
@@ -51,15 +33,16 @@ const toneOf = (d: DirUsage): UsageTone =>
 const rank: Readonly<Record<UsageTone, number>> = { ok: 0, busy: 1, full: 2 };
 const fmt = (g: number) =>
   g >= 10 ? Math.round(g).toString() : (Math.round(g * 10) / 10).toString();
-const shortSwitch = (label: string) => label.replace(/^Switch\s+/i, '');
 
-/** Edge labels for every cable that carries storage throughput. */
+/** Edge labels for every cable that carries storage throughput, and always the ISL. */
 export function linkUsageLabels(snapshot: Snapshot): Map<string, LinkUsageLabel> {
   const out = new Map<string, LinkUsageLabel>();
   const usage = linkUsage(snapshot);
   if (!usage) return out;
   const kind = (id: string) => snapshot.devices[id]?.kind;
-  const label = (id: string) => snapshot.devices[id]?.label ?? id;
+  const meters = buildMeters(snapshot);
+  const endOf = (dirs: readonly DirUsage[]) =>
+    dirs.find((d) => kind(d.from) !== 'switch')?.from ?? dirs[0]?.to ?? '';
   const totalVm = Object.values(snapshot.devices)
     .filter((d) => d.kind === 'vm')
     .reduce(
@@ -76,22 +59,15 @@ export function linkUsageLabels(snapshot: Snapshot): Map<string, LinkUsageLabel>
     );
     const util = Math.max(...dirs.map((d) => (d.capacityGbps > 0 ? d.gbps / d.capacityGbps : 0)));
     const delay = Math.max(...dirs.map((d) => d.delayUs));
-    const tail = tone === 'full' && delay > 0 ? ` · full, +${Math.round(delay)} µs` : '';
-    let text: string;
-    if (between) {
-      const cap = dirs[0]?.capacityGbps ?? 0;
-      const each = dirs
-        .map((d) => `${shortSwitch(label(d.from))}→${shortSwitch(label(d.to))} ${fmt(d.gbps)}`)
-        .join(' · ');
+    const tail = tone === 'full' && delay > 0 ? ` · full +${Math.round(delay)} µs` : '';
+    // Speeds only, with the direction as drawn: ↓ / ↑ on node and array cables (hosts above
+    // the switches, the array below), → / ← on the ISL. The bars show % of line rate.
+    const meter = meters.line.get(between ? linkId : endOf(dirs));
+    const speeds = (meter?.dirs ?? []).map((d) => `${d.arrow}${fmt(d.gbps)}`).join(' ');
+    let text = `${speeds} Gb${tail}`;
+    if (between && totalVm > 0) {
       const crossing = dirs.reduce((s, d) => s + d.gbps, 0);
-      const share =
-        totalVm > 0 ? ` · ${Math.round((100 * crossing) / totalVm)}% of storage IO` : '';
-      text = `ISL ${fmt(cap)} Gb: ${each}${share}${tail}`;
-    } else {
-      // Name the directions from the device end (NIC or array port): out = it sends.
-      const sends = dirs.find((d) => kind(d.from) !== 'switch');
-      const gets = dirs.find((d) => kind(d.to) !== 'switch');
-      text = `out ${fmt(sends?.gbps ?? 0)} · in ${fmt(gets?.gbps ?? 0)} Gb${tail}`;
+      text += `\n${Math.round((100 * crossing) / totalVm)}% of storage IO crosses`;
     }
     out.set(linkId, { text, tone, util });
   }

@@ -118,10 +118,14 @@ test('per-VM path usage: CO VMs on one host show only their own owning CVM', asy
   const b = await usage.locator('button').first().textContent();
   expect(a).not.toEqual(b);
   // Only that VM's far end is highlighted.
-  await expect(page.locator('[data-testid="node-node-5.eth0"]')).toHaveAttribute(
-    'data-inpath',
-    'true',
-  );
+  // vs0 is LACP: the connection to node 5's CVM hashes onto either of its members.
+  await expect(
+    page
+      .locator(
+        '[data-testid="node-node-5.eth0"][data-inpath="true"], [data-testid="node-node-5.eth1"][data-inpath="true"]',
+      )
+      .first(),
+  ).toBeVisible();
   await expect(page.locator('[data-testid="node-node-4.eth0"]')).toHaveAttribute(
     'data-dim',
     'true',
@@ -194,14 +198,18 @@ test('reset clears the event log (event numbers restart)', async ({ page }) => {
   expect(codes.every((c) => c === 'net.link.saturated')).toBe(true);
 });
 
-test('forms show the current value; enabling MLAG pairs an unpaired switch', async ({ page }) => {
+test('forms show the current value; MLAG can be turned off and on', async ({ page }) => {
   // (Rejected-action messages are covered by src/ui/panels/action-params.test.ts.)
   await open(page, 't1-ahv-flasharray');
   await selectDevice(page, 'sw-a');
   const form = page.getByTestId('action-fabric.set-mlag').locator('xpath=ancestor::form');
+  // MLAG is on by default: vs0 runs LACP across the switch pair.
+  await expect(form.locator('option', { hasText: '(current)' })).toHaveText('on (current)');
+  await applyAction(page, 'fabric.set-mlag', { MLAG: 'off' });
+  await expect(page.getByTestId('action-rejected-fabric.set-mlag')).toHaveCount(0);
+  await page.getByTestId('step').click();
   await expect(form.locator('option', { hasText: '(current)' })).toHaveText('off (current)');
   await applyAction(page, 'fabric.set-mlag', { MLAG: 'on' });
-  await expect(page.getByTestId('action-rejected-fabric.set-mlag')).toHaveCount(0);
   await page.getByTestId('step').click();
   await expect(form.locator('option', { hasText: '(current)' })).toHaveText('on (current)');
 });

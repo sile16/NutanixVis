@@ -38,10 +38,11 @@ import { LayoutEditPanel } from './layout-edit-panel';
 import { Legend } from './legend';
 import { LinkHoverCard } from './link-hover-card';
 import { linkUsageLabels } from './link-usage';
+import { buildMeters } from './meters';
 import { PacketOverlay } from './packet-overlay';
 import { bondUtilization, computePathUsage } from './path-usage';
 import { type DropContext, deadChecker, dropKey, type ReplayContext } from './replay';
-import { categoryOrder, isCategoryVisible, trafficStyle } from './traffic';
+import { categoryOrder, GUI_HIDDEN_CATEGORIES, isCategoryVisible, trafficStyle } from './traffic';
 import { edgeTypes, nodeTypes } from './types';
 import { relocateFloatingIps, relocateVms } from './vm-placement';
 
@@ -81,6 +82,7 @@ export function Diagram({
   const setHoveredLink = useUi((s) => s.setHoveredLink);
   const layoutEdit = useUi((s) => s.layoutEdit);
   const bondUtilHost = useUi((s) => s.bondUtilHost);
+  const showSpeeds = useUi((s) => s.showSpeeds);
   const traffic = useUi((s) => s.traffic);
   const reducedMotion = usePrefersReducedMotion();
   const history = useTraceHistory();
@@ -159,7 +161,11 @@ export function Diagram({
   }, [win, bondUtilHost]);
 
   // Throughput model (T1): Gb/s per direction on every cable carrying storage, colored when busy.
-  const usage = useMemo(() => linkUsageLabels(snapshot), [snapshot]);
+  const usage = useMemo(
+    () => (showSpeeds ? linkUsageLabels(snapshot) : new Map<string, never>()),
+    [snapshot, showSpeeds],
+  );
+  const meters = useMemo(() => buildMeters(snapshot), [snapshot]);
   const labelTones = useMemo(
     () => new Map([...usage].map(([id, u]) => [id, u.tone] as const)),
     [usage],
@@ -168,7 +174,7 @@ export function Diagram({
     const out = new Map<string, string>();
     for (const [id, u] of usage) out.set(id, u.text);
     // Without a throughput model: how much of the sampled storage IO crosses the ISL.
-    if (usage.size === 0) {
+    if (usage.size === 0 && meters.line.size === 0) {
       for (const isl of islShares(win.snapshot)) {
         const label = islLabel(isl);
         if (label) out.set(isl.linkId, label);
@@ -177,11 +183,12 @@ export function Diagram({
     if (!bondUtilHost) return out;
     for (const bond of bondUtilization(win.snapshot, bondUtilHost)) {
       for (const m of bond.members) {
-        if (m.linkId && m.status === 'up') out.set(m.linkId, bond.label);
+        // With the throughput model the cable already names its share of the bond.
+        if (m.linkId && m.status === 'up' && !usage.has(m.linkId)) out.set(m.linkId, bond.label);
       }
     }
     return out;
-  }, [win, bondUtilHost, usage]);
+  }, [win, bondUtilHost, usage, meters]);
 
   const animate = !reducedMotion;
   const glow = useMemo(() => {
@@ -206,8 +213,9 @@ export function Diagram({
         draggable: layoutEdit,
         restartedFrom,
         notes: model.notes,
+        meters,
       }),
-    [shown, dl, selectedId, pathUsage, utilLabels, layoutEdit, restartedFrom, model],
+    [shown, dl, selectedId, pathUsage, utilLabels, layoutEdit, restartedFrom, model, meters],
   );
   const edges = useMemo<CableEdge[]>(
     () =>
@@ -217,10 +225,23 @@ export function Diagram({
         glow,
         labels: edgeLabels,
         labelTones,
+        meters,
         hops,
         activeLinks: model.activeLinks,
       }),
-    [allLinks, shown, geometries, selectedId, pathUsage, glow, edgeLabels, labelTones, hops, model],
+    [
+      allLinks,
+      shown,
+      geometries,
+      selectedId,
+      pathUsage,
+      glow,
+      edgeLabels,
+      labelTones,
+      meters,
+      hops,
+      model,
+    ],
   );
 
   const replayCtx = useMemo<ReplayContext>(
@@ -250,7 +271,10 @@ export function Diagram({
     [prev, shown, allLinks],
   );
   const legendCategories = useMemo(
-    () => [...new Set(win.snapshot.traces.map((t) => t.category))].sort(categoryOrder),
+    () =>
+      [...new Set(win.snapshot.traces.map((t) => t.category))]
+        .filter((c) => !GUI_HIDDEN_CATEGORIES.has(c))
+        .sort(categoryOrder),
     [win],
   );
   const anyDropped = useMemo(() => win.snapshot.traces.some((t) => t.result === 'dropped'), [win]);

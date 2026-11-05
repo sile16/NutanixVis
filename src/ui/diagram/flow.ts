@@ -3,12 +3,14 @@
  * handles come from our own layout (`layout.ts`) and paths from `geometry.ts`, so React Flow is
  * only the renderer.
  */
+
 import { type Edge, type Node, type NodeHandle, Position } from '@xyflow/react';
 import type { LinkView } from '../../engine/types';
 import type { IoHop, Note } from './data-path';
 import { type EffectiveDevice, effectiveLinkStatus } from './effective-status';
 import type { LinkGeometry, Point, Side } from './geometry';
 import { type DiagramLayout, groupFrame } from './layout';
+import type { LineMeter, Meters, ShareSlice } from './meters';
 import type { PathUsage } from './path-usage';
 
 export type NodeKind =
@@ -72,6 +74,11 @@ export type DeviceNodeData = {
   utilLabel: string | null;
   /** Data-path note under the card: bond member role, array port without a path. */
   note: Note | null;
+  /** Throughput meters (`meters.ts`): line-rate bars on a NIC, distribution under a bond or Stargate. */
+  meter:
+    | { readonly kind: 'line'; readonly line: LineMeter }
+    | { readonly kind: 'share'; readonly slices: readonly ShareSlice[] }
+    | null;
 };
 export type DeviceNode = Node<DeviceNodeData, NodeKind>;
 
@@ -89,6 +96,8 @@ export type CableEdgeData = {
   label: string | null;
   /** Link-usage tone of the label: a busy (≥ 80 %) or full direction is colored. */
   labelTone: 'ok' | 'busy' | 'full' | null;
+  /** Line-rate bars drawn with the label (the ISL, which has no device card). */
+  meter: LineMeter | null;
   /** An internal hop of the I/O data path (not a physical cable): its state and reason. */
   io: IoHop | null;
   /** A physical cable that carries I/O on the active data path. */
@@ -138,6 +147,15 @@ export interface NodeBuildOptions {
   readonly restartedFrom?: ReadonlyMap<string, string>;
   /** Data-path notes by device id. */
   readonly notes?: ReadonlyMap<string, Note>;
+  readonly meters?: Meters;
+}
+
+function meterFor(id: string, m: Meters | undefined): DeviceNodeData['meter'] {
+  if (!m) return null;
+  const line = m.line.get(id);
+  if (line) return { kind: 'line', line };
+  const slices = m.bond.get(id) ?? m.stargate.get(id);
+  return slices ? { kind: 'share', slices } : null;
 }
 
 export function buildNodes(
@@ -191,6 +209,7 @@ export function buildNodes(
         inPath: inPath && opts.pathUsage?.vmId !== id,
         utilLabel: opts.utilLabels.get(id) ?? null,
         note: opts.notes?.get(id) ?? null,
+        meter: meterFor(id, opts.meters),
       },
     };
     if (placed.parent) node.parentId = placed.parent;
@@ -206,6 +225,7 @@ export interface EdgeBuildOptions {
   readonly glow: ReadonlyMap<string, { color: string; dropped: boolean; opacity: number }>;
   readonly labels: ReadonlyMap<string, string>;
   readonly labelTones?: ReadonlyMap<string, 'ok' | 'busy' | 'full'>;
+  readonly meters?: Meters;
   /** Internal data-path hops by link id (see `data-path.ts`). */
   readonly hops?: ReadonlyMap<string, IoHop>;
   /** Cables that carry I/O on the active data path. */
@@ -251,6 +271,7 @@ export function buildEdges(
         inPath,
         label: opts.labels.get(link.id) ?? null,
         labelTone: opts.labelTones?.get(link.id) ?? null,
+        meter: opts.meters?.line.get(link.id) ?? null,
         io: opts.hops?.get(link.id) ?? null,
         ioActive: opts.activeLinks?.has(link.id) ?? false,
       },

@@ -23,6 +23,7 @@ import { useDarkTheme } from './theme';
 import { SimClock, TimeControls } from './time-controls';
 import { VersionSelector } from './version-selector';
 import { resolveVersions, toVersionSelection } from './versions';
+import { WorkloadControls } from './workload-controls';
 
 const matrix = versionMatrix;
 /** Activity windows are named by relative size, not by duration. */
@@ -105,6 +106,7 @@ function Header({ entry }: { entry: CatalogEntry }) {
         <SimClock />
         <TimeControls />
       </div>
+      <WorkloadControls />
       <div className="ml-auto flex items-center gap-1 self-center">
         <Button variant="ghost" size="sm" onClick={resetSim} title="Reset the simulation">
           <RotateCcw size={15} aria-hidden="true" />

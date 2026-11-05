@@ -65,6 +65,8 @@ export interface VmEnv {
   flowOf?(vm: string):
     | {
         readonly offeredGbps: number | null;
+        readonly offeredIops: number | null;
+        readonly iops: number;
         readonly readPct: number;
         readonly gbps: number;
         readonly readGbps: number;
@@ -484,6 +486,8 @@ export class Vm implements Device<Profile> {
     const flow = this.env.flowOf?.(this.id);
     if (flow) {
       fields.offeredLoad = flow.offeredGbps === null ? 'line-rate' : flow.offeredGbps;
+      fields.offeredIops = flow.offeredIops === null ? 'line-rate' : Math.round(flow.offeredIops);
+      fields.iops = Math.round(flow.iops);
       fields.readPct = flow.readPct;
       fields.throughputGbps = round1(flow.gbps);
       fields.readGbps = round1(flow.readGbps);

@@ -1,8 +1,3 @@
-/**
- * Custom React Flow node types (SPEC §8): switch, AHV host (group), CVM, VM, FlashArray (group)
- * → controller (group) → port / interface, NIC, vswitch, disk. Each reads only `data.device`
- * (a `DeviceView`) plus layout-provided ports.
- */
 import type { NodeProps } from '@xyflow/react';
 import { clsx } from 'clsx';
 import {
@@ -21,6 +16,12 @@ import {
 import { EverpureMark } from '../../components/brand';
 import { StatusIcon, StatusPill } from '../../components/status';
 import type { DeviceNode } from '../flow';
+/**
+ * Custom React Flow node types (SPEC §8): switch, AHV host (group), CVM, VM, FlashArray (group)
+ * → controller (group) → port / interface, NIC, vswitch, disk. Each reads only `data.device`
+ * (a `DeviceView`) plus layout-provided ports.
+ */
+import { LineBars, ShareBars } from './meter-bars';
 import {
   Badges,
   BOND_MODE_LABEL,
@@ -155,7 +156,11 @@ export function NicNode({ data, selected }: P) {
     );
   }
   return (
-    <LeafCard data={data} selected={selected} className="justify-center px-1">
+    <LeafCard
+      data={data}
+      selected={selected}
+      className={clsx('relative justify-center px-1', data.meter?.kind === 'line' && 'pb-2.5')}
+    >
       <span className="flex min-w-0 flex-col items-center leading-tight">
         <span className="truncate font-mono text-[10px] font-medium">{data.device.label}</span>
         <NoteLine note={data.note} />
@@ -164,6 +169,9 @@ export function NicNode({ data, selected }: P) {
         <span className="rounded bg-accent/15 px-0.5 font-mono text-[9px] text-accent-ink">
           {data.utilLabel}
         </span>
+      ) : null}
+      {data.meter?.kind === 'line' ? (
+        <LineBars meter={data.meter.line} className="absolute inset-x-1 bottom-0.5" />
       ) : null}
     </LeafCard>
   );
@@ -215,7 +223,11 @@ export function VswitchNode({ data, selected, width }: P) {
   // Single-NIC hosts get a narrow vswitch card: the short mode name still fits.
   const label = (width ?? 200) < 110 ? (BOND_MODE_SHORT[mode] ?? full) : full;
   return (
-    <LeafCard data={data} selected={selected} className="bg-panel-2">
+    <LeafCard
+      data={data}
+      selected={selected}
+      className={clsx('relative bg-panel-2', data.meter?.kind === 'share' && 'pb-3')}
+    >
       <span className="flex min-w-0 flex-col leading-tight">
         <span className="truncate text-[10px]" title={`${data.device.label} · ${full}`}>
           <span className="font-semibold">{data.device.label}</span>
@@ -223,6 +235,13 @@ export function VswitchNode({ data, selected, width }: P) {
         </span>
         <NoteLine note={data.note} />
       </span>
+      {data.meter?.kind === 'share' ? (
+        <ShareBars
+          slices={data.meter.slices}
+          what={`${data.device.label} distribution`}
+          className="absolute inset-x-1.5 bottom-0.5"
+        />
+      ) : null}
     </LeafCard>
   );
 }
@@ -255,8 +274,8 @@ export function DiskNode({ data, selected }: P) {
 /** Stargate, drawn inside its CVM: the process that serves the vDisks and speaks NVMe/TCP. */
 export function StargateNode({ data, selected }: P) {
   return (
-    <LeafCard data={data} selected={selected} Icon={Waypoints} className="justify-center">
-      <span className="truncate text-[10px] font-semibold">
+    <LeafCard data={data} selected={selected} Icon={Waypoints} className="relative justify-start">
+      <span className="shrink-0 truncate text-[10px] font-semibold">
         Stargate
         {data.device.fields.state !== 'up' ? (
           <span className="font-mono font-normal text-ink-muted">
@@ -265,6 +284,15 @@ export function StargateNode({ data, selected }: P) {
           </span>
         ) : null}
       </span>
+      {data.meter?.kind === 'share' ? (
+        <ShareBars
+          slices={data.meter.slices}
+          what="Stargate distribution over its storage interfaces"
+          inline
+          shortLabel={(l) => l.replace(/^CVM-IP\s+/i, '')}
+          className="ml-2"
+        />
+      ) : null}
     </LeafCard>
   );
 }

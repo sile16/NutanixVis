@@ -7,6 +7,7 @@
 import type { ActionTarget } from '../../engine/actions';
 import { type ActionDefinition, ActionError, isLinkView, stringParam } from '../../engine/actions';
 import type { DeviceView } from '../../engine/types';
+import { THROUGHPUT } from '../workload/io';
 import type { Registry } from './registry';
 
 const isKind = (t: ActionTarget, ...kinds: string[]): t is DeviceView =>
@@ -326,6 +327,28 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
         const n = Number(v);
         if (!Number.isInteger(n) || n <= 0) throw new ActionError(`bad timeout ${String(v)}`);
         vm(req.target).setPathLossForceShutdownS(n);
+      },
+    },
+    {
+      spec: {
+        kind: 'workload.set-iops',
+        label: 'Set offered IOPS on every VM',
+        description:
+          'Throughput model: every VM offers this many IOs per second (of the model IO size), keeping its read share. 0 = line rate (no cap). Illustrative workload.',
+        appliesTo: (t) => isKind(t, 'nutanix-cluster') && reg.facts.externalStorage,
+        params: { iops: { label: 'IOPS per VM', choices: [] } },
+      },
+      apply: (req) => {
+        const iops = Number(req.params?.iops);
+        if (!(iops >= 0) || !Number.isFinite(iops)) {
+          throw new ActionError(`bad IOPS ${String(req.params?.iops)}`);
+        }
+        const ioBits = THROUGHPUT.ioSizeKiB.value * 1024 * 8;
+        reg.iopsPerVm = iops > 0 ? iops : null;
+        for (const v of reg.vms.values()) {
+          const readPct = reg.vmLoad.get(v.id)?.readPct ?? reg.defaultReadPct;
+          reg.vmLoad.set(v.id, { gbps: iops > 0 ? (iops * ioBits) / 1e9 : null, readPct });
+        }
       },
     },
     {

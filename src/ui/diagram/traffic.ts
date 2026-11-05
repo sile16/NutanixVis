@@ -128,7 +128,14 @@ export const SHOW_ALL: TrafficFilter = { preset: 'all', overrides: {} };
 /** The default view: storage I/O only (VM reads/writes to the array), no control traffic. */
 export const DEFAULT_TRAFFIC: TrafficFilter = { preset: 'storage', overrides: {} };
 
+/**
+ * Categories the GUI never shows (not drawn, not in the legend): NVMe keep-alives run on every
+ * path every tick and only add noise. They still drive the model (path liveness, KATO).
+ */
+export const GUI_HIDDEN_CATEGORIES: ReadonlySet<string> = new Set(['nvme-keepalive']);
+
 export function isCategoryVisible(f: TrafficFilter, category: string): boolean {
+  if (GUI_HIDDEN_CATEGORIES.has(category)) return false;
   const o = f.overrides[category];
   if (o !== undefined) return o;
   if (f.preset === 'all') return true;

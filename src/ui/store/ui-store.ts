@@ -67,6 +67,8 @@ export interface UiState {
   activityTicks: number;
   /** Host whose bond member utilization is shown on the diagram. */
   bondUtilHost: string | null;
+  /** Throughput model: draw the ↓/↑ Gb/s labels on cables (the line-rate and distribution bars stay). */
+  showSpeeds: boolean;
   layoutEdit: boolean;
   /** Which traffic categories the overlay, glow and hover card show (kept across topologies). */
   traffic: TrafficFilter;
@@ -86,6 +88,7 @@ export interface UiState {
   resetSim(): void;
   setActivityTicks(n: number): void;
   setBondUtilHost(id: string | null): void;
+  setShowSpeeds(on: boolean): void;
   setLayoutEdit(on: boolean): void;
   toggleTraffic(category: string): void;
   setTrafficPreset(preset: TrafficPreset): void;
@@ -132,6 +135,7 @@ export const useUi = create<UiState>()((set) => ({
   actionsApplied: 0,
   activityTicks: 10,
   bondUtilHost: null,
+  showSpeeds: true,
   layoutEdit: false,
   traffic: typeof window === 'undefined' ? presetFilter('storage') : loadTrafficFilter(),
 
@@ -167,6 +171,7 @@ export const useUi = create<UiState>()((set) => ({
   resetSim: () => set((s) => ({ ...freshRun(s), playing: false })),
   setActivityTicks: (activityTicks) => set({ activityTicks }),
   setBondUtilHost: (bondUtilHost) => set({ bondUtilHost }),
+  setShowSpeeds: (showSpeeds) => set({ showSpeeds }),
   setLayoutEdit: (layoutEdit) => set({ layoutEdit }),
   toggleTraffic: (category) =>
     set((s) => ({ traffic: saveTrafficFilter(toggleCategory(s.traffic, category)) })),

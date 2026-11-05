@@ -3,10 +3,12 @@
  * handle positions, so the SVG and the packet overlay always agree. Never `animated: true`:
  * packets are drawn on the canvas overlay instead (SPEC §3).
  */
+
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps } from '@xyflow/react';
 import { Unplug } from 'lucide-react';
 import type { IoHop } from '../data-path';
 import type { CableEdge } from '../flow';
+import { LineBars } from '../nodes/meter-bars';
 import { DROP_COLOR } from '../traffic';
 
 /** Style of an internal I/O hop by state: the active path is highlighted, the rest is quiet. */
@@ -92,7 +94,7 @@ export function CableEdgeView({ id, data, selected }: EdgeProps<CableEdge>) {
           opacity: data.dim ? 0.2 : 1,
         }}
       />
-      {down || data.label ? (
+      {down || data.label || data.meter ? (
         <EdgeLabelRenderer>
           <div
             className="nodrag nopan pointer-events-none absolute flex items-center gap-1"
@@ -110,9 +112,14 @@ export function CableEdgeView({ id, data, selected }: EdgeProps<CableEdge>) {
                 <span className="sr-only">down</span>
               </span>
             ) : null}
+            {data.meter ? (
+              <span className="w-10 rounded border border-border bg-panel px-0.5 py-px">
+                <LineBars meter={data.meter} />
+              </span>
+            ) : null}
             {data.label ? (
               <span
-                className={`rounded border bg-panel px-1 font-mono text-[9px] ${
+                className={`whitespace-pre rounded border bg-panel px-1 text-center font-mono text-[9px] leading-tight ${
                   data.labelTone === 'full'
                     ? 'border-status-failed/70 text-status-failed'
                     : data.labelTone === 'busy'

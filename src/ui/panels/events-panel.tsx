@@ -92,6 +92,15 @@ export function EventsPanel() {
                   ) : null}
                 </div>
                 <p className="mt-0.5">{e.text}</p>
+                {e.log && e.log.lines.length > 0 ? (
+                  <pre
+                    className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-all rounded bg-hover px-1.5 py-0.5 font-mono text-[10px] leading-snug text-ink"
+                    title={`What ${e.log.source} logs for this on the host (line format from the product's source; names are the simulator's)`}
+                    data-testid="event-log-lines"
+                  >
+                    {e.log.lines.map((l) => `${e.log?.source}: ${l}`).join('\n')}
+                  </pre>
+                ) : null}
                 <div className="font-mono text-[10px] text-ink-muted">{e.code}</div>
                 {causes.map((c) => (
                   <div

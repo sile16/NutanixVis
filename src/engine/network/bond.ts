@@ -38,7 +38,15 @@
  */
 import type { TimerQueue } from '../clock';
 import { fnv1a } from '../hash';
-import type { DeviceStatus, EventDraft, FlowId, SimTime, TimerHandle, ViewField } from '../types';
+import type {
+  DeviceStatus,
+  EventDraft,
+  FlowId,
+  ProductLog,
+  SimTime,
+  TimerHandle,
+  ViewField,
+} from '../types';
 import {
   type BondMode,
   type BondSpec,
@@ -48,6 +56,29 @@ import {
 } from './spec';
 
 export const BOND_BUCKETS = 256;
+
+/**
+ * The bond's own `ovs-vswitchd` log lines (OVS `ofproto/bond.c`, branch-3.3: `bond_enable_member`
+ * "member %s: %s", `bond_link_status_update` "member %s: link state %s", `bond_choose_active_member`
+ * "bond %s: active member is now %s" / "all members disabled", `bond_shift_load` "bond %s: shift
+ * …"). The same lines appear in an AHV host's `ovs-vswitchd.log`.
+ */
+function ovsLog(lines: readonly string[]): ProductLog {
+  return {
+    source: 'ovs-vswitchd',
+    cite: 'ovs-bond-source',
+    lines: lines.map((l) => `bond|INFO|${l}`),
+  };
+}
+
+/** AHV names the bond port of virtual switch `vsN` `brN-up` (bridge `brN`). */
+export function ovsBondName(vswitch: string): string {
+  const m = /^vs(\d+)$/.exec(vswitch);
+  return m ? `br${m[1]}-up` : vswitch;
+}
+
+/** A NIC's interface name as OVS logs it (`h1.eth2` → `eth2`). */
+const ifName = (nic: string): string => nic.slice(nic.lastIndexOf('.') + 1);
 
 /** What the bond can observe about one member (plus the hidden `hung` truth). */
 export interface MemberProbe {
@@ -98,6 +129,15 @@ export class BondRuntime {
   private fallbackValue = false;
 
   private active: string | null = null;
+  /**
+   * The member OVS reports as `active member` (logs only). In active-backup it is `active`; in
+   * the hashed modes it is kept until it leaves service, then the first enabled member takes over
+   * (`bond_choose_active_member`). In balance-slb it is the member that accepts broadcast (rule 9,
+   * not modeled for forwarding).
+   */
+  private ovsActive: string | null = null;
+  /** Carrier per uplink at the last reconcile, to tell link-state changes from LACP ones. */
+  private carrier = new Map<string, boolean>();
   private eligibleList: string[] = [];
   private detachedSet = new Set<string>();
   private readonly lacpDown = new Set<string>();
@@ -242,6 +282,8 @@ export class BondRuntime {
     const probes = new Map(ups.map((m) => [m, this.env.probe(m)] as const));
     const probeOf = (m: string): MemberProbe =>
       probes.get(m) ?? { carrier: false, hung: false, partnerKey: null, causeIds: [] };
+    const prevCarrier = this.carrier;
+    this.carrier = new Map(ups.map((m) => [m, probeOf(m).carrier] as const));
 
     for (const m of ups) {
       const p = probeOf(m);
@@ -303,6 +345,12 @@ export class BondRuntime {
     } else {
       this.active = null;
     }
+    const prevOvsActive = this.ovsActive;
+    if (this.modeValue === 'no-bond') this.ovsActive = null;
+    else if (this.singleActive) this.ovsActive = this.active;
+    else if (this.ovsActive === null || !eligible.includes(this.ovsActive)) {
+      this.ovsActive = eligible[0] ?? null;
+    }
 
     if (misconfig !== this.misconfigValue) {
       this.misconfigValue = misconfig;
@@ -346,10 +394,23 @@ export class BondRuntime {
       );
     }
 
-    for (const m of ups) {
-      const was = prevEligible.has(m);
+    // OVS logs (no-bond is a single uplink port, not an OVS bond: nothing to log).
+    const logs = this.modeValue !== 'no-bond';
+    const bondName = ovsBondName(this.group ?? this.label);
+    const activeLine =
+      !logs || prevOvsActive === this.ovsActive
+        ? null
+        : this.ovsActive === null
+          ? `bond ${bondName}: all members disabled`
+          : `bond ${bondName}: active member is now ${ifName(this.ovsActive)}`;
+    const failover = prevActive !== this.active && prevActive !== null && this.active !== null;
+    const allDown = prevEligible.size > 0 && eligible.length === 0;
+    // The active-member line goes on the failover or bond-down event, else on the last member event.
+    const activeOnMember = activeLine !== null && !failover && !allDown;
+
+    const changed = ups.filter((m) => prevEligible.has(m) !== eligible.includes(m));
+    changed.forEach((m, i) => {
       const is = eligible.includes(m);
-      if (was === is) continue;
       const p = probeOf(m);
       const why = !p.carrier
         ? 'carrier loss'
@@ -360,6 +421,14 @@ export class BondRuntime {
             : detached.has(m)
               ? 'not in LACP aggregator'
               : 'unused in no-bond mode';
+      const lines = [
+        // Carrier changes log the link state first; LACP-driven changes only enable/disable.
+        ...((is ? p.carrier && prevCarrier.get(m) === false : !p.carrier)
+          ? [`member ${ifName(m)}: link state ${is ? 'up' : 'down'}`]
+          : []),
+        `member ${ifName(m)}: ${is ? 'enabled' : 'disabled'}`,
+        ...(activeOnMember && i === changed.length - 1 && activeLine ? [activeLine] : []),
+      ];
       this.env.emit({
         severity: is ? 'info' : 'warn',
         deviceId: this.id,
@@ -368,27 +437,30 @@ export class BondRuntime {
           ? `${this.label}: ${m} back in service${this.fallbackValue ? ' (active-backup fallback)' : ''}`
           : `${this.label}: ${m} removed (${why})`,
         causeIds: [...this.env.causes(), ...p.causeIds],
+        ...(logs ? { log: ovsLog(lines) } : {}),
       });
-    }
-    if (prevActive !== this.active && prevActive !== null && this.active !== null) {
+    });
+    if (failover && prevActive !== null) {
       this.env.emit({
         severity: 'warn',
         deviceId: this.id,
         code: 'net.bond.failover',
         text: `${this.label}: active member ${prevActive} → ${this.active}`,
         causeIds: [...this.env.causes(), ...probeOf(prevActive).causeIds],
+        ...(activeLine ? { log: ovsLog([activeLine]) } : {}),
       });
     }
     if (this.hashed) {
       const gone = [...prevEligible].filter((m) => !eligible.includes(m));
       if (gone.length > 0) this.failoverBuckets(gone, (m) => probeOf(m).causeIds);
     }
-    if (prevEligible.size > 0 && eligible.length === 0) {
+    if (allDown) {
       this.env.emit({
         severity: 'error',
         deviceId: this.id,
         code: 'net.bond.down',
         text: `${this.label}: no usable uplink`,
+        ...(activeLine ? { log: ovsLog([activeLine]) } : {}),
       });
     }
   }
@@ -578,6 +650,7 @@ export class BondRuntime {
     if (now - this.lastRebalance < this.env.config().slbRebalanceIntervalS) return 0;
     this.lastRebalance = now;
     let moved = 0;
+    const shifts: string[] = [];
     if (this.hashed && !this.fallbackValue && this.eligibleList.length > 1) {
       const tx = new Map<string, number>(this.eligibleList.map((m) => [m, 0]));
       const entries = new Map<string, number[]>(this.eligibleList.map((m) => [m, []]));
@@ -613,15 +686,23 @@ export class BondRuntime {
           list.splice(list.indexOf(b), 1);
           // OVS does not add moved entries to `to`'s list during this pass.
           moved++;
+          // OVS also prints the kB moved and each member's new load; the model's loads are
+          // message weights, not bytes, so the line stops at the members.
+          shifts.push(
+            `bond ${ovsBondName(this.group ?? this.label)}: shift load (with hash ${b}) from ${ifName(from)} to ${ifName(to)}`,
+          );
         }
         bals = [...bals].sort((a, b) => load(b) - load(a));
       }
       if (moved > 0) {
+        // `info`: a slb move decides which switch a storage interface uses (ovs-bond-behavior.md
+        // rule 8), and OVS itself logs it at INFO.
         this.env.emit({
-          severity: 'debug',
+          severity: this.modeValue === 'balance-slb' ? 'info' : 'debug',
           deviceId: this.id,
           code: 'net.bond.rebalance',
-          text: `${this.label}: rebalanced ${moved} hash bucket(s)`,
+          text: `${this.label}: rebalance moved ${moved} hash bucket(s) to the less-loaded member`,
+          log: ovsLog(shifts),
         });
       }
     }

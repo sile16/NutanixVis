@@ -45,6 +45,9 @@ export class EventLog {
       causeIds: Object.freeze([...draft.causeIds]),
       cite: Object.freeze([...draft.cite]),
       ...(draft.confidence === undefined ? {} : { confidence: draft.confidence }),
+      ...(draft.log === undefined
+        ? {}
+        : { log: Object.freeze({ ...draft.log, lines: Object.freeze([...draft.log.lines]) }) }),
     };
     this.items.push(Object.freeze(ev));
     return eventId(seq);

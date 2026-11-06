@@ -314,6 +314,12 @@ const entries = {
     url: 'https://docs.openvswitch.org/en/latest/topics/bonding/',
     publisher: 'Open vSwitch',
   },
+  'ovs-bond-source': {
+    title:
+      'Open vSwitch source — ofproto/bond.c, branch-3.3 (balance-slb learning, rebalance and its log lines)',
+    url: 'https://github.com/openvswitch/ovs/blob/branch-3.3/ofproto/bond.c',
+    publisher: 'Open vSwitch',
+  },
   'ovs-lacp-source': {
     title: 'Open vSwitch source — lib/lacp.c (LACP receive timer and fallback-ab attach rules)',
     url: 'https://github.com/openvswitch/ovs/blob/main/lib/lacp.c',

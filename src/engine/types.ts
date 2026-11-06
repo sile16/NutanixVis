@@ -119,6 +119,21 @@ export interface SimEvent {
   readonly causeIds: readonly string[];
   readonly cite: readonly CitationId[];
   readonly confidence?: Confidence;
+  /** What the product itself would log for this event, in its own format. */
+  readonly log?: ProductLog;
+}
+
+/**
+ * Log lines in the product's own format (e.g. `ovs-vswitchd` bond lines), so the event viewer
+ * reads like the host's log. The format comes from `cite`; names and numbers are the model's.
+ */
+export interface ProductLog {
+  /** The daemon or file that writes the lines, e.g. `ovs-vswitchd`. */
+  readonly source: string;
+  /** One entry per log line, without timestamp or sequence prefix, e.g. `bond|INFO|member eth2: disabled`. */
+  readonly lines: readonly string[];
+  /** Where the line format is defined (source code or documentation). */
+  readonly cite: CitationId;
 }
 
 export type EventDraft = Omit<SimEvent, 'seq' | 't'>;

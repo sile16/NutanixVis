@@ -1,8 +1,9 @@
 /**
  * Link speed labels (pure). From the throughput model's per-direction link loads (`flow-data.ts`,
  * docs/research/link-congestion.md): the Gb/s each way with an arrow for the direction as drawn
- * (`↓21 ↑50 Gb`), and on the ISL the share of all storage IO that crosses. The % of line rate is
- * drawn as bars (`meters.ts`); a full direction is colored and names the queueing delay it adds.
+ * (`↓21 ↑50`; the legend names the unit), and on the ISL the share of all storage IO that crosses.
+ * The % of line rate is drawn as bars (`meters.ts`); a busy or full direction colors the label, and
+ * the hover text spells out each direction, its share of line rate and any queueing delay.
  */
 import type { Snapshot } from '../../engine/types';
 import { type DirUsage, linkUsage } from './flow-data';
@@ -15,6 +16,8 @@ export type UsageTone = 'ok' | 'busy' | 'full';
 export interface LinkUsageLabel {
   /** One or two lines (`\n`). */
   readonly text: string;
+  /** Hover text: each direction in full. */
+  readonly title: string;
   readonly tone: UsageTone;
   /** Busiest direction's share of line rate, 0..1. */
   readonly util: number;
@@ -59,17 +62,21 @@ export function linkUsageLabels(snapshot: Snapshot): Map<string, LinkUsageLabel>
     );
     const util = Math.max(...dirs.map((d) => (d.capacityGbps > 0 ? d.gbps / d.capacityGbps : 0)));
     const delay = Math.max(...dirs.map((d) => d.delayUs));
-    const tail = tone === 'full' && delay > 0 ? ` · full +${Math.round(delay)} µs` : '';
     // Speeds only, with the direction as drawn: ↓ / ↑ on node and array cables (hosts above
     // the switches, the array below), → / ← on the ISL. The bars show % of line rate.
     const meter = meters.line.get(between ? linkId : endOf(dirs));
     const speeds = (meter?.dirs ?? []).map((d) => `${d.arrow}${fmt(d.gbps)}`).join(' ');
-    let text = `${speeds} Gb${tail}`;
+    const lines = (meter?.dirs ?? []).map(
+      (d) =>
+        `${d.arrow} ${fmt(d.gbps)} of ${fmt(meter?.capacityGbps ?? 0)} Gb/s (${Math.round(100 * Math.min(1, d.util))}% of line rate)`,
+    );
+    if (delay > 0.5) lines.push(`full: queueing adds ${Math.round(delay)} µs`);
+    let text = speeds;
     if (between && totalVm > 0) {
       const crossing = dirs.reduce((s, d) => s + d.gbps, 0);
       text += `\n${Math.round((100 * crossing) / totalVm)}% of storage IO crosses`;
     }
-    out.set(linkId, { text, tone, util });
+    out.set(linkId, { text, title: lines.join('\n'), tone, util });
   }
   return out;
 }

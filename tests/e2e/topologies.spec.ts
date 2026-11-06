@@ -256,8 +256,11 @@ test('the ISL edge shows its speeds each way, line-rate bars, and the share of s
   await expect(page.getByTestId('node-node-1.vs1')).toBeVisible();
   for (let i = 0; i < 2; i++) await page.getByTestId('step').click();
   const isl = page.getByTestId('edge-label-l-sw-a--sw-b');
-  await expect(isl).toContainText(/→\d+ ←\d+ Gb\s+5\d% of storage IO crosses/);
+  await expect(isl).toContainText(/→\d+ ←\d+\s+5\d% of storage IO crosses/);
   await expect(isl.getByTestId('line-bars')).toBeVisible();
+  // Array ports carry line-rate bars too, and the legend says what the numbers and bars mean.
+  await expect(page.getByTestId('node-fa.ct0.eth10').getByTestId('line-bars')).toBeVisible();
+  await expect(page.getByTestId('speed-legend')).toContainText('Gb/s each way');
   await page.goto('./#topology=t1-ahv-flasharray');
   await page.reload();
   await expect(page.getByTestId('edge-label-l-sw-a--sw-b')).toContainText('0% of storage IO');
@@ -277,7 +280,7 @@ test('a failed bond member: the bond bar shows 100% on the survivor', async ({ p
     'aria-label',
     /eth2 0% · eth3 100%/,
   );
-  await expect(page.getByTestId('edge-label-l-node-1.eth3--sw-b')).toContainText(/↓21 ↑50 Gb/);
+  await expect(page.getByTestId('edge-label-l-node-1.eth3--sw-b')).toContainText(/↓21 ↑50/);
   await expect(
     page.getByTestId('node-node-1.cvm.stargate').getByTestId('share-bars'),
   ).toBeVisible();
@@ -286,7 +289,7 @@ test('a failed bond member: the bond bar shows 100% on the survivor', async ({ p
 test('speeds toggle, IOPS slider, and no NVMe keep-alives in the legend', async ({ page }) => {
   await page.goto('./#topology=t1-bonded-slb');
   await expect(page.getByTestId('node-node-1.vs1')).toBeVisible();
-  await expect(page.getByTestId('edge-label-l-node-1.eth2--sw-a')).toContainText('Gb');
+  await expect(page.getByTestId('edge-label-l-node-1.eth2--sw-a')).toContainText(/↓\d+ ↑\d+/);
   await page.getByTestId('toggle-speeds').click();
   await expect(page.getByTestId('edge-label-l-node-1.eth2--sw-a')).toHaveCount(0);
   await expect(page.getByTestId('node-node-1.eth2').getByTestId('line-bars')).toBeVisible();

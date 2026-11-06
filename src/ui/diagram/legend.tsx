@@ -30,6 +30,7 @@ export function Legend({
   dropped,
   animated,
   hasPath = false,
+  speeds = false,
 }: {
   /** Categories seen in the activity window (sorted). */
   categories: readonly string[];
@@ -37,6 +38,8 @@ export function Legend({
   animated: boolean;
   /** The diagram draws the internal I/O data path: show its line key. */
   hasPath?: boolean;
+  /** Cables carry speed labels and line-rate bars: say what the numbers and bars mean. */
+  speeds?: boolean;
 }) {
   const traffic = useUi((s) => s.traffic);
   const toggle = useUi((s) => s.toggleTraffic);
@@ -126,6 +129,15 @@ export function Legend({
             </li>
           ))}
         </ul>
+      ) : null}
+      {speeds ? (
+        <p
+          className="mt-1 border-t border-border pt-1 text-[10px] text-ink-muted"
+          data-testid="speed-legend"
+        >
+          <span className="font-mono text-ink">↓21 ↑50</span> Gb/s each way · bars: % of line rate
+          (amber 80 %, red full) · bond and Stargate bars: share of traffic
+        </p>
       ) : null}
       <fieldset className="m-0 mt-1 flex flex-wrap items-center gap-1 border-0 p-0">
         <legend className="sr-only">Traffic presets</legend>

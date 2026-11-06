@@ -21,6 +21,7 @@ import { useUi } from '../store/ui-store';
 import { glowOpacity } from './activity-window';
 import { ContextMenu } from './context-menu';
 import { buildDataPath, hopFlows, hopLinks, isIoLink, placeDataPath } from './data-path';
+import { EdgeLabelLayer } from './edges/edge-label-layer';
 import { effectiveDevices } from './effective-status';
 import { buildEdges, buildNodes, type CableEdge, type DeviceNode } from './flow';
 import type { Side } from './geometry';
@@ -33,6 +34,7 @@ import {
   useTraceHistory,
 } from './hooks';
 import { islLabel, islShares } from './isl-share';
+import { cableLabelAnchors } from './label-anchor';
 import { computeLayout, type LayoutMap, moveDevice, portKey } from './layout';
 import { LayoutEditPanel } from './layout-edit-panel';
 import { Legend } from './legend';
@@ -170,6 +172,15 @@ export function Diagram({
     () => new Map([...usage].map(([id, u]) => [id, u.tone] as const)),
     [usage],
   );
+  const labelTitles = useMemo(
+    () => new Map([...usage].map(([id, u]) => [id, u.title] as const)),
+    [usage],
+  );
+  // Labels sit just outside the node or array that owns the port, and the ISL's below the switches.
+  const labelAnchors = useMemo(
+    () => cableLabelAnchors(allLinks, placed.devices, dl, geometries),
+    [allLinks, placed.devices, dl, geometries],
+  );
   const edgeLabels = useMemo(() => {
     const out = new Map<string, string>();
     for (const [id, u] of usage) out.set(id, u.text);
@@ -225,6 +236,8 @@ export function Diagram({
         glow,
         labels: edgeLabels,
         labelTones,
+        labelTitles,
+        labelAnchors,
         meters,
         hops,
         activeLinks: model.activeLinks,
@@ -238,6 +251,8 @@ export function Diagram({
       glow,
       edgeLabels,
       labelTones,
+      labelTitles,
+      labelAnchors,
       meters,
       hops,
       model,
@@ -353,12 +368,14 @@ export function Diagram({
             drops={drops}
           />
         ) : null}
+        <EdgeLabelLayer edges={edges} />
         <Panel position="bottom-left">
           <Legend
             categories={legendCategories}
             dropped={anyDropped}
             animated={animate}
             hasPath={model.enabled}
+            speeds={showSpeeds && usage.size > 0}
           />
         </Panel>
         {layoutEdit ? (

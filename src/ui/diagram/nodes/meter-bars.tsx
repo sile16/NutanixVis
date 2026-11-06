@@ -14,8 +14,16 @@ const TONE: Readonly<Record<MeterTone, string>> = {
 const pct = (x: number) => `${Math.round(Math.min(1, x) * 100)}%`;
 const gb = (g: number) => (g >= 10 ? Math.round(g) : Math.round(g * 10) / 10);
 
-/** Two bars, one per direction: share of the cable's line rate. */
-export function LineBars({ meter, className }: { meter: LineMeter; className?: string }) {
+/** Two bars, one per direction: share of the cable's line rate. `row`: side by side. */
+export function LineBars({
+  meter,
+  className,
+  row = false,
+}: {
+  meter: LineMeter;
+  className?: string;
+  row?: boolean;
+}) {
   const title = meter.dirs
     .map(
       (d) => `${d.arrow} ${gb(d.gbps)} of ${meter.capacityGbps} Gb/s (${pct(d.util)} of line rate)`,
@@ -23,14 +31,22 @@ export function LineBars({ meter, className }: { meter: LineMeter; className?: s
     .join('\n');
   return (
     <span
-      className={clsx('pointer-events-auto flex flex-col gap-px', className)}
+      className={clsx(
+        'pointer-events-auto flex',
+        row ? 'flex-row gap-1.5' : 'flex-col gap-px',
+        className,
+      )}
       title={title}
       data-testid="line-bars"
       role="img"
       aria-label={`line rate: ${meter.dirs.map((d) => `${d.arrow} ${pct(d.util)}`).join(', ')}`}
     >
       {meter.dirs.map((d) => (
-        <span key={d.arrow} className="flex items-center gap-0.5" data-tone={d.tone}>
+        <span
+          key={d.arrow}
+          className={clsx('flex items-center gap-0.5', row && 'flex-1')}
+          data-tone={d.tone}
+        >
           <span className="w-2 text-center font-mono text-[7px] leading-none text-ink-muted">
             {d.arrow}
           </span>

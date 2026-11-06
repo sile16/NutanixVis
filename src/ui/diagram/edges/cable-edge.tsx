@@ -1,14 +1,14 @@
 /**
  * A physical cable. The path comes from `geometry.ts` (via `data.pathD`), not from React Flow's
  * handle positions, so the SVG and the packet overlay always agree. Never `animated: true`:
- * packets are drawn on the canvas overlay instead (SPEC §3).
+ * packets are drawn on the canvas overlay instead (SPEC §3). Speed labels and the ISL's bars are
+ * drawn above the dots by `edge-label-layer.tsx`.
  */
 
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps } from '@xyflow/react';
 import { Unplug } from 'lucide-react';
 import type { IoHop } from '../data-path';
 import type { CableEdge } from '../flow';
-import { LineBars } from '../nodes/meter-bars';
 import { DROP_COLOR } from '../traffic';
 
 /** Style of an internal I/O hop by state: the active path is highlighted, the rest is quiet. */
@@ -94,43 +94,22 @@ export function CableEdgeView({ id, data, selected }: EdgeProps<CableEdge>) {
           opacity: data.dim ? 0.2 : 1,
         }}
       />
-      {down || data.label || data.meter ? (
+      {down ? (
         <EdgeLabelRenderer>
           <div
-            className="nodrag nopan pointer-events-none absolute flex items-center gap-1"
+            className="nodrag nopan pointer-events-none absolute"
             style={{
               transform: `translate(-50%, -50%) translate(${data.mid.x}px, ${data.mid.y}px)`,
             }}
-            data-testid={`edge-label-${id}`}
+            data-testid={`edge-down-${id}`}
           >
-            {down ? (
-              <span
-                className="inline-flex items-center rounded-full border border-status-failed/60 bg-panel p-0.5 text-status-failed"
-                title="Cable down"
-              >
-                <Unplug size={10} aria-hidden="true" />
-                <span className="sr-only">down</span>
-              </span>
-            ) : null}
-            {data.meter ? (
-              <span className="w-10 rounded border border-border bg-panel px-0.5 py-px">
-                <LineBars meter={data.meter} />
-              </span>
-            ) : null}
-            {data.label ? (
-              <span
-                className={`whitespace-pre rounded border bg-panel px-1 text-center font-mono text-[9px] leading-tight ${
-                  data.labelTone === 'full'
-                    ? 'border-status-failed/70 text-status-failed'
-                    : data.labelTone === 'busy'
-                      ? 'border-status-degraded/70 text-status-degraded'
-                      : 'border-accent/40 text-accent-ink'
-                }`}
-                data-tone={data.labelTone ?? undefined}
-              >
-                {data.label}
-              </span>
-            ) : null}
+            <span
+              className="inline-flex items-center rounded-full border border-status-failed/60 bg-panel p-0.5 text-status-failed"
+              title="Cable down"
+            >
+              <Unplug size={10} aria-hidden="true" />
+              <span className="sr-only">down</span>
+            </span>
           </div>
         </EdgeLabelRenderer>
       ) : null}

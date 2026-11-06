@@ -9,6 +9,7 @@ import type { LinkView } from '../../engine/types';
 import type { IoHop, Note } from './data-path';
 import { type EffectiveDevice, effectiveLinkStatus } from './effective-status';
 import type { LinkGeometry, Point, Side } from './geometry';
+import type { LabelAnchor } from './label-anchor';
 import { type DiagramLayout, groupFrame } from './layout';
 import type { LineMeter, Meters, ShareSlice } from './meters';
 import type { PathUsage } from './path-usage';
@@ -98,6 +99,10 @@ export type CableEdgeData = {
   labelTone: 'ok' | 'busy' | 'full' | null;
   /** Line-rate bars drawn with the label (the ISL, which has no device card). */
   meter: LineMeter | null;
+  /** Where the label and meter are drawn (`label-anchor.ts`); the midpoint when absent. */
+  labelAt: LabelAnchor;
+  /** Hover text for the label: full speeds, % of line rate, queueing delay. */
+  labelTitle: string | null;
   /** An internal hop of the I/O data path (not a physical cable): its state and reason. */
   io: IoHop | null;
   /** A physical cable that carries I/O on the active data path. */
@@ -226,6 +231,9 @@ export interface EdgeBuildOptions {
   readonly labels: ReadonlyMap<string, string>;
   readonly labelTones?: ReadonlyMap<string, 'ok' | 'busy' | 'full'>;
   readonly meters?: Meters;
+  /** Label positions by link id; cables without one are labeled at their midpoint. */
+  readonly labelAnchors?: ReadonlyMap<string, LabelAnchor>;
+  readonly labelTitles?: ReadonlyMap<string, string>;
   /** Internal data-path hops by link id (see `data-path.ts`). */
   readonly hops?: ReadonlyMap<string, IoHop>;
   /** Cables that carry I/O on the active data path. */
@@ -264,6 +272,8 @@ export function buildEdges(
         link,
         pathD: g.pathD,
         mid: g.pointAt(0.5),
+        labelAt: opts.labelAnchors?.get(link.id) ?? { ...g.pointAt(0.5), place: 'center' },
+        labelTitle: opts.labelTitles?.get(link.id) ?? null,
         glow: glow?.color ?? null,
         glowOpacity: glow?.opacity ?? 0,
         dropped: glow?.dropped ?? false,

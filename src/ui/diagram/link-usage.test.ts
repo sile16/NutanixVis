@@ -20,9 +20,10 @@ describe('speed labels and throughput meters', () => {
     const s = run().tick(10);
     const labels = linkUsageLabels(s);
     // Host NIC: sends 21 Gb of writes down, receives 50 Gb of reads (full) up.
-    expect(labels.get('l-node-1.eth2--sw-a')?.text).toMatch(/^↓21 ↑50 Gb · full \+\d+ µs$/);
-    expect(labels.get('l-fa.ct0.eth10--sw-a')?.text).toMatch(/^↑\d+ ↓\d+ Gb$/);
-    expect(labels.get('l-sw-a--sw-b')?.text).toMatch(/^→\d+ ←\d+ Gb\n\d+% of storage IO crosses$/);
+    expect(labels.get('l-node-1.eth2--sw-a')?.text).toBe('↓21 ↑50');
+    expect(labels.get('l-node-1.eth2--sw-a')?.title).toMatch(/full: queueing adds \d+ µs/);
+    expect(labels.get('l-fa.ct0.eth10--sw-a')?.text).toMatch(/^↑\d+ ↓\d+$/);
+    expect(labels.get('l-sw-a--sw-b')?.text).toMatch(/^→\d+ ←\d+\n\d+% of storage IO crosses$/);
   });
 
   it('line-rate bars: each direction as a share of the cable line rate', () => {

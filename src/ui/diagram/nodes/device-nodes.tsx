@@ -151,8 +151,17 @@ export function ControllerNode({ data, selected }: P) {
 
 export function NicNode({ data, selected }: P) {
   if (data.isGroup) {
+    // An array port frame holds its interface: the line-rate bars sit on the frame's bottom edge.
     return (
-      <GroupFrame data={data} selected={selected} Icon={EthernetPort} title={data.device.label} />
+      <GroupFrame data={data} selected={selected} Icon={EthernetPort} title={data.device.label}>
+        {data.meter?.kind === 'line' ? (
+          <LineBars
+            meter={data.meter.line}
+            row
+            className="absolute inset-x-1.5 -bottom-1 rounded bg-panel px-0.5"
+          />
+        ) : null}
+      </GroupFrame>
     );
   }
   return (

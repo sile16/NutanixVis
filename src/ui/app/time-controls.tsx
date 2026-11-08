@@ -4,7 +4,7 @@
  */
 import { clsx } from 'clsx';
 import { FastForward, Hand, Pause, Play, StepForward } from 'lucide-react';
-import { Button } from '../components/controls';
+import { Button, HelpTip } from '../components/controls';
 import { useSimControls, useSnapshot, useSteps } from '../store/sim-context';
 import { SPEEDS, useUi } from '../store/ui-store';
 
@@ -27,16 +27,48 @@ export function SimClock() {
           ? 'settled'
           : 'recovering';
   return (
-    <output
-      className="flex min-w-[6.5rem] flex-col rounded-md border border-border bg-panel-2 px-2 py-0.5 leading-tight"
-      data-testid="sim-clock"
-      data-step={steps.current}
-      aria-live="off"
-      aria-label={`Step ${steps.current}, ${note}`}
-    >
-      <span className="font-mono text-base font-semibold tabular-nums">Step {steps.current}</span>
-      <span className="text-[10px] text-ink-muted">{note}</span>
-    </output>
+    <div className="flex items-center gap-1">
+      <output
+        className="flex min-w-[6.5rem] flex-col rounded-md border border-border bg-panel-2 px-2 py-0.5 leading-tight"
+        data-testid="sim-clock"
+        data-step={steps.current}
+        aria-live="off"
+        aria-label={`Step ${steps.current}, ${note}`}
+      >
+        <span className="font-mono text-base font-semibold tabular-nums">Step {steps.current}</span>
+        <span className="text-[10px] text-ink-muted">{note}</span>
+      </output>
+      <HelpTip id="steps-help" label="What is a step?">
+        <StepsHelp />
+      </HelpTip>
+    </div>
+  );
+}
+
+/** Text of the "What is a step?" help. */
+export function StepsHelp() {
+  return (
+    <>
+      <strong className="block font-semibold">What is a step?</strong>
+      <span className="mt-1 block">
+        Real failovers don't take the same number of seconds everywhere: timers, load, switch and
+        array settings and software versions all change them. So the simulator shows no seconds.
+      </span>
+      <span className="mt-1 block">
+        A step is relative timing: a slot on a scale of the time since an interruption began, each
+        step about twice as long as the one before. Things that happen close together land in nearby
+        steps, and a much longer wait (such as VM sessions failing back) spans only a few more.
+      </span>
+      <span className="mt-1 block">
+        The order of events and their relative gaps come from the products' own documented timers,
+        so the chain of events matches what you would see in a live environment, even where the
+        exact durations differ.
+      </span>
+      <span className="mt-1 block text-ink-muted">
+        Step 0: nothing is interrupted. Once everything has settled, the next action starts again at
+        0.
+      </span>
+    </>
   );
 }
 

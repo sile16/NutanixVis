@@ -413,7 +413,7 @@ export class NvmeTcpInitiator implements StorageBackend {
         severity: 'warn',
         deviceId: this.cvm,
         code: 'nvme.io.timeout',
-        text: `${n} command(s) on ${pathId} got no completion in ${this.ioTimeout}s: aborted and retried on another path; the path is reset and reconnects`,
+        text: `${n} command(s) on ${pathId} got no completion within the IO timeout: aborted and retried on another path; the path is reset and reconnects`,
         causeIds: this.causes.causeOf(this.path(pathId)?.lastDropAt),
         cite: this.es.ioTimeoutS.cite,
         confidence: this.es.ioTimeoutS.confidence,
@@ -1033,15 +1033,15 @@ export class NvmeTcpInitiator implements StorageBackend {
       ? `${this.es.lostPathHoldKatoMultiplier.value} × KATO + CQT after the last exchange, or earlier if the target resets the old connection`
       : 'CQT';
     const heldText = held
-      ? `; ${held} in-flight command(s) held until t=${holdUntil} (${rule})`
+      ? `; ${held} in-flight command(s) held (${rule})`
       : retried
         ? `; ${retried} in-flight command(s) retried on another path now`
         : '';
     const text: Record<LossHow, string> = {
-      silent: `${p.id} lost: no keep-alive response for ${this.kato}s${heldText}`,
+      silent: `${p.id} lost: no keep-alive response within KATO${heldText}`,
       refused: `${p.id} lost: connection refused by the target${heldText}`,
       reset: `${p.id} lost: the target reset the connection (it had already dropped the association)${heldText}; reconnecting`,
-      'io-timeout': `${p.id} reset after an IO timeout${heldText}; reconnect in ${this.reconnectDelay}s`,
+      'io-timeout': `${p.id} reset after an IO timeout${heldText}; reconnect after the reconnect delay`,
     };
     const cite: Record<LossHow, readonly string[]> = {
       silent: [
@@ -1172,7 +1172,7 @@ export class NvmeTcpInitiator implements StorageBackend {
       severity: 'error',
       deviceId: this.cvm,
       code: 'nvme.path.removed',
-      text: `${p.id}: no reconnect within ${this.ctrlLoss}s, controller deleted`,
+      text: `${p.id}: no reconnect within the controller-loss timeout, controller deleted`,
       causeIds: [],
       cite: this.es.controllerLossTimeoutS.cite,
       confidence: this.es.controllerLossTimeoutS.confidence,

@@ -59,6 +59,22 @@ test('Step and Next event advance time; the next scheduled event fires', async (
   await expect(page.getByTestId('node-sw-a')).toHaveAttribute('data-status', 'failed');
 });
 
+test('the step counter has a "What is a step?" help on hover', async ({ page }) => {
+  await open(page);
+  const tip = page.locator('#steps-help');
+  await expect(tip).toBeHidden();
+  await page.getByTestId('help-steps-help').hover();
+  await expect(tip).toBeVisible();
+  await expect(tip).toContainText('relative timing');
+  if (process.env.SHOT) {
+    await page.waitForTimeout(400);
+    await page.screenshot({
+      path: process.env.SHOT,
+      clip: { x: 0, y: 60, width: 520, height: 380 },
+    });
+  }
+});
+
 test('version selector shows the Nutanix release and Purity 6.11.8+', async ({ page }) => {
   // Multi-release filtering is unit-tested against the fixture matrix (src/ui/app/app-logic.test.ts);
   // here we check the live matrix (src/domain/versions/matrix.ts) end to end.

@@ -135,7 +135,7 @@ export class ClusterDevice implements Device<Profile> {
           severity: 'info',
           deviceId: host,
           code: 'host.maintenance.exit',
-          text: `${h.label} leaves maintenance mode and is schedulable again; the VMs it moved off return in about ${A.maintenanceReturnS.value} s`,
+          text: `${h.label} leaves maintenance mode and is schedulable again; the VMs it moved off return shortly after`,
           causeIds: reg.causes.get(host) ?? [],
           cite: [...cite, ...A.maintenanceReturnS.cite],
           confidence: A.maintenanceReturnS.confidence,
@@ -210,7 +210,7 @@ export class ClusterDevice implements Device<Profile> {
         code: `cluster.services.${services}`,
         text:
           services === 'down'
-            ? `Cluster services are down: no Zookeeper quorum or metadata for ${T.value} s (ZK session timeout). Prism Element is unreachable; Prism Central raises A200000 "Cluster Connectivity Status"`
+            ? `Cluster services are down: no Zookeeper quorum or metadata past the ZK session timeout. Prism Element is unreachable; Prism Central raises A200000 "Cluster Connectivity Status"`
             : 'Cluster services are back up; Prism Element is reachable again',
         causeIds: [],
         cite: [...base, ...T.cite, 'ntnx-pc-alerts-7.6-cluster', 'ntnx-community-cluster-shutdown'],
@@ -361,7 +361,7 @@ export class ClusterDevice implements Device<Profile> {
         severity: 'warn',
         deviceId: to,
         code: 'zk.seat.migrated',
-        text: `Zookeeper/Cassandra service volumes of ${s} mounted on ${to} after ${D.value} s`,
+        text: `Zookeeper/Cassandra service volumes of ${s} mounted on ${to} after the remount delay`,
         causeIds: [],
         cite: [...D.cite],
         confidence: D.confidence,
@@ -477,8 +477,8 @@ export class ClusterDevice implements Device<Profile> {
           c,
           'dnd.node.degraded',
           wasPartial
-            ? `${c} marked Degraded by Degraded Node Detection: its peers scored it consistently degraded for ${D.partialConvictionS.value} s. Its Cassandra goes to forwarding mode (metadata store disabled) and it gives up its leadership roles, so peers stop waiting on it; the cluster tolerates one node failure fewer and a degraded-node alert is raised`
-            : `${c} marked Degraded by Degraded Node Detection: it was unresponsive to its peers within the ${D.scoringWindowS.value} s scoring window. Its Cassandra goes to forwarding mode (metadata store disabled), so the cluster tolerates one node failure fewer; a degraded-node alert is raised`,
+            ? `${c} marked Degraded by Degraded Node Detection: its peers scored it consistently degraded over the conviction period. Its Cassandra goes to forwarding mode (metadata store disabled) and it gives up its leadership roles, so peers stop waiting on it; the cluster tolerates one node failure fewer and a degraded-node alert is raised`
+            : `${c} marked Degraded by Degraded Node Detection: it was unresponsive to its peers within the scoring window. Its Cassandra goes to forwarding mode (metadata store disabled), so the cluster tolerates one node failure fewer; a degraded-node alert is raised`,
           'warn',
         );
         continue;
@@ -497,7 +497,7 @@ export class ClusterDevice implements Device<Profile> {
         ctx,
         c,
         'dnd.node.cleared',
-        `${c} healthy for ${D.autoResolveHealthyS.value} s: Degraded cleared automatically, its metadata store rejoins`,
+        `${c} healthy through the auto-resolve period: Degraded cleared automatically, its metadata store rejoins`,
       );
     }
     reg.dndMarkFixed.clear();
@@ -581,7 +581,7 @@ export class ClusterDevice implements Device<Profile> {
           severity: 'warn',
           deviceId: id,
           code: 'cassandra.node.detached',
-          text: `${id} detached from the metadata ring after ${D.value} s down (auto ring-repair)`,
+          text: `${id} detached from the metadata ring after the ring-repair delay (auto ring-repair)`,
           causeIds: [],
           cite: D.cite,
           confidence: D.confidence,
@@ -709,7 +709,7 @@ export class ClusterDevice implements Device<Profile> {
           severity: 'warn',
           deviceId: h.id,
           code: 'ha.host.disconnected',
-          text: `${h.label}: no heartbeat since T=${lostAt - P.heartbeatIntervalS.value}; ${P.disconnectTimeoutS.value} s disconnect timeout started. Prism alert A1006 "Host IP Not Reachable"`,
+          text: `${h.label}: heartbeats stopped; the disconnect timeout started. Prism alert A1006 "Host IP Not Reachable"`,
           causeIds: [],
           cite: [...P.timeoutStartS.cite, 'ntnx-pe-alerts-7.0-cluster'],
           confidence: P.timeoutStartS.confidence,

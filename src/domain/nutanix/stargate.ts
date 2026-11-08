@@ -214,7 +214,7 @@ export class Stargate implements CvmComponent {
           severity: 'warn',
           deviceId: this.cvm,
           code: 'stargate.vdisk.handover',
-          text: `${this.cvm} is taking over ${io.vdisk} from ${from} (in Hades maintenance): ownership and NVMe reservation handover, IO waits about ${H.value} s`,
+          text: `${this.cvm} is taking over ${io.vdisk} from ${from} (in Hades maintenance): ownership and NVMe reservation handover; IO waits for it`,
           causeIds: [],
           cite: H.cite,
           confidence: H.confidence,

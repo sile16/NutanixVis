@@ -1,5 +1,6 @@
 /** Small, keyboard-accessible control primitives styled with the theme tokens. */
 import { clsx } from 'clsx';
+import { CircleHelp } from 'lucide-react';
 import type { ButtonHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react';
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -100,5 +101,47 @@ export function ShareBar({
         {pct}%
       </span>
     </div>
+  );
+}
+
+/**
+ * A circled "?" that shows a short explanation on hover or keyboard focus (and to screen readers
+ * through `aria-describedby`). The popover sits below the icon; `align` keeps it on screen.
+ */
+export function HelpTip({
+  id,
+  label,
+  children,
+  align = 'left',
+}: {
+  id: string;
+  /** Accessible name of the icon button, e.g. "What is a step?". */
+  label: string;
+  children: ReactNode;
+  align?: 'left' | 'right';
+}) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        aria-label={label}
+        aria-describedby={id}
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-ink-muted hover:text-ink focus-visible:outline-2 focus-visible:outline-focus"
+        data-testid={`help-${id}`}
+      >
+        <CircleHelp size={14} aria-hidden="true" />
+      </button>
+      <span
+        id={id}
+        role="tooltip"
+        className={clsx(
+          'pointer-events-none invisible absolute top-full z-50 mt-1 w-80 max-w-[calc(100vw-2rem)] rounded-md border border-border bg-panel px-3 py-2 text-xs leading-relaxed text-ink opacity-0 shadow-lg transition-opacity',
+          'group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100',
+          align === 'left' ? 'left-0' : 'right-0',
+        )}
+      >
+        {children}
+      </span>
+    </span>
   );
 }

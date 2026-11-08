@@ -455,7 +455,7 @@ export class Vm implements Device<Profile> {
         severity: 'warn',
         deviceId: this.id,
         code: 'vm.io.guest-timeout',
-        text: `${this.label}: an IO has been pending past the ${timeout.value} s guest disk timeout`,
+        text: `${this.label}: an IO has been pending past the guest disk timeout`,
         causeIds: [],
         cite: timeout.cite,
         confidence: timeout.confidence,
@@ -596,13 +596,12 @@ export class Vm implements Device<Profile> {
 
   private selfTerminate(ctx: Ctx): void {
     const P = ctx.profile.ahvHa.isolatedVmSelfTerminateS;
-    const since = this.firstFailedIoAt ?? ctx.now;
     this.kill('crashed', 'ha', ctx.now);
     ctx.emit({
       severity: 'error',
       deviceId: this.id,
       code: 'ha.vm.self-terminated',
-      text: `${this.label} self-terminated: isolated host, IO failing since T=${since} (${P.value} s)`,
+      text: `${this.label} self-terminated: isolated host, IO failing past the self-termination timeout`,
       causeIds: [],
       cite: P.cite,
       confidence: P.confidence,

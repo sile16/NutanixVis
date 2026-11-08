@@ -332,7 +332,7 @@ export class Redirector {
         target,
         'unhealthy',
         ctx,
-        `the initiator's NOPs to Stargate on ${target} went unanswered ${s.misses} times, ${R.nopIntervalS.value} s apart; logging in again (${vdisk})`,
+        `the initiator's NOPs to Stargate on ${target} went unanswered ${s.misses} times in a row; logging in again (${vdisk})`,
       );
     }
     return true;
@@ -425,7 +425,7 @@ export class Redirector {
         severity: 'info',
         deviceId: this.host.id,
         code: 'redirector.path-internal',
-        text: `${this.host.label}: ${vdisk} moved back from ${s.target}'s external portal to the host-internal link (${V} s validity)`,
+        text: `${this.host.label}: ${vdisk} moved back from ${s.target}'s external portal to the host-internal link (its validity period ended)`,
         causeIds: [],
         cite: R.externalPathValidityS.cite,
         confidence: R.externalPathValidityS.confidence,
@@ -453,7 +453,7 @@ export class Redirector {
         severity: 'info',
         deviceId: this.host.id,
         code: 'redirector.failback',
-        text: `${this.host.label}: ${vdisk} failed back to ${pref} after it was stable ${R.failbackStableS.value} s (one vDisk per ${R.failbackStepS.value} s)`,
+        text: `${this.host.label}: ${vdisk} failed back to ${pref} after it stayed stable for the failback period (one vDisk at a time)`,
         causeIds: [],
         cite: R.failbackStableS.cite,
         confidence: R.failbackStableS.confidence,

@@ -540,7 +540,7 @@ export class BondRuntime {
       severity: 'warn',
       deviceId: this.id,
       code: 'net.bond.lacp-timeout',
-      text: `${this.label}: no LACPDUs on ${nic} for ${start?.seconds ?? '?'}s (${this.rate} rate)`,
+      text: `${this.label}: no LACPDUs on ${nic} within the LACP timeout (${this.rate} rate)`,
       causeIds: start?.causes ?? [],
     });
     this.env.withCauses([ev], () => this.env.reconcile());

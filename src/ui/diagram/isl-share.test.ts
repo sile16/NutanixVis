@@ -18,7 +18,7 @@ const share = (options: Record<string, string | number | boolean>, ticks = 30) =
 describe('ISL share of storage IO', () => {
   it('per-fabric with access array ports: storage stays off the ISL (0%)', () => {
     const { isl } = share({ ...BOND, 'storage-vswitch-layout': 'per-fabric' });
-    expect(isl?.linkId).toBe('l-sw-a--sw-b');
+    expect(isl?.linkId).toBe('l-sw-a--sw-b-1');
     expect(isl?.total).toBeGreaterThan(0);
     expect(isl?.count).toBe(0);
     expect(isl && islLabel(isl)).toBe('ISL · 0% of storage IO');
@@ -75,7 +75,9 @@ describe('ISL share of storage IO', () => {
     const snap = sim.getSnapshot();
     const noIsl = {
       ...snap,
-      links: Object.fromEntries(Object.entries(snap.links).filter(([id]) => id !== 'l-sw-a--sw-b')),
+      links: Object.fromEntries(
+        Object.entries(snap.links).filter(([id]) => !id.startsWith('l-sw-a--sw-b')),
+      ),
     };
     expect(islShares(noIsl)).toEqual([]);
   });

@@ -14,7 +14,7 @@ import {
   T0,
   vmsOfNode,
 } from '../helpers';
-import { ISL, nodeId, T2 } from '../ids';
+import { ISLS, nodeId, T2 } from '../ids';
 import { P } from '../timers';
 
 const HA = P.ahvHa;
@@ -22,9 +22,13 @@ const MAJORITY = [1, 2, 3];
 const MINORITY = [4, 5];
 const END = by(HA.restartByS) + 30;
 
-/** Nodes 1–3 only on Switch A, nodes 4–5 only on Switch B, ISL down: a clean 3/2 split. */
+/** Nodes 1–3 only on Switch A, nodes 4–5 only on Switch B, both ISL members down: a clean 3/2 split. */
 const split: ScenarioStep[] = [
-  { at: T0, action: { kind: 'link-down', target: ISL }, note: 'The ISL goes down.' },
+  ...ISLS.map((target, i) => ({
+    at: T0,
+    action: { kind: 'link-down', target },
+    ...(i === 0 ? { note: 'Both ISL members go down.' } : {}),
+  })),
   ...MAJORITY.map((n) => ({ at: T0, action: { kind: 'link-down', target: T2.linkB(n) } })),
   ...MINORITY.map((n) => ({ at: T0, action: { kind: 'link-down', target: T2.linkA(n) } })),
 ];

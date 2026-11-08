@@ -114,7 +114,13 @@ export function linkProblems(t: Topology): string[] {
   const ix = index(t);
   const used = new Map<string, string>();
   for (const l of t.links) {
-    if (l.id !== `l-${l.a}--${l.b}`) out.push(`${l.id}: expected id l-${l.a}--${l.b}`);
+    // Parallel members of one port-channel (the two ISL members) add a `-<n>` suffix.
+    const base = `l-${l.a}--${l.b}`;
+    if (
+      l.id !== base &&
+      !new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d+$`).test(l.id)
+    )
+      out.push(`${l.id}: expected id ${base}`);
     const ka = ix.get(l.a)?.kind;
     const kb = ix.get(l.b)?.kind;
     for (const [end, k] of [

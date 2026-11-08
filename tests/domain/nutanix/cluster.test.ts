@@ -46,7 +46,8 @@ describe('Zookeeper ensemble', () => {
   it('a 3/2 partition gives quorum to the majority only (one quorum side)', () => {
     const h = harness('t2-hci-ahv', { 'replication-factor': 3, 'node-count': 5 });
     h.run(10);
-    h.act('link-down', 'l-sw-a--sw-b');
+    h.act('link-down', 'l-sw-a--sw-b-1');
+    h.act('link-down', 'l-sw-a--sw-b-2');
     for (const n of [1, 2, 3]) h.act('link-down', `l-node-${n}.eth1--sw-b`);
     for (const n of [4, 5]) h.act('link-down', `l-node-${n}.eth0--sw-a`);
     h.run(1);

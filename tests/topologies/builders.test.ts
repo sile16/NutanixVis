@@ -47,7 +47,8 @@ describe('t1-ahv-flasharray', () => {
         'l-node-1.eth3--sw-b',
         'l-fa.ct0.eth10--sw-a',
         'l-fa.ct1.eth11--sw-b',
-        'l-sw-a--sw-b',
+        'l-sw-a--sw-b-1',
+        'l-sw-a--sw-b-2',
       ]),
     );
     const ifaces = ofKind(t, 'cvm-interface').filter((i) => i.parent === 'node-1.cvm');
@@ -162,11 +163,16 @@ describe('t1-ahv-flasharray', () => {
   });
 
   it('the ISL carries the storage VLANs with a bond, and not for per-fabric access ports', () => {
-    const isl = (x: Topology) => x.links.find((l) => l.id === 'l-sw-a--sw-b');
-    expect(isl(t)?.allowedVlans).toBeUndefined();
+    // Both ISL members (one port-channel) carry the same VLANs.
+    const isl = (x: Topology) => x.links.filter((l) => l.id.startsWith('l-sw-a--sw-b-'));
+    expect(isl(t)).toHaveLength(2);
+    expect(isl(t).map((l) => l.allowedVlans)).toEqual([undefined, undefined]);
     expect(switchesReaching(t, ['node-1.eth3'], 10)).toEqual(new Set(['sw-a', 'sw-b']));
     const pf = buildT1({ storageVswitchLayout: 'per-fabric' });
-    expect(isl(pf)?.allowedVlans).toEqual([100, 200]);
+    expect(isl(pf).map((l) => l.allowedVlans)).toEqual([
+      [100, 200],
+      [100, 200],
+    ]);
   });
 
   it('option patch for a runtime change touches only the expected fields', () => {
@@ -222,7 +228,12 @@ describe('t2-hci-ahv', () => {
     });
     expect(get(t, 'node-1.eth0', 'nic').speedGbps).toBe(25);
     expect(t.links.map((l) => l.id)).toEqual(
-      expect.arrayContaining(['l-node-1.eth0--sw-a', 'l-node-1.eth1--sw-b', 'l-sw-a--sw-b']),
+      expect.arrayContaining([
+        'l-node-1.eth0--sw-a',
+        'l-node-1.eth1--sw-b',
+        'l-sw-a--sw-b-1',
+        'l-sw-a--sw-b-2',
+      ]),
     );
     expect(count(t, 'fa-array')).toBe(0);
   });

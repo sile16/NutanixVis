@@ -4,6 +4,7 @@
  * yields a route result that becomes its `Trace` (SPEC §5.4).
  */
 import type { TimerQueue } from '../clock';
+import { fnv1a } from '../hash';
 import type {
   DeviceId,
   DeviceStatus,
@@ -512,7 +513,8 @@ export class NetworkRuntime implements NetworkQuery {
         .filter((l) => l.spec.a === id || l.spec.b === id)
         .map((l) => (l.spec.a === id ? l.spec.b : l.spec.a))
         .filter((p) => this.switches.has(p));
-      const ids = [id, ...peers].sort();
+      // Parallel ISL members lead to the same peer once.
+      const ids = [...new Set([id, ...peers])].sort();
       const shared = `mlag:${ids.join('+')}`;
       for (const p of ids) {
         const s = this.switches.get(p);
@@ -761,7 +763,7 @@ export class NetworkRuntime implements NetworkQuery {
 
     let path: { links: LinkId[]; nodes: string[] } | null = null;
     for (const relax of RELAXATIONS) {
-      path = this.bfs(egress, search, vlan, need, relax);
+      path = this.bfs(egress, search, vlan, need, relax, req.flow);
       if (path) break;
     }
     if (!path) {
@@ -830,12 +832,18 @@ export class NetworkRuntime implements NetworkQuery {
     return this.host.isDown(id) ? { reason: 'device-down', at: id, detail: kind } : null;
   }
 
+  /**
+   * Shortest path from `start` to one of `targets`. Parallel links between the same two switches
+   * form a port-channel (e.g. a two-member ISL): each flow is hashed onto one live member, like a
+   * switch's static L3/L4 LAG hash, and the survivors carry everything when a member fails.
+   */
   private bfs(
     start: string,
     targets: ReadonlySet<string>,
     vlan: number,
     need: number,
     relax: Relax,
+    flow?: FlowId,
   ): { links: LinkId[]; nodes: string[] } | null {
     if (this.nodeFault(start, vlan, need, relax)) return null;
     const prev = new Map<string, { node: string; link: LinkId }>();
@@ -859,6 +867,10 @@ export class NetworkRuntime implements NetworkQuery {
         if (!l) continue;
         const v = l.spec.a === u ? l.spec.b : l.spec.a;
         if (seen.has(v) || this.linkFault(linkId, vlan, need, relax)) continue;
+        const via =
+          this.switches.has(u) && this.switches.has(v)
+            ? this.lagMember(u, v, linkId, vlan, need, relax, flow)
+            : linkId;
         if (this.nics.has(v)) {
           if (targets.has(v) && !this.nodeFault(v, vlan, need, relax)) {
             return build(v, { node: u, link: linkId });
@@ -867,11 +879,32 @@ export class NetworkRuntime implements NetworkQuery {
         }
         if (this.nodeFault(v, vlan, need, relax)) continue;
         seen.add(v);
-        prev.set(v, { node: u, link: linkId });
+        prev.set(v, { node: u, link: via });
         queue.push(v);
       }
     }
     return null;
+  }
+
+  /** The member of the `u`–`v` port-channel this flow hashes onto (`first` when not parallel). */
+  private lagMember(
+    u: string,
+    v: string,
+    first: LinkId,
+    vlan: number,
+    need: number,
+    relax: Relax,
+    flow?: FlowId,
+  ): LinkId {
+    const members = (this.adjacency.get(u) ?? []).filter((id) => {
+      const l = this.links.get(id);
+      if (!l) return false;
+      const other = l.spec.a === u ? l.spec.b : l.spec.a;
+      return other === v && !this.linkFault(id, vlan, need, relax);
+    });
+    if (members.length < 2 || !flow) return first;
+    const key = `${flow.srcIp}|${flow.dstIp}|${flow.srcPort}|${flow.dstPort}|${flow.proto}|${u}>${v}`;
+    return members[fnv1a(key) % members.length] ?? first;
   }
 
   private linkFault(id: LinkId, vlan: number, need: number, relax: Relax): Fault | null {

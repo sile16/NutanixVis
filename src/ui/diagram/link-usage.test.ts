@@ -23,7 +23,7 @@ describe('speed labels and throughput meters', () => {
     expect(labels.get('l-node-1.eth2--sw-a')?.text).toBe('↓21 ↑50');
     expect(labels.get('l-node-1.eth2--sw-a')?.title).toMatch(/full: queueing adds \d+ µs/);
     expect(labels.get('l-fa.ct0.eth10--sw-a')?.text).toMatch(/^↑\d+ ↓\d+$/);
-    expect(labels.get('l-sw-a--sw-b')?.text).toMatch(/^→\d+ ←\d+\n\d+% of storage IO crosses$/);
+    expect(labels.get('l-sw-a--sw-b-1')?.text).toMatch(/^→\d+ ←\d+\n\d+% of storage IO crosses$/);
   });
 
   it('line-rate bars: each direction as a share of the cable line rate', () => {
@@ -34,7 +34,7 @@ describe('speed labels and throughput meters', () => {
       ['↓', 43, 'ok'],
       ['↑', 100, 'full'],
     ]);
-    expect(m.line.get('l-sw-a--sw-b')?.dirs.map((d) => d.arrow)).toEqual(['→', '←']);
+    expect(m.line.get('l-sw-a--sw-b-1')?.dirs.map((d) => d.arrow)).toEqual(['→', '←']);
   });
 
   it('bond distribution: 50/50, then 100% on eth3 once eth2 fails', () => {

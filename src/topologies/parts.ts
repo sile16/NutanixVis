@@ -1,7 +1,7 @@
 /**
  * Building blocks shared by the topology builders: VLAN plan, IP plan, hosts, the switch pair
  * and the FlashArray. Ids follow the shared conventions: `node-<n>.eth<k>`, `node-<n>.cvm.<seg>`,
- * `fa.ct0.eth10.v10`, links `l-<a>--<b>`, ISL `l-sw-a--sw-b`.
+ * `fa.ct0.eth10.v10`, links `l-<a>--<b>`, ISL members `l-sw-a--sw-b-1` and `-2`.
  */
 import type { z } from 'zod';
 import type { FaBoxSpec, HostBoxSpec } from './layout';
@@ -34,7 +34,8 @@ export const VLANS = {
 /** Illustrative IP plan: `10.0.<vlan>.<host>`. CVMs use .1x, the array .1xx. */
 export const ip = (vlan: number, host: number) => `10.0.${vlan}.${host}`;
 export const linkId = (a: string, b: string) => `l-${a}--${b}`;
-export const ISL_ID = linkId('sw-a', 'sw-b');
+/** The two ISL members (one port-channel / peer-link): every real switch pair has at least two. */
+export const ISL_IDS = [`${linkId('sw-a', 'sw-b')}-1`, `${linkId('sw-a', 'sw-b')}-2`] as const;
 
 export const BOND_MODES = BondModeSchema.options;
 
@@ -305,7 +306,10 @@ export function switchPair(p: {
   mtu: number;
   mlag: boolean;
   flowControl?: 'off' | 'global-pause' | 'pfc';
-  /** ISL line rate per direction (e.g. a 2 × 100 Gb port-channel = 200). Absent: unlimited. */
+  /**
+   * ISL port-channel line rate per direction, all members together (e.g. 2 × 100 Gb = 200); each
+   * of the two members gets half. Absent: unlimited.
+   */
   islSpeedGbps?: number;
 }): Part {
   const sw = (id: SwitchId, label: string, vlans: readonly number[]): DeviceInput => ({
@@ -319,15 +323,16 @@ export function switchPair(p: {
   });
   return {
     devices: [sw('sw-a', 'Switch A', p.vlansA), sw('sw-b', 'Switch B', p.vlansB)],
-    links: [
-      {
-        id: ISL_ID,
-        a: 'sw-a',
-        b: 'sw-b',
-        kind: 'isl',
-        ...(p.islSpeedGbps !== undefined ? { speedGbps: p.islSpeedGbps } : {}),
-      },
-    ],
+    // Two ISL members, as in every real deployment: the switches hash flows across them, and
+    // one member failing leaves the other carrying the ISL (the engine treats parallel
+    // switch-to-switch links as one port-channel).
+    links: ISL_IDS.map((id) => ({
+      id,
+      a: 'sw-a',
+      b: 'sw-b',
+      kind: 'isl' as const,
+      ...(p.islSpeedGbps !== undefined ? { speedGbps: p.islSpeedGbps / ISL_IDS.length } : {}),
+    })),
   };
 }
 

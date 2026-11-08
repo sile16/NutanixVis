@@ -21,19 +21,44 @@ export interface IslShare {
 /** Data IO categories (no keep-alives or health checks). */
 export const isStorageIoCategory = (c: string): boolean => c.startsWith('io-') || c === 'nvme-io';
 
-/** Links whose two ends are switches. */
-export function islLinks(snapshot: Snapshot): string[] {
-  const isSwitch = (id: string) => snapshot.devices[id]?.kind === 'switch';
-  return Object.values(snapshot.links)
-    .filter((l) => isSwitch(l.a.device) && isSwitch(l.b.device))
-    .map((l) => l.id)
-    .sort();
+export interface IslGroup {
+  /** First member's link id: the group's label, bars and hover text sit on it. */
+  readonly id: string;
+  /** Every member link (parallel switch-to-switch links between the same two switches). */
+  readonly members: readonly string[];
 }
 
-/** Share of delivered storage IO that crossed each ISL, over the snapshot's traces. */
+/**
+ * ISL port-channels: parallel links between the same two switches form one group (a real ISL /
+ * peer-link has at least two members, and the engine hashes flows across them).
+ */
+export function islGroups(snapshot: Pick<Snapshot, 'devices' | 'links'>): IslGroup[] {
+  const isSwitch = (id: string) => snapshot.devices[id]?.kind === 'switch';
+  const by = new Map<string, string[]>();
+  for (const l of Object.values(snapshot.links)) {
+    if (!isSwitch(l.a.device) || !isSwitch(l.b.device)) continue;
+    const key = [l.a.device, l.b.device].sort().join('|');
+    by.set(key, [...(by.get(key) ?? []), l.id]);
+  }
+  return [...by.values()]
+    .map((m) => {
+      const members = [...m].sort();
+      return { id: members[0] as string, members };
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** One link id per ISL port-channel (its first member, where the label sits). */
+export function islLinks(snapshot: Pick<Snapshot, 'devices' | 'links'>): string[] {
+  return islGroups(snapshot).map((g) => g.id);
+}
+
+/** Share of delivered storage IO that crossed each ISL port-channel, over the snapshot's traces. */
 export function islShares(snapshot: Snapshot): IslShare[] {
-  const isls = islLinks(snapshot);
-  if (isls.length === 0) return [];
+  const groups = islGroups(snapshot);
+  if (groups.length === 0) return [];
+  const isls = groups.map((g) => g.id);
+  const groupOf = new Map(groups.flatMap((g) => g.members.map((m) => [m, g.id] as const)));
   const counts = new Map(isls.map((id) => [id, 0]));
   let total = 0;
   for (const t of snapshot.traces) {
@@ -41,7 +66,7 @@ export function islShares(snapshot: Snapshot): IslShare[] {
       continue;
     }
     total += 1;
-    for (const id of new Set(t.links)) {
+    for (const id of new Set(t.links.map((l) => groupOf.get(l)).filter((g) => g !== undefined))) {
       const n = counts.get(id);
       if (n !== undefined) counts.set(id, n + 1);
     }

@@ -11,7 +11,8 @@
  */
 import type { Snapshot } from '../../engine/types';
 import { stargateId } from './data-path';
-import { linkUsage, nicLoad } from './flow-data';
+import { nicLoad, portChannelUsage } from './flow-data';
+import { islGroups } from './isl-share';
 import { bondMembers, isBondKind } from './path-usage';
 
 export type MeterTone = 'ok' | 'busy' | 'full';
@@ -60,7 +61,7 @@ function arrows(kindOfParent: string | undefined): { out: string; in: string } {
 }
 
 export function buildMeters(snapshot: Snapshot): Meters {
-  const usage = linkUsage(snapshot);
+  const usage = portChannelUsage(snapshot, islGroups(snapshot));
   if (!usage) return EMPTY;
   const dev = snapshot.devices;
   const kind = (id: string) => dev[id]?.kind;

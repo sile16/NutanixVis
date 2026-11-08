@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { loadSimulation } from '../../src/loader/simulation';
 
-const ISL = 'l-sw-a--sw-b';
+/** The two ISL members (one port-channel, 2 × 100 Gb). */
+const ISLS = ['l-sw-a--sw-b-1', 'l-sw-a--sw-b-2'] as const;
 const base = {
   'node-count': 3,
   'vm-layout': 'two-plus-spare',
@@ -12,6 +13,27 @@ const base = {
 type Dir = { from: string; to: string; gbps: number; capacityGbps: number; delayUs: number };
 const links = (s: ReturnType<ReturnType<typeof loadSimulation>['sim']['tick']>) =>
   JSON.parse(String(s.devices.flows?.fields.links ?? '{}')) as Record<string, Dir[]>;
+/** The ISL port-channel per direction: members summed (capacity too), worst member delay. */
+const islDirs = (s: ReturnType<ReturnType<typeof loadSimulation>['sim']['tick']>): Dir[] => {
+  const by = new Map<string, Dir>();
+  for (const id of ISLS)
+    for (const d of links(s)[id] ?? []) {
+      const k = `${d.from}>${d.to}`;
+      const cur = by.get(k);
+      by.set(
+        k,
+        cur
+          ? {
+              ...cur,
+              gbps: cur.gbps + d.gbps,
+              capacityGbps: cur.capacityGbps + d.capacityGbps,
+              delayUs: Math.max(cur.delayUs, d.delayUs),
+            }
+          : { ...d },
+      );
+    }
+  return [...by.values()];
+};
 const vmGbps = (s: ReturnType<ReturnType<typeof loadSimulation>['sim']['tick']>, vm: string) =>
   Number(s.devices[vm]?.fields.throughputGbps ?? Number.NaN);
 
@@ -51,27 +73,40 @@ describe('throughput model (emergent congestion)', () => {
     sim.tick(3);
     sim.applyAction({ kind: 'power-on', target: 'node-3.vm-1' });
     sim.tick(5);
-    expect(links(sim.getSnapshot())[ISL]?.every((d) => d.gbps < 1)).toBe(true);
+    expect(islDirs(sim.getSnapshot()).every((d) => d.gbps < 1)).toBe(true);
     for (const n of [1, 2]) swap(sim, n);
     let s = sim.tick(10);
-    const two = links(s)[ISL] ?? [];
+    const two = islDirs(s);
     expect(Math.max(...two.map((d) => d.gbps))).toBeGreaterThan(120);
     expect(two.every((d) => d.delayUs === 0)).toBe(true);
     const before = vmGbps(s, 'node-1.vm-1');
     const latBefore = Number(s.devices['node-1.vm-1']?.fields.ioLatencyUs);
     swap(sim, 3);
     s = sim.tick(10);
-    const three = links(s)[ISL] ?? [];
-    // Offered about 214 Gb per direction against 200: the ISL runs at line rate with a queue.
+    const three = islDirs(s);
+    // Offered about 214 Gb per direction against 2 × 100: each flow hashes onto one member, so
+    // with a few heavy flows one member fills (line rate, queueing) before the port-channel's total
+    // reaches 200 (a real LAG's hash imbalance).
     for (const d of three) {
-      expect(d.gbps).toBeCloseTo(200, 0);
+      expect(d.gbps).toBeGreaterThan(150);
+      expect(d.gbps).toBeLessThanOrEqual(200.01);
       expect(d.delayUs).toBeGreaterThan(0);
     }
+    const memberFull = ISLS.some((id) =>
+      (links(s)[id] ?? []).some((d) => d.gbps >= 0.99 * d.capacityGbps && d.delayUs > 0),
+    );
+    expect(memberFull).toBe(true);
     expect(vmGbps(s, 'node-1.vm-1')).toBeLessThan(before - 5);
     expect(Number(s.devices['node-1.vm-1']?.fields.ioLatencyUs)).toBeGreaterThan(latBefore);
-    expect(sim.eventLog().some((e) => e.code === 'net.link.saturated' && e.deviceId === ISL)).toBe(
-      true,
-    );
+    expect(
+      sim
+        .eventLog()
+        .some(
+          (e) =>
+            e.code === 'net.link.saturated' &&
+            (ISLS as readonly string[]).includes(e.deviceId ?? ''),
+        ),
+    ).toBe(true);
     // The inspector's path detail shows every path crossing the ISL.
     const paths = JSON.parse(String(s.devices['node-1.vm-1']?.fields.flowPaths)) as {
       islPct: number;
@@ -91,7 +126,7 @@ describe('throughput model (emergent congestion)', () => {
     sim.applyAction({ kind: 'power-on', target: 'node-3.vm-1' });
     for (const n of [1, 2, 3]) swap(sim, n);
     const s = sim.tick(10);
-    const isl = links(s)[ISL] ?? [];
+    const isl = islDirs(s);
     for (const d of isl) {
       expect(d.gbps).toBeGreaterThan(90);
       expect(d.gbps).toBeLessThan(200);

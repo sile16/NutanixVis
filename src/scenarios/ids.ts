@@ -15,7 +15,8 @@ export const linkId = (a: string, b: string): string => `l-${a}--${b}`;
 
 export const SW_A = 'sw-a';
 export const SW_B = 'sw-b';
-export const ISL = linkId(SW_A, SW_B);
+/** The two ISL members (one port-channel). A partition needs both down. */
+export const ISLS = [`${linkId(SW_A, SW_B)}-1`, `${linkId(SW_A, SW_B)}-2`] as const;
 export const FA = 'fa';
 export const CT0 = 'fa.ct0';
 export const CT1 = 'fa.ct1';

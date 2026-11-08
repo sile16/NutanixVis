@@ -43,3 +43,42 @@ export function nicLoad(
     capacityGbps: into?.capacityGbps ?? out?.capacityGbps ?? 0,
   };
 }
+
+/**
+ * `linkUsage` with each ISL port-channel's members merged onto its first member (Gb/s, line rate
+ * and drops summed per direction, the worst member's queueing delay), the others removed: what the
+ * ISL label and its bars show.
+ */
+export function portChannelUsage(
+  snapshot: Pick<Snapshot, 'devices' | 'links'>,
+  groups: readonly { readonly id: string; readonly members: readonly string[] }[],
+): ReadonlyMap<string, readonly DirUsage[]> | null {
+  const usage = linkUsage(snapshot);
+  if (!usage) return null;
+  const out = new Map(usage);
+  for (const g of groups) {
+    if (g.members.length < 2) continue;
+    const by = new Map<string, DirUsage>();
+    for (const m of g.members) {
+      for (const d of usage.get(m) ?? []) {
+        const k = `${d.from}>${d.to}`;
+        const cur = by.get(k);
+        by.set(
+          k,
+          cur
+            ? {
+                ...cur,
+                gbps: cur.gbps + d.gbps,
+                capacityGbps: cur.capacityGbps + d.capacityGbps,
+                dropGbps: cur.dropGbps + d.dropGbps,
+                delayUs: Math.max(cur.delayUs, d.delayUs),
+              }
+            : d,
+        );
+      }
+      out.delete(m);
+    }
+    if (by.size > 0) out.set(g.id, [...by.values()]);
+  }
+  return out;
+}

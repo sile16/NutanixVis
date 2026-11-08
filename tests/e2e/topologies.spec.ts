@@ -255,7 +255,7 @@ test('the ISL edge shows its speeds each way, line-rate bars, and the share of s
   await page.goto('./#topology=t1-bonded-slb-8ip');
   await expect(page.getByTestId('node-node-1.vs1')).toBeVisible();
   for (let i = 0; i < 2; i++) await page.getByTestId('step').click();
-  const isl = page.getByTestId('edge-label-l-sw-a--sw-b');
+  const isl = page.getByTestId('edge-label-l-sw-a--sw-b-1');
   await expect(isl).toContainText(/→\d+ ←\d+\s+5\d% of storage IO crosses/);
   await expect(isl.getByTestId('line-bars')).toBeVisible();
   // Array ports carry line-rate bars too, and the legend says what the numbers and bars mean.
@@ -263,7 +263,7 @@ test('the ISL edge shows its speeds each way, line-rate bars, and the share of s
   await expect(page.getByTestId('speed-legend')).toContainText('Gb/s each way');
   await page.goto('./#topology=t1-ahv-flasharray');
   await page.reload();
-  await expect(page.getByTestId('edge-label-l-sw-a--sw-b')).toContainText('0% of storage IO');
+  await expect(page.getByTestId('edge-label-l-sw-a--sw-b-1')).toContainText('0% of storage IO');
   // Line-rate VMs fill their node NICs: the inbound bar is full.
   await expect(
     page.getByTestId('node-node-1.eth2').locator('[data-testid="line-bars"] [data-tone="full"]'),

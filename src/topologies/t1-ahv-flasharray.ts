@@ -17,7 +17,7 @@ import {
   type DeviceInput,
   flashArray,
   HOST_MGMT,
-  ISL_ID,
+  ISL_IDS,
   type LinkInput,
   lacpRateOption,
   mlagOption,
@@ -329,5 +329,6 @@ export function buildT1(params: Partial<T1Params> = {}): Topology {
 /** Prune the storage VLANs from the ISL: storage stays single-hop. */
 function pruneStorageFromIsl(links: readonly LinkInput[], storage: readonly number[]): LinkInput[] {
   const keep = [VLAN.mgmt, VLAN.vm].filter((v) => !storage.includes(v));
-  return links.map((l) => (l.id === ISL_ID ? { ...l, allowedVlans: keep } : l));
+  const isl: readonly string[] = ISL_IDS;
+  return links.map((l) => (isl.includes(l.id) ? { ...l, allowedVlans: keep } : l));
 }

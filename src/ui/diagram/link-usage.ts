@@ -6,7 +6,8 @@
  * the hover text spells out each direction, its share of line rate and any queueing delay.
  */
 import type { Snapshot } from '../../engine/types';
-import { type DirUsage, linkUsage } from './flow-data';
+import { type DirUsage, portChannelUsage } from './flow-data';
+import { islGroups } from './isl-share';
 import { buildMeters } from './meters';
 
 export { type DirUsage, FLOWS_DEVICE, linkUsage } from './flow-data';
@@ -40,7 +41,7 @@ const fmt = (g: number) =>
 /** Edge labels for every cable that carries storage throughput, and always the ISL. */
 export function linkUsageLabels(snapshot: Snapshot): Map<string, LinkUsageLabel> {
   const out = new Map<string, LinkUsageLabel>();
-  const usage = linkUsage(snapshot);
+  const usage = portChannelUsage(snapshot, islGroups(snapshot));
   if (!usage) return out;
   const kind = (id: string) => snapshot.devices[id]?.kind;
   const meters = buildMeters(snapshot);

@@ -45,7 +45,10 @@ export interface VmSteps {
   readonly resumeStep: number | null;
   /** Tick the interruption began (internal), or null when the VM never stalled. */
   readonly startT: number | null;
-  /** Tick the run ended (sessions failed back), after which the counter stops; null: not yet. */
+  /**
+   * Tick the run ended, after which the counter stops; null: not yet. With maintenance or a
+   * redirect it is the failback; otherwise the tick the IO completed again.
+   */
   readonly endT: number | null;
   /** Interruption milestones, then recovery milestones, in time order. */
   readonly milestones: readonly StepMilestone[];
@@ -55,14 +58,23 @@ export interface VmSteps {
   readonly redirected: boolean;
 }
 
+/**
+ * The VM state a step sample records. A VM failed by the generic `fail` action keeps its own
+ * `state` field but its device is failed: that is a crashed VM, not a running one.
+ */
+export function vmSampleState(status: string, state: unknown): string {
+  return status === 'failed' ? 'crashed' : String(state);
+}
+
 export function vmSeries(history: readonly Snapshot[], vm: string): VmSample[] {
   const out: VmSample[] = [];
   for (const s of history) {
-    const f = s.devices[vm]?.fields;
-    if (!f) continue;
+    const d = s.devices[vm];
+    const f = d?.fields;
+    if (!d || !f) continue;
     out.push({
       t: s.simTime,
-      state: String(f.state),
+      state: vmSampleState(d.status, f.state),
       ioPendingS: typeof f.ioPendingS === 'number' ? f.ioPendingS : 0,
       host: typeof f.host === 'string' ? f.host : null,
       ownerCvm: typeof f.ownerCvm === 'string' ? f.ownerCvm : null,
@@ -71,8 +83,14 @@ export function vmSeries(history: readonly Snapshot[], vm: string): VmSample[] {
   return out;
 }
 
+/** The VM's IO is interrupted: stalled, waiting, or the VM itself is down (crashed, paused, or
+ * restarting after HA). A powered-off spare is not an interruption. */
 const impacted = (x: VmSample): boolean =>
-  x.state === 'io-stalled' || (x.state === 'running' && x.ioPendingS > BLIP);
+  x.state === 'io-stalled' ||
+  x.state === 'crashed' ||
+  x.state === 'paused' ||
+  x.state === 'restarting' ||
+  (x.state === 'running' && x.ioPendingS > BLIP);
 
 const NONE = (vm: string): VmSteps => ({
   vm,
@@ -192,13 +210,17 @@ export function deriveVmSteps(
       : maint
         ? 'longer'
         : 'brief';
+  // The run ends when the sessions fail back (maintenance or redirect); otherwise when the IO
+  // completes again. Later recovery milestones (a path restored much later) don't extend it, so
+  // the counter stops instead of creeping up the scale forever.
+  const endT = maint || redirectT !== undefined ? failedBackT : (after?.t ?? null);
   return {
     vm,
     stalledSteps,
     impact,
     resumeStep,
     startT: start,
-    endT: failedBackT,
+    endT,
     milestones: ms,
     cells: Array.from({ length: stalledSteps }, () => 'stalled' as const),
     redirected,

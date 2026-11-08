@@ -5,6 +5,7 @@ export {
   stepAt,
   type VmSample,
   type VmSteps,
+  vmSampleState,
   vmSeries,
 } from './derive';
 export { buildIoChain, type IoChain, type IoChainInput, type IoHop, ioChainOf } from './io-chain';

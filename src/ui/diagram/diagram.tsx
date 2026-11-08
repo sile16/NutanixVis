@@ -33,7 +33,8 @@ import {
   usePreviousSnapshot,
   useTraceHistory,
 } from './hooks';
-import { islLabel, islShares } from './isl-share';
+import { islLabel, islLinks, islShares } from './isl-share';
+import { islWhy } from './isl-why';
 import { cableLabelAnchors } from './label-anchor';
 import { computeLayout, type LayoutMap, moveDevice, portKey } from './layout';
 import { LayoutEditPanel } from './layout-edit-panel';
@@ -172,10 +173,17 @@ export function Diagram({
     () => new Map([...usage].map(([id, u]) => [id, u.tone] as const)),
     [usage],
   );
-  const labelTitles = useMemo(
-    () => new Map([...usage].map(([id, u]) => [id, u.title] as const)),
-    [usage],
-  );
+  // Hover text: each direction in full, plus on the ISL why storage IO crosses it (isl-why.ts).
+  const labelTitles = useMemo(() => {
+    const out = new Map([...usage].map(([id, u]) => [id, u.title] as const));
+    for (const id of islLinks(snapshot)) {
+      const why = islWhy(snapshot, id);
+      if (why.length === 0) continue;
+      const base = out.get(id);
+      out.set(id, base ? `${base}\n\n${why.join('\n')}` : why.join('\n'));
+    }
+    return out;
+  }, [usage, snapshot]);
   // Labels sit just outside the node or array that owns the port, and the ISL's below the switches.
   const labelAnchors = useMemo(
     () => cableLabelAnchors(allLinks, placed.devices, dl, geometries),

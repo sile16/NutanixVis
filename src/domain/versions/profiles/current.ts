@@ -509,10 +509,10 @@ export const current: Profile = {
       'Secondary detects expired drive-quorum claims in about 1 s.',
     ),
     primaryCrashPauseS: c(
-      16,
-      'verified',
+      15,
+      'assumption',
       ['everpure-ha-crash'],
-      'No array IO for a few seconds up to ~16 s; the model uses the documented upper bound.',
+      'Owner estimate (2026-11-08) for an unplanned controller failover: about 15 s with no array IO. Everpure documents a few seconds up to ~16 s.',
     ),
     promotionMaxS: c(15, 'verified', ['everpure-ha-timing']),
     ioDelayTimeoutS: c(
@@ -527,7 +527,12 @@ export const current: Profile = {
       ['everpure-ha-timing'],
       'Design objective for a complete failover.',
     ),
-    plannedFailoverPauseS: c(15, 'verified', ['everpure-ha-planned', 'everpure-upgrade']),
+    plannedFailoverPauseS: c(
+      5,
+      'assumption',
+      ['everpure-ha-planned', 'everpure-upgrade'],
+      'Owner estimate (2026-11-08) for a typical planned failover (giveback, then promotion): about 5 s. Everpure documents a pause of at most 15 s.',
+    ),
     hostMultipathRetryS: c(
       10,
       'inferred',

@@ -10,6 +10,7 @@ import {
   useMemo,
   useSyncExternalStore,
 } from 'react';
+import { nextStepTick } from '../../domain/steps';
 import type { ActionRequest, Simulation, Snapshot } from '../../engine/types';
 import { STEP_IDLE_PRESS_TICKS, type StepsView, StepTracker } from '../steps/step-tracker';
 import { SnapshotHistory } from './snapshot-history';
@@ -23,8 +24,14 @@ interface SimBundle {
   readonly steps: StepTracker;
 }
 
-/** Safety caps for `stepForward` (ticks), not durations: it stops at the first new step. */
+/**
+ * Safety caps for `stepForward` (ticks), not durations: it stops at the first new step. Later
+ * steps are longer (the scale doubles), so an active press may run up to the next step boundary
+ * (never more than STEP_CAP_MAX); the wall-clock budget keeps the page responsive.
+ */
 const STEP_CAP_ACTIVE = 900;
+const STEP_CAP_MAX = 20_000;
+const STEP_PRESS_BUDGET_MS = 1500;
 const STEP_CAP_QUIET = STEP_IDLE_PRESS_TICKS + 2;
 
 const SimContext = createContext<SimBundle | null>(null);
@@ -100,10 +107,21 @@ export function useSimControls() {
         );
       });
     };
-    const cap = active() ? STEP_CAP_ACTIVE : STEP_CAP_QUIET;
+    // Ticks to the next step boundary of any open run, so a press on a long step still lands on it.
+    const now = sim.getSnapshot().simTime;
+    let toNext = 0;
+    for (const v of steps.view().vms.values()) {
+      const at = nextStepTick(v, now);
+      if (at !== null && v.endT === null)
+        toNext = toNext === 0 ? at - now : Math.min(toNext, at - now);
+    }
+    const cap = active()
+      ? Math.min(STEP_CAP_MAX, Math.max(STEP_CAP_ACTIVE, toNext + 1))
+      : STEP_CAP_QUIET;
+    const deadline = performance.now() + STEP_PRESS_BUDGET_MS;
     for (let i = 0; i < cap; i++) {
       sim.tick(1);
-      if (steps.view().current !== before) break;
+      if (steps.view().current !== before || performance.now() > deadline) break;
     }
     noteTicked();
   }, [sim, steps, noteTicked]);
@@ -113,12 +131,14 @@ export function useSimControls() {
   }, [sim, noteTicked]);
   const apply = useCallback(
     (action: ActionRequest) => {
+      // A new action after everything settled starts a new incident: the counter restarts at 0.
+      steps.beginIncidentIfSettled(sim.getSnapshot().simTime);
       sim.applyAction(action);
       noteActionQueued();
       const { manual, playing } = useUi.getState();
       if (!manual && !playing) step();
     },
-    [sim, noteActionQueued, step],
+    [sim, steps, noteActionQueued, step],
   );
   return { step, stepForward, fastForward, apply };
 }

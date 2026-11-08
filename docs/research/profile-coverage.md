@@ -11,10 +11,10 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 <!-- coverage:begin -->
 | Confidence | Count |
 |---|---|
-| verified | 39 |
+| verified | 37 |
 | inferred | 16 |
 | unverified | 1 |
-| assumption | 34 |
+| assumption | 36 |
 | lab-observed | 0 |
 | **Total** | **90** |
 
@@ -100,11 +100,11 @@ This is the audit view of `src/domain/versions/profiles/current.ts`: every field
 | `externalStorage.vdiskHandoverS` | 1 | assumption | `ntnx-bible-8c`, `ntnx-bible-5b` | No published figure. Once the redirector has moved the session, the remote Stargate takes the vDisk over (ownership and NVMe reservation, Bible 8c) from the CVM in Hades maintenance and serves its IO: about immediate on a healthy cluster. A long delay comes only from a redirect target that is itself unhealthy or degraded, which this field does not model. |
 | `externalStorage.wholeArrayLossVmBehavior` | 'crash-and-restart' | assumption | `ntnx-ncp-everpure-deploy-7.6`, `ntnx-bible-5b` | The deployment guide says IO retries until the array responds, which bounds nothing on the guest side. A whole-array loss puts every node in Hades maintenance, so no Stargate serves; once that has lasted redirector.initiatorSessionTimeoutS the VMs crash (QEMU exits), and AHV powers them back on after the array and the cluster services return. Topology option whole-array-loss-vm-behavior: stall keeps the retry-in-place picture. |
 | `flasharray.claimExpiryDetectS` | 1 | verified | `everpure-ha-crash` | Secondary detects expired drive-quorum claims in about 1 s. |
-| `flasharray.primaryCrashPauseS` | 16 | verified | `everpure-ha-crash` | No array IO for a few seconds up to ~16 s; the model uses the documented upper bound. |
+| `flasharray.primaryCrashPauseS` | 15 | assumption | `everpure-ha-crash` | Owner estimate (2026-11-08) for an unplanned controller failover: about 15 s with no array IO. Everpure documents a few seconds up to ~16 s. |
 | `flasharray.promotionMaxS` | 15 | verified | `everpure-ha-timing` |  |
 | `flasharray.ioDelayTimeoutS` | 15 | verified | `everpure-ha-iodelay` | Primary IO stall → giveback after 15 s, then promotion. |
 | `flasharray.failoverObjectiveS` | 30 | verified | `everpure-ha-timing` | Design objective for a complete failover. |
-| `flasharray.plannedFailoverPauseS` | 15 | verified | `everpure-ha-planned`, `everpure-upgrade` |  |
+| `flasharray.plannedFailoverPauseS` | 5 | assumption | `everpure-ha-planned`, `everpure-upgrade` | Owner estimate (2026-11-08) for a typical planned failover (giveback, then promotion): about 5 s. Everpure documents a pause of at most 15 s. |
 | `flasharray.hostMultipathRetryS` | 10 | inferred | `everpure-ha-scenarios`, `everpure-linux-dm-multipath` | Generic SCSI / dm-multipath hosts (fast_io_fail_tmo 10). Not the Stargate NVMe/TCP path, which detects loss by keep-alive (KATO) and holds in-flight IO (SPEC §6.4c). Informational; no model timing uses it. |
 | `flasharray.worstCaseSingleIoS` | 60 | verified | `everpure-host-timeouts` |  |
 | `flasharray.controllerRebootS` | 300 | assumption | `everpure-upgrade` | Model value for one controller reboot during NDU (minutes; longer with firmware updates). Replace from lab testing. |

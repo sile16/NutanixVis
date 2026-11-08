@@ -161,7 +161,13 @@ describe('controller HA', () => {
     const stall = T0 + 1;
     expect(firstAt(r, 'fa.io-delay.timeout', 'fa.ct0')).toBe(stall + FA.ioDelayTimeoutS.value);
     const promo = firstAt(r, 'fa.promotion.complete', 'fa.ct1');
-    const total = FA.ioDelayTimeoutS.value + FA.promotionMaxS.value;
+    // Promotion after the giveback: the unplanned pause minus detection, at most promotionMaxS.
+    const promotion = Math.max(
+      1,
+      Math.min(FA.primaryCrashPauseS.value, FA.claimExpiryDetectS.value + FA.promotionMaxS.value) -
+        FA.claimExpiryDetectS.value,
+    );
+    const total = FA.ioDelayTimeoutS.value + promotion;
     expect((promo ?? 0) - stall).toBe(total);
     expect(total).toBeLessThanOrEqual(FA.failoverObjectiveS.value);
     expect(w.maxPause).toBe(total);

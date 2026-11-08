@@ -10,7 +10,8 @@ import { SPEEDS, useUi } from '../store/ui-store';
 
 /**
  * The step counter. Time is shown as steps (an ordinal on a relative scale), never as seconds:
- * 0 while nothing is interrupted, then the highest step any VM's interruption has reached.
+ * 0 while nothing is interrupted, then the highest step any VM's interruption has reached in the
+ * current incident. Once every run has ended it reads "settled"; the next action starts again at 0.
  */
 export function SimClock() {
   const steps = useSteps();
@@ -22,7 +23,9 @@ export function SimClock() {
       ? 'steady'
       : stalled.some((v) => v.resumeStep === null)
         ? 'VM I/O interrupted'
-        : 'recovering';
+        : steps.settled
+          ? 'settled'
+          : 'recovering';
   return (
     <output
       className="flex min-w-[6.5rem] flex-col rounded-md border border-border bg-panel-2 px-2 py-0.5 leading-tight"

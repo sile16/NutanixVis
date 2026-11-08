@@ -93,3 +93,57 @@ describe('failback span', () => {
     expect(tracker.view().current).toBe(failedBackAt);
   });
 });
+
+describe('incidents', () => {
+  it('a brief stall without a redirect stops the counter when IO resumes (settled)', () => {
+    const { sim, tracker } = setup();
+    sim.applyAction({ kind: 'fail', target: 'fa.ct0' });
+    let settledAt = -1;
+    for (let t = 0; t < 300 && settledAt < 0; t++) {
+      sim.tick(1);
+      if (tracker.view().current > 0 && tracker.view().settled) settledAt = tracker.view().current;
+    }
+    expect(settledAt).toBeGreaterThan(0);
+    sim.tick(2000);
+    expect(tracker.view().current).toBe(settledAt);
+    expect(tracker.view().settled).toBe(true);
+  });
+
+  it('after a settled incident, a new action restarts the counter at 0 and earlier events keep their steps', () => {
+    const { sim, tracker } = setup();
+    sim.applyAction({ kind: 'fail', target: 'fa.ct0' });
+    sim.tick(300);
+    const first = tracker.view();
+    expect(first.settled).toBe(true);
+    const old = first.current;
+    expect(old).toBeGreaterThan(0);
+    const failT = sim.eventLog().find((e) => e.code === 'device.failed')?.t ?? -1;
+    const oldStep = first.stepOfTick(failT + 5);
+    // A failure that interrupts no VM: the counter reads 0 (steady), time still moves.
+    tracker.beginIncidentIfSettled(sim.getSnapshot().simTime);
+    sim.applyAction({ kind: 'fail', target: 'node-1.host-mgmt' });
+    const t0 = sim.getSnapshot().simTime;
+    sim.tick(64);
+    expect(sim.getSnapshot().simTime).toBe(t0 + 64);
+    expect(tracker.view().current).toBe(0);
+    expect(tracker.view().stepOfTick(failT + 5)).toBe(oldStep);
+    // A new interruption counts from step 1 again.
+    sim.applyAction({ kind: 'recover', target: 'fa.ct0' });
+    sim.tick(400);
+    tracker.beginIncidentIfSettled(sim.getSnapshot().simTime);
+    sim.applyAction({ kind: 'fail', target: 'fa.ct1' });
+    let firstSeen = 0;
+    for (let t = 0; t < 40 && firstSeen === 0; t++) {
+      sim.tick(1);
+      firstSeen = tracker.view().current;
+    }
+    expect(firstSeen).toBe(1);
+  });
+
+  it('a failed VM counts as an interruption: the counter advances', () => {
+    const { sim, tracker } = setup();
+    sim.applyAction({ kind: 'fail', target: 'node-1.vm-1' });
+    sim.tick(30);
+    expect(tracker.view().current).toBeGreaterThanOrEqual(2);
+  });
+});

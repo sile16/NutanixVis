@@ -63,6 +63,11 @@ This is a field reference for setting up and checking an NCP compute cluster wit
 |---|---|---|
 | Bond state and active members | `ovs-appctl bond/show <bond-name>` 📘 | AHV 11.2 Admin Guide. Check that the storage vswitch's uplinks are enabled. For active-backup it names the active member; under MAC pinning (`balance-slb`) it also shows which source MAC hash is on which member. |
 | LACP negotiation (only if the bond is LACP) | `ovs-appctl lacp/show <bond-name>` 📘 | AHV 11.2 Admin Guide: search the output for "negotiated". |
+| Which bucket a storage interface is in (MAC pinning) | `ovs-appctl bond/hash <mac> <vlan>` 📘 | [ovs-vswitchd(8)](https://www.openvswitch.org/support/dist-docs/ovs-vswitchd.8.txt). Use the CVM interface's MAC and its VLAN tag; the number matches `hash N` in `bond/show` and stays the same across reboots. |
+| Where the storage interfaces landed after a restart | `ovs-appctl bond/show <bond-name>` 📘 | Check after **every host reboot or OVS restart**, not only after link events: under `balance-slb` the two storage interfaces are re-learned and can come back swapped (`docs/research/ovs-bond-behavior.md` S8). |
+| Move one bucket by hand | `ovs-appctl bond/migrate <bond-name> <hash> <member>` 📘 ⚠️ | ovs-vswitchd(8). Not exposed in Prism, and lost at the next OVS restart. |
+| Rebalance interval and LACP settings | `ovs-vsctl get port <bond-name> other_config` 📘 | [ovs-vswitchd.conf.db(5)](https://www.openvswitch.org/support/dist-docs/ovs-vswitchd.conf.db.5.txt): `bond-rebalance-interval` (AHV sets 30000 ms on balance-slb), `lacp-time`, `lacp-fallback-ab`. |
+| Bond history: failovers and rebalance moves | `grep -e bond.INFO -e lacp.INFO /var/log/openvswitch/ovs-vswitchd.log` ⚠️ | Each member up/down, `active member is now …`, and `shift NkB of load (with hash H) from … to …` with timestamps (format: OVS `ofproto/bond.c`). The simulator's event log shows the same lines. |
 | Choose the active-backup member | `ovs-appctl bond/set-active-slave <bond-name> <interface>` 📘 ⚠️ | Everpure "Configure Nutanix Cluster for FlashArray". Moves the host's traffic to that uplink at once, so do it one host at a time. Spreading hosts across both switches limits what a hung switch can take down (simulator option `vs0-active-member`). |
 
 ---

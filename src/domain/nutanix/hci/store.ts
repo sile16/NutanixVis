@@ -166,8 +166,9 @@ export class HciStore {
 
   /**
    * Track which Stargates the cluster is losing, once per tick (see header). A CVM that is down
-   * is silent; one that runs with Stargate stopped is a clean stop; one outside the quorum side
-   * (while a side has quorum) is isolated, hence silent.
+   * is silent, unless it was shut down in a planned way (its Stargate stopped cleanly first, so
+   * peers learn at once); one that runs with Stargate stopped is a clean stop; one outside the
+   * quorum side (while a side has quorum) is isolated, hence silent.
    */
   observe(now: number): void {
     if (this.lastObserve === now) return;
@@ -177,7 +178,10 @@ export class HciStore {
     const H = this.profile.hci;
     for (const n of this.nodeIds) {
       let detectS: number | undefined;
-      if (!c.isCvmUp(n)) detectS = H.stargateDownDetectS.value;
+      if (!c.isCvmUp(n)) {
+        detectS =
+          c.cvmPlannedOff?.(n) === true ? H.stargateStopDetectS.value : H.stargateDownDetectS.value;
+      }
       // A hung Stargate keeps its ZK session until it expires (silent); a stopped one closes it.
       else if (!c.isStargateUp(n)) {
         detectS =

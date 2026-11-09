@@ -5,7 +5,7 @@
 import { clsx } from 'clsx';
 import { FastForward, Hand, Pause, Play, StepForward } from 'lucide-react';
 import { Button, HelpTip } from '../components/controls';
-import { useSimControls, useSnapshot, useSteps } from '../store/sim-context';
+import { useSimControls, useSnapshot, useStepBusy, useSteps } from '../store/sim-context';
 import { SPEEDS, useUi } from '../store/ui-store';
 
 /**
@@ -15,17 +15,19 @@ import { SPEEDS, useUi } from '../store/ui-store';
  */
 export function SimClock() {
   const steps = useSteps();
-  const stalled = [...steps.vms.values()].filter(
-    (v) => v.stalledSteps > 0 || v.resumeStep === null,
+  const interrupted = [...steps.vms.values()].some(
+    (v) => v.startT !== null && v.resumeStep === null,
   );
   const note =
-    steps.current === 0
+    steps.current === 0 && steps.settled
       ? 'steady'
-      : stalled.some((v) => v.resumeStep === null)
-        ? 'VM I/O interrupted'
-        : steps.settled
-          ? 'settled'
-          : 'recovering';
+      : steps.waiting
+        ? 'waiting for recovery'
+        : interrupted
+          ? 'VM I/O interrupted'
+          : steps.settled
+            ? 'settled'
+            : 'recovering';
   return (
     <div className="flex items-center gap-1">
       <output
@@ -66,7 +68,8 @@ export function StepsHelp() {
       </span>
       <span className="mt-1 block text-ink-muted">
         Step 0: nothing is interrupted. Once everything has settled, the next action starts again at
-        0.
+        0. While what is left can only end once you recover a failed component, the counter stops
+        (waiting for recovery) and picks up from the same step after you do.
       </span>
     </>
   );
@@ -75,6 +78,7 @@ export function StepsHelp() {
 export function TimeControls() {
   const snapshot = useSnapshot();
   const { stepForward, fastForward } = useSimControls();
+  const busy = useStepBusy();
   const playing = useUi((s) => s.playing);
   const setPlaying = useUi((s) => s.setPlaying);
   const speed = useUi((s) => s.speed);
@@ -88,12 +92,14 @@ export function TimeControls() {
     <div className="flex items-center gap-1.5" data-testid="time-controls">
       <Button
         onClick={() => stepForward()}
-        disabled={playing}
+        disabled={playing || busy}
+        aria-busy={busy}
         data-testid="step"
-        title="Advance to the next step"
+        data-busy={busy ? 'true' : 'false'}
+        title={busy ? 'Running to the end of the step' : 'Advance to the next step'}
       >
-        <StepForward size={15} aria-hidden="true" />
-        Step
+        <StepForward size={15} aria-hidden="true" className={clsx(busy && 'animate-pulse')} />
+        {busy ? 'Stepping…' : 'Step'}
       </Button>
       <Button
         variant={playing ? 'primary' : 'default'}

@@ -48,9 +48,9 @@ describe('step counter on the relative scale', () => {
 
   it('is not linear: each step takes longer than the one before', () => {
     const { sim, tracker } = setup();
-    sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
-    sim.applyAction({ kind: 'fail', target: 'node-1.eth3' });
-    const starts = stepStarts(() => sim.tick(1), tracker, 300);
+    // A CVM reboot recovers on its own, so the counter climbs all the way to the failback.
+    sim.applyAction({ kind: 'reboot', target: 'node-1.cvm' });
+    const starts = stepStarts(() => sim.tick(1), tracker, 450);
     const gaps: number[] = [];
     for (let k = 2; k < starts.length - 1; k++) {
       gaps.push((starts[k + 1] as number) - (starts[k] as number));
@@ -140,10 +140,129 @@ describe('incidents', () => {
     expect(firstSeen).toBe(1);
   });
 
-  it('a failed VM counts as an interruption: the counter advances', () => {
+  it('a failed VM is an interruption that waits on the user: step 1 until it is recovered', () => {
     const { sim, tracker } = setup();
     sim.applyAction({ kind: 'fail', target: 'node-1.vm-1' });
+    sim.tick(300);
+    let v = tracker.view();
+    expect(v.current).toBe(1);
+    expect(v.waiting).toBe(true);
+    expect(v.settled).toBe(false);
+    expect(v.vms.get('node-1.vm-1')?.impact).toBe('down');
+    sim.applyAction({ kind: 'recover', target: 'node-1.vm-1' });
+    sim.tick(5);
+    v = tracker.view();
+    expect(v.settled).toBe(true);
+    expect(v.current).toBe(1);
+  });
+});
+
+/** An action the way the UI applies one. */
+const act = (
+  sim: ReturnType<typeof setup>['sim'],
+  tracker: StepTracker,
+  kind: string,
+  target: string,
+) => {
+  tracker.beginIncidentIfSettled(sim.getSnapshot().simTime);
+  sim.applyAction({ kind, target });
+  sim.tick(1);
+};
+
+describe('HA restarts, repeated interruptions, waiting for recovery', () => {
+  it('a host that powers off: AHV HA restarts its VMs elsewhere and the incident settles there', () => {
+    const { sim, tracker } = setup();
+    act(sim, tracker, 'power-off', 'node-1');
+    let settledAt = -1;
+    for (let t = 0; t < 400 && settledAt < 0; t++) {
+      sim.tick(1);
+      if (tracker.view().settled) settledAt = sim.getSnapshot().simTime;
+    }
+    expect(settledAt).toBeGreaterThan(0);
+    const v = tracker.view();
+    for (const id of ['node-1.vm-1']) {
+      const r = v.vms.get(id);
+      expect(r?.impact).toBe('restarted');
+      expect(r?.redirected).toBe(false);
+      expect(r?.restartedOn).not.toBe('node-1');
+      expect(r?.milestones.map((m) => m.stage)).toContain('ha-restarted');
+      expect(r?.endT).toBe(settledAt);
+    }
+    const at = v.current;
+    sim.tick(1000);
+    expect(tracker.view().current).toBe(at);
+  });
+
+  it('host maintenance live-migrates the VMs: no interruption, the counter stays 0', () => {
+    const { sim, tracker } = setup();
+    act(sim, tracker, 'host.enter-maintenance', 'node-1');
+    sim.tick(200);
+    const v = tracker.view();
+    expect(v.current).toBe(0);
+    expect(v.vms.get('node-1.vm-1')?.redirected).toBe(false);
+  });
+
+  it('a VM interrupted again while the incident is open keeps it open, and the counter never drops', () => {
+    const { sim, tracker } = setup();
+    act(sim, tracker, 'reboot', 'node-1.cvm');
+    sim.tick(80);
+    act(sim, tracker, 'fail', 'node-2.vm-1');
     sim.tick(30);
-    expect(tracker.view().current).toBeGreaterThanOrEqual(2);
+    act(sim, tracker, 'recover', 'node-2.vm-1');
+    sim.tick(30);
+    act(sim, tracker, 'fail', 'node-2.vm-1');
+    let peak = 0;
+    for (let t = 0; t < 700; t++) {
+      sim.tick(1);
+      const now = tracker.view().current;
+      expect(now).toBeGreaterThanOrEqual(peak);
+      peak = now;
+    }
+    let v = tracker.view();
+    // node-1's VMs failed back long ago; node-2.vm-1 is still down, waiting on the user.
+    expect(v.settled).toBe(false);
+    expect(v.waiting).toBe(true);
+    expect(v.current).toBe(peak);
+    expect(peak).toBeGreaterThan(4);
+    act(sim, tracker, 'recover', 'node-2.vm-1');
+    sim.tick(5);
+    v = tracker.view();
+    expect(v.settled).toBe(true);
+    expect(v.current).toBe(peak);
+  });
+
+  it('a failed CVM never recovered: the counter stops once the IO resumed remotely; recovering resumes it', () => {
+    const { sim, tracker } = setup();
+    act(sim, tracker, 'fail', 'node-1.cvm');
+    sim.tick(100);
+    const stopped = tracker.view().current;
+    expect(tracker.view().waiting).toBe(true);
+    sim.tick(2000);
+    expect(tracker.view().current).toBe(stopped);
+    act(sim, tracker, 'recover', 'node-1.cvm');
+    expect(tracker.view().waiting).toBe(false);
+    let settled = false;
+    for (let t = 0; t < 1500 && !settled; t++) {
+      sim.tick(1);
+      settled = tracker.view().settled;
+    }
+    expect(settled).toBe(true);
+    const r = tracker.view().vms.get('node-1.vm-1');
+    expect(r?.milestones.map((m) => m.stage)).toContain('failed-back');
+    // The long wait for the failback spans a few steps after the recovery, not the time waited.
+    expect(tracker.view().current - stopped).toBeGreaterThanOrEqual(2);
+    expect(tracker.view().current - stopped).toBeLessThanOrEqual(6);
+  });
+
+  it('a planned controller reboot whose controller fails during it ends at the failure', () => {
+    const { sim, tracker } = setup();
+    act(sim, tracker, 'fa.controller.reboot', 'fa.ct1');
+    sim.tick(40);
+    act(sim, tracker, 'fail', 'fa.ct1');
+    sim.tick(50);
+    const v = tracker.view();
+    expect(v.array.crashed).toBe(true);
+    expect(v.array.endT).not.toBeNull();
+    expect(v.settled).toBe(true);
   });
 });

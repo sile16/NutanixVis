@@ -116,7 +116,6 @@ export class AhvHost implements Device<Profile> {
       maintenance: this.reg.maintenanceHosts.has(this.id),
       sessions: JSON.stringify(this.redirector.sessionsView()),
       unhealthyStargates: JSON.stringify(this.redirector.unhealthyView()),
-      heartbeatLostAt: ha.lostAt,
     };
     const badges: string[] = [];
     if (this.reg.leaderHost === this.id) badges.push('acropolis-leader');

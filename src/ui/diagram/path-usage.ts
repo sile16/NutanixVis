@@ -114,9 +114,10 @@ export interface VmIo {
 
 /**
  * Path usage for a VM. With `vmIo` (its `ioPaths` / `ioUplinks` view fields over the window) only
- * that VM's own traffic is counted: NVMe/TCP traces whose `src~dst` is one of its paths (T1), or
- * IO traces between its host and its owning CVM over one of its uplinks (CO nodes, redirects).
- * Without them (HCI VMs served locally over virbr0) it falls back to the host's storage traffic.
+ * that VM's own traffic is counted: NVMe/TCP commands on one of its paths (T1; from the serving
+ * CVM's host, which is another host after a redirect), and iSCSI requests from its host to its
+ * owning CVM elsewhere over one of its uplinks (CO nodes, redirects). Without them (HCI VMs served
+ * locally over virbr0) it falls back to the host's storage traffic.
  */
 export function computePathUsage(snapshot: Snapshot, vmId: string, vmIo?: VmIo): PathUsage | null {
   const vm = snapshot.devices[vmId];
@@ -145,10 +146,12 @@ export function computePathUsage(snapshot: Snapshot, vmId: string, vmIo?: VmIo):
 
   const under = (id: string | undefined, ancestor: string | undefined): boolean =>
     id !== undefined && ancestor !== undefined && isDescendant(snapshot.devices, id, ancestor);
-  const hostEnd = (l: LinkView | undefined): string | undefined => {
-    if (!l || !hostId) return undefined;
-    if (under(l.a.device, hostId)) return l.a.device;
-    if (under(l.b.device, hostId)) return l.b.device;
+  // The serving CVM's host: where a redirected VM's NVMe/TCP leg starts (not the VM's own host).
+  const cvmHostId = cvmId ? ancestorOfKind(snapshot.devices, cvmId, 'ahv-host')?.id : undefined;
+  const endUnder = (l: LinkView | undefined, ancestor: string | undefined): string | undefined => {
+    if (!l || !ancestor) return undefined;
+    if (under(l.a.device, ancestor)) return l.a.device;
+    if (under(l.b.device, ancestor)) return l.b.device;
     return undefined;
   };
   const isSwitch = (id: string) => snapshot.devices[id]?.kind === 'switch';
@@ -157,26 +160,34 @@ export function computePathUsage(snapshot: Snapshot, vmId: string, vmIo?: VmIo):
       const l = snapshot.links[id];
       return !!l && !!vmIo && (vmIo.uplinks.has(l.a.device) || vmIo.uplinks.has(l.b.device));
     });
-  const isVmTrace = (t: Trace): boolean => {
-    if (!vmIo || !isIoCategory(t.category)) return false;
-    if (vmIo.paths.size > 0) {
-      return vmIo.paths.has(`${t.src}~${t.dst}`) || vmIo.paths.has(`${t.dst}~${t.src}`);
-    }
-    const ends = [t.src, t.dst];
-    return (
-      ends.some((e) => under(e, hostId)) && ends.some((e) => under(e, cvmId)) && touchesUplink(t)
-    );
+  /**
+   * Where one of this VM's own IO requests starts (responses are skipped, so request/response
+   * pairs count once): an NVMe/TCP command on one of its paths leaves the serving CVM's host; an
+   * iSCSI request of its host's redirector to a CVM elsewhere (CO node, redirect) leaves its host.
+   * `final`: the leg that ends at the storage (the array, or the serving CVM).
+   */
+  const vmOrigin = (t: Trace): { host: string | undefined; final: boolean } | null => {
+    if (!vmIo || !isIoCategory(t.category)) return null;
+    if (vmIo.paths.has(`${t.src}~${t.dst}`)) return { host: cvmHostId ?? hostId, final: true };
+    if (vmIo.paths.has(`${t.dst}~${t.src}`)) return null;
+    const leg =
+      under(t.src, hostId) && !under(t.src, cvmId) && under(t.dst, cvmId) && touchesUplink(t);
+    return leg ? { host: hostId, final: vmIo.paths.size === 0 } : null;
   };
 
   for (const t of snapshot.traces) {
     if (t.links.length === 0) continue;
-    if (scope === 'vm' ? !isVmTrace(t) : !isStorageCategory(t.category)) continue;
+    const origin =
+      scope === 'vm'
+        ? vmOrigin(t)
+        : isStorageCategory(t.category)
+          ? { host: hostId, final: true }
+          : null;
+    if (!origin) continue;
     const first = snapshot.links[t.links[0] ?? ''];
     const last = snapshot.links[t.links[t.links.length - 1] ?? ''];
-    const fromHost = hostEnd(first);
-    const toHost = hostEnd(last);
-    if (!fromHost && !toHost) continue;
     // Count requests only (traffic leaving the host), so request/response pairs count once.
+    const fromHost = endUnder(first, origin.host);
     if (!fromHost) continue;
     traceCount += 1;
     for (const id of t.links) {
@@ -192,17 +203,17 @@ export function computePathUsage(snapshot: Snapshot, vmId: string, vmIo?: VmIo):
       u.count += 1;
       uplinks.set(first.id, u);
     }
-    if (last && t.result === 'delivered' && last.id !== first?.id) {
+    if (origin.final && last && t.result === 'delivered' && last.id !== first?.id) {
       const far = isSwitch(last.a.device) ? last.b.device : last.a.device;
       const c = targets.get(last.id) ?? { deviceId: far, count: 0 };
       c.count += 1;
       targets.set(last.id, c);
     }
   }
-  // The vswitch(es) whose uplinks carry the traffic.
+  // The vswitch(es) whose uplinks carry the traffic (on the VM's host or the serving CVM's).
   const used = new Set([...uplinks.values()].map((u) => u.deviceId));
   for (const d of Object.values(snapshot.devices)) {
-    if (!isBondKind(d.kind) || d.parent !== hostId) continue;
+    if (!isBondKind(d.kind) || (d.parent !== hostId && d.parent !== cvmHostId)) continue;
     if (bondMembers(d).some((m) => used.has(m))) deviceIds.add(d.id);
   }
   return {

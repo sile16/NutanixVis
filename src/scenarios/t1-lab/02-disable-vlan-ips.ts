@@ -14,7 +14,7 @@ import {
   t1Steady,
 } from '../helpers';
 import { T1_LAB } from '../ids';
-import { CLOSED_PATH_WORST } from '../timers';
+import { CLOSED_PATH_WORST, PATH_LOSS_RULE } from '../timers';
 
 const END = by(CLOSED_PATH_WORST) + 30;
 
@@ -39,13 +39,15 @@ export default defineScenario({
       allCvms(s, (c) => onlyPathsLostTo(c, T1_LAB.faIfacesVlan10)),
     ),
     alwaysFrom(T0, 'VMs keep running on VLAN 20', (s) => allVms(s, isRunning)),
-    alwaysFrom(T0, 'no command waits longer than CQT (closed connection)', (s) =>
-      allVms(s, (v) => v.ioPendingS <= CLOSED_PATH_WORST + SLACK),
+    alwaysFrom(
+      T0,
+      `no command waits longer than ${PATH_LOSS_RULE} (closed connection, failed over like a lost path)`,
+      (s) => allVms(s, (v) => v.ioPendingS <= CLOSED_PATH_WORST + SLACK),
     ),
     ...baseInvariants(),
   ],
   narrative:
-    "Every array IP on storage VLAN 10 is disabled, on both controllers. The array refuses connections to them, so each CVM's VLAN-10 vNIC loses all of its paths at once, and the VLAN-20 paths carry all the IO; commands that were in flight on VLAN 10 are retried after the quiesce time (CQT). This is why at least two storage VLANs are recommended.",
+    "Every array IP on storage VLAN 10 is disabled, on both controllers. The array refuses connections to them, so each CVM's VLAN-10 vNIC loses all of its paths at once, and the VLAN-20 paths carry all the IO; commands that were in flight on VLAN 10 fail over the same way as after a lost NIC. This is why at least two storage VLANs are recommended.",
   cite: ['everpure-nutanix-net-bp', 'nvme-base-spec-2.1', 'everpure-ana-faq'],
   // todo until the workload issues at least one IO per NVMe path per tick (src/domain/workload/io.ts:
   // 2 reads + 2 writes, queue depth 32): with 1 + 1 a tick's two IOs can both land on the

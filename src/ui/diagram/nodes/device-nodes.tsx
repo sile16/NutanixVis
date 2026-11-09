@@ -7,6 +7,7 @@ import {
   EthernetPort,
   HardDrive,
   History,
+  MoveRight,
   Network,
   Route,
   Server,
@@ -16,6 +17,7 @@ import {
 import { EverpureMark } from '../../components/brand';
 import { StatusIcon, StatusPill } from '../../components/status';
 import type { DeviceNode } from '../flow';
+import { movedBy, movedTitle } from '../vm-placement';
 /**
  * Custom React Flow node types (SPEC §8): switch, AHV host (group), CVM, VM, FlashArray (group)
  * → controller (group) → port / interface, NIC, vswitch, disk. Each reads only `data.device`
@@ -65,7 +67,15 @@ export function SwitchNode({ data, selected }: P) {
 export function HostNode({ data, selected }: P) {
   const role = data.device.fields.role;
   const subtitle =
-    role === 'external-storage-compute' ? 'AHV · compute' : role === 'hci' ? 'AHV · HCI' : 'AHV';
+    role === 'external-storage-compute'
+      ? 'AHV · compute'
+      : role === 'hci'
+        ? 'AHV · HCI'
+        : role === 'compute-only'
+          ? 'AHV · compute-only'
+          : role === 'storage-only'
+            ? 'AHV · storage-only'
+            : 'AHV';
   return (
     <GroupFrame
       data={data}
@@ -122,14 +132,19 @@ export function VmNode({ data, selected }: P) {
             {partial}% of IO stalled
           </span>
         ) : null}
-        {data.restartedFrom ? (
+        {data.movedFrom ? (
           <span
             className="flex items-center gap-0.5 truncate text-[8px] text-accent-ink"
             data-testid={`restart-marker-${data.device.id}`}
-            title={`AHV HA restarted this VM here from ${data.restartedFrom}`}
+            data-moved-by={movedBy(data.device)}
+            title={movedTitle(movedBy(data.device), data.movedFrom)}
           >
-            <History size={8} aria-hidden="true" className="shrink-0" />
-            from {data.restartedFrom}
+            {movedBy(data.device) === 'live-migration' ? (
+              <MoveRight size={8} aria-hidden="true" className="shrink-0" />
+            ) : (
+              <History size={8} aria-hidden="true" className="shrink-0" />
+            )}
+            from {data.movedFrom}
           </span>
         ) : null}
       </span>

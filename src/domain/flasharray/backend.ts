@@ -181,8 +181,8 @@ export class ExternalStorageBackend implements StorageBackend {
   health(): 'ok' | 'degraded' | 'unavailable' {
     return this.nvme.health();
   }
-  lostByTarget(): boolean {
-    return this.nvme.lostByTarget();
+  stuckIoAgeS(now: number): number {
+    return this.nvme.stuckIoAgeS(now);
   }
   /**
    * NVMe path ids, then the bond member NICs those paths' frames egressed on, during the last

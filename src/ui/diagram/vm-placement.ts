@@ -8,6 +8,47 @@ import type { DeviceView } from '../../engine/types';
 import type { LayoutMap } from './layout';
 
 const GAP = 8;
+
+/** How a VM came to run away from its topology host (`placedBy`, docs/view-fields.md `vm`). */
+export type MovedBy = 'ha-restart' | 'live-migration' | 'power-on' | 'other';
+
+export const movedBy = (vm: DeviceView): MovedBy => {
+  const by = vm.fields.placedBy;
+  return by === 'ha-restart' || by === 'live-migration' || by === 'power-on' ? by : 'other';
+};
+
+/** `restarted by AHV HA from` + host: the inspector's placement line. */
+export function placementText(placedBy: unknown): string {
+  switch (placedBy) {
+    case 'ha-restart':
+      return 'restarted by AHV HA from';
+    case 'live-migration':
+      return 'live-migrated from';
+    case 'power-on':
+      return 'powered on here; last ran on';
+    default:
+      return 'moved from';
+  }
+}
+
+/** Hover text of the diagram's moved-VM marker. */
+export function movedTitle(by: MovedBy, from: string): string {
+  switch (by) {
+    case 'ha-restart':
+      return `AHV HA restarted this VM here from ${from}`;
+    case 'live-migration':
+      return `This VM live-migrated here from ${from}`;
+    case 'power-on':
+      return `Powered on here; it last ran on ${from}`;
+    default:
+      return `This VM moved here from ${from}`;
+  }
+}
+
+/** Screen-reader suffix of a moved VM's node, e.g. `live-migrated from Node 1`. */
+export function movedAria(by: MovedBy, from: string): string {
+  return `${placementText(by === 'other' ? null : by)} ${from}`;
+}
 const DEFAULT_BOX = { w: 88, h: 36 };
 
 export interface PlacedView {
@@ -15,7 +56,10 @@ export interface PlacedView {
   readonly layout: LayoutMap;
   /** VM id → host it was moved to (for labels). */
   readonly moved: ReadonlyMap<string, string>;
-  /** VM id → its topology host, for every moved VM ("restarted from Node N"). */
+  /**
+   * VM id → the host it came from, for every moved VM ("restarted from Node N"): its `placedFrom`
+   * view field (the previous host), else its topology host.
+   */
   readonly movedFrom: ReadonlyMap<string, string>;
 }
 
@@ -32,8 +76,10 @@ export function relocateVms(
     moved.set(d.id, host);
   }
   const movedFrom = new Map<string, string>();
-  for (const id of moved.keys()) {
-    const from = devices[id]?.parent;
+  for (const [id, host] of moved) {
+    const d = devices[id];
+    const prev = d?.fields.placedFrom;
+    const from = typeof prev === 'string' && prev !== host && devices[prev] ? prev : d?.parent;
     if (from) movedFrom.set(id, from);
   }
   if (moved.size === 0) return { devices, layout, moved, movedFrom };

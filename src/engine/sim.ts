@@ -50,6 +50,58 @@ import type {
   VersionSelection,
 } from './types';
 
+/**
+ * Duration parameters (`durationS`, `seconds`): shown by their rank among the choices, never in
+ * seconds, because simulated time is ordinal steps (owner rule: no seconds or ticks in UI text).
+ */
+/** Parameters that are times (durations, or a latency in ms): logged by rank, never as a number. */
+const isDurationParam = (key: string): boolean =>
+  key === 'seconds' || key === 'ms' || /[a-z]S$/.test(key);
+
+const DURATION_RANKS = ['very short', 'short', 'medium', 'long', 'very long'] as const;
+
+/**
+ * The label of one parameter choice without units: a duration choice reads `short` / `medium` /
+ * `long` by its rank among the numeric choices (`off` stays `off`); anything else as is.
+ */
+export function actionChoiceLabel(
+  key: string,
+  choices: readonly (string | number)[],
+  value: string | number | boolean,
+): string {
+  if (!isDurationParam(key) || typeof value !== 'number') return String(value);
+  const nums = [...new Set(choices.filter((c): c is number => typeof c === 'number'))].sort(
+    (a, b) => a - b,
+  );
+  const i = nums.indexOf(value);
+  if (i < 0 || nums.length < 2) return 'set';
+  const scale = nums.length <= 3 ? (['short', 'medium', 'long'] as const) : DURATION_RANKS;
+  return scale[Math.round((i * (scale.length - 1)) / (nums.length - 1))] ?? 'set';
+}
+
+/** Units a parameter label may carry in parentheses that read well after the value. */
+const VALUE_UNIT = /^(%|Gb\/s|% of raw)$/;
+
+/**
+ * `Timeout short, Offered load 10 Gb/s` for the action-applied event: each parameter by its spec
+ * label, a unit after the value (`Loss (%)` → `Loss 30 %`), and durations by rank, not seconds.
+ */
+function actionParamsText(
+  spec: ActionSpec,
+  params: Readonly<Record<string, string | number | boolean>> | undefined,
+): string {
+  return Object.entries(params ?? {})
+    .map(([k, v]) => {
+      const p = spec.params?.[k];
+      const m = /^(.*?)\s*\(([^)]*)\)$/.exec(p?.label ?? k);
+      const name = m?.[1] ?? p?.label ?? k;
+      const unit = m?.[2]?.split(',')[0]?.trim() ?? '';
+      const value = actionChoiceLabel(k, p?.choices ?? [], v);
+      return `${name} ${value}${VALUE_UNIT.test(unit) && !isDurationParam(k) ? ` ${unit}` : ''}`;
+    })
+    .join(', ');
+}
+
 export interface SimulationOptions<TProfile = unknown> {
   /** Caller-supplied devices (domain modules). May also implement `DeviceLifecycle`. */
   readonly devices: readonly Device<TProfile>[];
@@ -320,9 +372,7 @@ class Sim<TProfile> implements EngineSimulation {
     if (!target) return void reject('unknown target');
     if (!def.spec.appliesTo(target)) return void reject('not applicable to this target');
 
-    const params = Object.entries(req.params ?? {})
-      .map(([k, v]) => `${k}=${v}`)
-      .join(' ');
+    const params = actionParamsText(def.spec, req.params);
     const ev = this.emitEvent({
       severity: 'info',
       ...(isLinkView(target) ? {} : { deviceId: target.id }),

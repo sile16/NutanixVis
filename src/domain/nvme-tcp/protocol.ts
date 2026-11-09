@@ -55,6 +55,15 @@ export interface ConnectRespPayload extends AdminPayload {
 }
 
 /**
+ * Keep-alive answer. `inaccessible`: the controller's ANA state is Inaccessible (it drains for a
+ * planned reboot). It stands for the ANA change notice and the ANA log page the host reads after
+ * it (NVMe Base 2.1, Asymmetric Namespace Access), so a host with no IO on the path learns it too.
+ */
+export interface KeepAliveRespPayload extends AdminPayload {
+  readonly inaccessible?: boolean;
+}
+
+/**
  * One NVMe command on an IO queue. `key` is unique per attempt (`<cmd>#<attempt>`); `gen` is the
  * association (path generation) it was sent on, so the target can reset frames of a torn-down one.
  */
@@ -79,7 +88,12 @@ export type CommandPayload =
       readonly action: 'acquire' | 'release';
     };
 
-export type CommandStatus = 'ok' | 'reservation-conflict';
+/**
+ * Command completion status. `ana-inaccessible`: a path-related status (NVMe Base 2.1, ANA:
+ * Asymmetric Access Inaccessible) a controller returns while it drains for a planned reboot; the
+ * host retries the command on another path at once and stops using this one.
+ */
+export type CommandStatus = 'ok' | 'reservation-conflict' | 'ana-inaccessible';
 
 /** TCP reset (`NVME_MSG.reset`): the target no longer has the association `gen`. */
 export interface ResetPayload {

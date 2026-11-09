@@ -179,10 +179,12 @@ export function builtinActions(env: BuiltinEnv): ActionDefinition[] {
         kind: 'hang',
         label: 'Hang (no carrier loss)',
         description:
-          'Carrier stays up but frames are dropped (hung switch, unidirectional link). Only LACP detects this, and only if LACPDUs stop arriving.',
+          'Carrier stays up but data frames are dropped (hung switch, stuck port, unidirectional link). Only LACP detects this, and only if LACPDUs stop arriving; if they keep flowing, nothing detects it.',
         appliesTo: (t) => hangable(t) && !net.isHung(t.id),
+        params: { lacpdus: { label: 'LACPDUs', choices: ['stop', 'keep flowing'] } },
       },
-      apply: (req, ctx) => ctx.net.setHung(req.target, true),
+      apply: (req, ctx) =>
+        ctx.net.setHung(req.target, true, req.params?.lacpdus === 'keep flowing'),
     },
     {
       spec: {
@@ -241,7 +243,7 @@ export function builtinActions(env: BuiltinEnv): ActionDefinition[] {
         description:
           'Carrier drops now and returns after the chosen time (a port flap or a cable reseat).',
         appliesTo: (t) => isLinkView(t) && net.isAdminUp(t.id),
-        params: { durationS: { label: 'Outage (s)', choices: [3, 10, 20, 60] } },
+        params: { durationS: { label: 'Outage', choices: [3, 10, 20, 60] } },
       },
       apply: (req, ctx) => ctx.net.flapLink(req.target, numberParam(req, 'durationS')),
     },

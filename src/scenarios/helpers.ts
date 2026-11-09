@@ -373,7 +373,7 @@ export function vswitch(s: Snapshot, id: string): VSwitchView {
 // FlashArray ───────────────────────────────────────────────────────────────────
 
 export const FA_ROLES = ['primary', 'secondary', 'promoting', 'offline'] as const;
-export const FA_CONTROLLER_STATES = ['up', 'crashed', 'rebooting', 'stalled'] as const;
+export const FA_CONTROLLER_STATES = ['up', 'draining', 'crashed', 'rebooting', 'stalled'] as const;
 
 export interface FaArrayView {
   readonly ioServing: boolean;

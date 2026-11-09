@@ -12,18 +12,22 @@
  *   and puts the node in maintenance mode;
  * - every `hades.mapNvmfVolumesIntervalS` (300 s) Hades connects all NVMf volumes again.
  *
- * Model (`inferred`): the kernel path uses the same CVM storage vNICs and FA ports as Stargate's
- * SPDK initiator, so the backend's `health() === 'unavailable'` (every path declared lost by
- * keep-alive) is the proxy for "every path to the service volumes is gone".
- * - Once that has lasted `hades.mountFailAfterS` (the kernel IO timeout, `assumption`), the
- *   kernel fails the queued service-volume IO: the mounts go bad and **stay
- *   bad** even if the array returns, until Hades remounts them. A shorter loss is a plain stall.
- * - If the target ended every path instead (it closed or reset each connection, e.g. its ports
- *   flapped on both fabrics), multipath does not queue: the IO errors and the mounts go bad at
- *   once, however short the flap (`StorageBackend.lostByTarget`).
+ * Model (`inferred`): the service volumes are not simulated as a second initiator. Their kernel
+ * path uses the same CVM storage vNICs, bond members and FA ports as Stargate's SPDK initiator, so
+ * the backend stands in for them, and the mounts go bad from what the IO actually does:
+ * - every path has been gone for `hades.mountFailAfterS` (`assumption`): the queued
+ *   service-volume IO fails;
+ * - or IO has been blackholed in flight on a path that still looks live for KATO plus that time:
+ *   a fault no Stargate path state shows, such as a hung bond member whose LACPDUs keep flowing
+ *   (flows die when either direction hashes onto it, while keep-alives on other connections
+ *   still succeed). The kernel's own connections over that link miss their keep-alive first,
+ *   then their queued IO fails as for a lost path, so the node follows the same timeline as
+ *   losing both storage NICs (owner lab result, 2026-11-07).
+ * Once bad, the mounts **stay bad** even if the array returns, until Hades remounts them. A
+ * shorter loss, however it ended (silent, or connections closed or reset, e.g. a short flap of
+ * every data port), is a plain stall: the IO fails over or waits and completes.
  * - Hades acts on the bad mounts at its next monitor check plus the 5 s threshold, so a
- *   whole-array blip just past that time, or a short port flap on every data port,
- *   still puts every node in maintenance.
+ *   whole-array blip just past the IO timeout still puts every node in maintenance.
  * - Each node decides on its own volumes: there is no cluster-wide admission limit. A
  *   single-fabric loss never triggers it (the other fabric keeps the mounts healthy).
  *
@@ -89,13 +93,15 @@ export class Hades {
         this.mountsBad = false;
         return null;
       }
+      const limit = H.mountFailAfterS.value;
       if (this.backend.health() === 'unavailable') {
         this.lostSince ??= now;
-        // Silent loss: the kernel queues IO up to its IO timeout. Target-side resets of
-        // every path: the IO errors at once, so the mounts fail at once.
-        if (this.backend.lostByTarget?.() === true) this.mountsBad = true;
-        if (now - this.lostSince >= H.mountFailAfterS.value) this.mountsBad = true;
+        if (now - this.lostSince >= limit) this.mountsBad = true;
       } else this.lostSince = null;
+      // IO blackholed on a path that still looks live: the kernel's own connections over the same
+      // link miss their keep-alive (KATO), then the queued service-volume IO fails as above.
+      const blackholeLimit = ctx.profile.externalStorage.keepAliveTimeoutS.value + limit;
+      if ((this.backend.stuckIoAgeS?.(now) ?? 0) >= blackholeLimit) this.mountsBad = true;
       if (!this.checkDue(ctx)) return null;
       if (!this.mountsBad) {
         this.errorSince = null;
@@ -128,6 +134,11 @@ export class Hades {
     if (this.state === 'ok' && this.mountsBad) return nextCheck;
     if (this.state === 'ok' && this.lostSince !== null) {
       return Math.max(this.lostSince + H.mountFailAfterS.value, nextCheck);
+    }
+    const age = this.backend.stuckIoAgeS?.(ctx.now) ?? 0;
+    if (this.state === 'ok' && age > 0) {
+      const kato = ctx.profile.externalStorage.keepAliveTimeoutS.value;
+      return Math.max(ctx.now - age + kato + H.mountFailAfterS.value, nextCheck);
     }
     // Only while the check's answer would change something: a lost backend (ok) or a healthy
     // one (maintenance). Otherwise the backend's own reconnect timers wake the engine.

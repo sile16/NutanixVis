@@ -83,10 +83,12 @@ export interface StorageBackend extends CvmComponent {
   /** `unavailable` = no IO can make progress (Stargate should report unhealthy upstream). */
   health(): 'ok' | 'degraded' | 'unavailable';
   /**
-   * Optional (T1): every path is down and the target ended each one (it closed or reset the
-   * connection), rather than going silent. IO on such paths errors at once instead of queueing.
+   * Optional (T1): how long the oldest IO command has been stuck in flight on a path the initiator
+   * still believes live (its frames are dropped and it has had no completion), at `now` (0: none).
+   * Hades uses it as the stand-in for the CVM's own service-volume IO, which shares the same
+   * vNICs, bond members and array ports.
    */
-  lostByTarget?(): boolean;
+  stuckIoAgeS?(now: number): number;
   /** Links/endpoints a vDisk's IO currently uses (path-usage view). */
   pathsFor?(vdisk: string): readonly string[];
   /** Physical NICs (bond members) that carried a vDisk's IO during the last tick (vm `ioUplinks`). */
@@ -141,6 +143,8 @@ export interface ClusterView {
    * host: peers notice only by timeout); null while it serves.
    */
   stargateDownCause?(cvm: DeviceId): 'clean-stop' | 'silent' | null;
+  /** The CVM is off after a planned shutdown (`cvm.planned-shutdown`): its Stargate stopped cleanly. */
+  cvmPlannedOff?(cvm: DeviceId): boolean;
 }
 
 /** What each domain stream exports for the loader to compose. */

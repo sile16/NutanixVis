@@ -129,7 +129,7 @@ export class DiskDevice implements EngineDevice<Profile>, DiskHandle {
           severity: 'error',
           deviceId: this.id,
           code: 'disk.kept-offline',
-          text: `${this.label} went offline ${this.recentOfflineEvents()} times within an hour: Hades keeps it out of service`,
+          text: `${this.label} went offline ${this.recentOfflineEvents()} times in a short period: Hades keeps it out of service`,
           causeIds: cause,
           cite: limit.cite,
           confidence: limit.confidence,

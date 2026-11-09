@@ -67,6 +67,32 @@ describe('computePathUsage per VM (ioPaths / ioUplinks)', () => {
     expect(u?.cvmId).toBe('node-1.cvm');
   });
 
+  it('T1 redirect: a VM served by CVM 2 counts its NVMe leg from node 2 and its iSCSI leg', () => {
+    const { sim } = loadSimulation({
+      topologyId: 't1-ahv-flasharray',
+      versions: { nutanix: 'aos-7.6', flasharray: 'purity-6.12' },
+    });
+    const h = new SnapshotHistory(sim);
+    sim.tick(10);
+    sim.applyAction({ kind: 'fail', target: 'node-1.cvm' });
+    let s = sim.tick();
+    for (let i = 0; i < 80 && s.devices['node-1.vm-1']?.fields.state !== 'running'; i++) {
+      s = sim.tick();
+    }
+    sim.tick(10);
+    const w = buildActivityWindow(h.last(10));
+    const vm = w.snapshot.devices['node-1.vm-1'];
+    expect(vm?.fields.ownerCvm).toBe('node-2.cvm');
+    const u = computePathUsage(w.snapshot, 'node-1.vm-1', w.vmPaths.get('node-1.vm-1'));
+    expect(u?.scope).toBe('vm');
+    expect(u?.traceCount).toBeGreaterThan(0);
+    // The NVMe/TCP leg leaves node 2's storage NICs; the redirect leg leaves node 1.
+    expect(u?.uplinks.some((x) => x.deviceId.startsWith('node-2.'))).toBe(true);
+    expect(u?.uplinks.some((x) => x.deviceId.startsWith('node-1.'))).toBe(true);
+    expect(u?.targets.length).toBeGreaterThan(0);
+    expect(u?.targets.every((t) => t.deviceId.startsWith('fa.'))).toBe(true);
+  });
+
   it('uses the host a VM runs on now (after an HA restart)', () => {
     const s = t1Frames.steady;
     const vm = s.devices['node-2.vm-1'];

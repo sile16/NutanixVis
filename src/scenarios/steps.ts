@@ -2,22 +2,56 @@
  * Scenario readers for the steps view (`src/domain/steps`). Expectations built on these check
  * ORDER and relationships between steps, never durations (the steps are an ordinal scale).
  */
-import { deriveVmSteps, ioChainOf, type VmSteps, vmSeries } from '../domain/steps';
+import {
+  type ArrayOpSteps,
+  deriveArrayOpSteps,
+  deriveVmSteps,
+  faultWindows,
+  ioChainOf,
+  type StepMilestone,
+  type VmSteps,
+  vmSeries,
+} from '../domain/steps';
 import type { ScenarioContext } from './context';
 import type { Expectation, GuideObservation, ScenarioGuide } from './define';
 import { atCtx, device, snapshotAt } from './helpers';
 
+/** Ids of the scenario's devices of the given kinds (from its first snapshot). */
+const idsOfKind = (ctx: ScenarioContext, kinds: readonly string[]): Set<string> =>
+  new Set(
+    Object.values(ctx.history[0]?.devices ?? {})
+      .filter((d) => kinds.includes(d.kind))
+      .map((d) => d.id),
+  );
+
+/** The VM's first interruption. A failed VM's own fault never holds another run (tracker rule). */
 export function stepsOf(ctx: ScenarioContext, vmId: string): VmSteps {
-  return deriveVmSteps(vmId, ctx.events, vmSeries(ctx.history, vmId));
+  const vms = idsOfKind(ctx, ['vm']);
+  const faults = faultWindows(ctx.events, (id) => vms.has(id));
+  return deriveVmSteps(vmId, ctx.events, vmSeries(ctx.history, vmId), faults);
 }
 
+/** The scenario's first planned array operation (a controller reboot or an NDU). */
+export function arrayStepsOf(ctx: ScenarioContext): ArrayOpSteps {
+  const parts = idsOfKind(ctx, ['fa-array', 'fa-controller']);
+  return deriveArrayOpSteps(ctx.events, 0, parts.size > 0 ? (id) => parts.has(id) : undefined);
+}
+
+type WithMilestones = { readonly milestones: readonly StepMilestone[] };
+
 /** Step of a stage in the derived milestones, or null if the stage never happened. */
-export const stepOfStage = (steps: VmSteps, stage: string): number | null =>
+export const stepOfStage = (steps: WithMilestones, stage: string): number | null =>
   steps.milestones.find((m) => m.stage === stage)?.step ?? null;
 
 /** Tick a stage was reached (internal ordering only), or null. */
-export const tickOfStage = (steps: VmSteps, stage: string): number | null =>
+export const tickOfStage = (steps: WithMilestones, stage: string): number | null =>
   steps.milestones.find((m) => m.stage === stage)?.t ?? null;
+
+/** The VM's milestones, then the array operation's (a guide reads both). */
+const guideRun = (ctx: ScenarioContext, vm: string): VmSteps & WithMilestones => {
+  const st = stepsOf(ctx, vm);
+  return { ...st, milestones: [...st.milestones, ...arrayStepsOf(ctx).milestones] };
+};
 
 /** The VM's `ioChain` hop roles at tick `t`, in order. */
 export function chainRolesAt(ctx: ScenarioContext, vmId: string, t: number): string[] {
@@ -25,7 +59,7 @@ export function chainRolesAt(ctx: ScenarioContext, vmId: string, t: number): str
   return chain === null ? [] : chain.hops.map((h) => h.role);
 }
 
-/** True when one guide observation holds in the VM's derived steps. */
+/** True when one guide observation holds in the VM's derived steps (and the array operation's). */
 function observationHolds(st: VmSteps, o: GuideObservation): boolean {
   if (o.stage !== undefined) {
     const step = stepOfStage(st, o.stage);
@@ -50,13 +84,13 @@ export function guideChecks(guide: ScenarioGuide, at: number): Expectation[] {
         .join(', ');
       out.push(
         atCtx(at, `guide ${g + 1}: ${where}`, (_s, ctx) =>
-          observationHolds(stepsOf(ctx, guide.vm), o),
+          observationHolds(guideRun(ctx, guide.vm), o),
         ),
       );
     }
     out.push(
       atCtx(at, `guide ${g + 1}: observations in the order listed`, (_s, ctx) => {
-        const st = stepsOf(ctx, guide.vm);
+        const st = guideRun(ctx, guide.vm);
         const ticks = group.flatMap((o) =>
           o.stage === undefined ? [] : [tickOfStage(st, o.stage)],
         );

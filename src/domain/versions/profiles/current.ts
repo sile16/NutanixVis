@@ -29,7 +29,12 @@ export const current: Profile = {
       'Host disconnected for 40 s → its VMs restart, subject to resources.',
     ),
     fenceAtS: c(60, 'verified', ['ntnx-bible-5b'], 'T+60: Stargates block IO from the lost host.'),
-    restartByS: c(120, 'verified', ['ntnx-bible-5b'], 'VMs restart within 120 s.'),
+    restartByS: c(
+      120,
+      'verified',
+      ['ntnx-bible-5b'],
+      'VMs restart within 120 s. The model restarts them at this bound (the latest the source allows).',
+    ),
     isolatedVmSelfTerminateS: c(
       45,
       'verified',
@@ -239,7 +244,7 @@ export const current: Profile = {
       30,
       'assumption',
       ['linux-nvme-host', 'everpure-nutanix-nci-cfg'],
-      'Owner estimate (2026-11-08): when a node loses every array path, its VMs resume through another CVM about 53 s later, and a single NIC loss resumes in about 9–12 s. Not published for the service volumes. The model has the CVM kernel queue the service-volume IO while every path is gone and fail it at the kernel NVMe IO timeout (io_timeout 30 s); then the mounts go bad and stay bad until Hades remounts them, even if the array is back. A shorter loss of every path is a plain stall; a longer one puts the node in maintenance at the next volume check plus the error threshold.',
+      'Owner estimate (2026-11-08): when a node loses every array path, its VMs resume through another CVM about 53 s later (the model lands this in the same step, a little earlier), and a single NIC loss resumes in about 9–12 s. Not published for the service volumes. The model fails the service-volume IO at the kernel NVMe IO timeout (io_timeout 30 s): once storage IO has been stuck that long (every path gone, or a fault no path state shows, such as a hung bond member that keeps sending LACPDUs), the mounts go bad and stay bad until Hades remounts them, even if the array is back. A shorter stall, however the paths were lost, completes normally; a longer one puts the node in maintenance at the next volume check plus the error threshold.',
     ),
     externalStorageErrorThresholdS: c(
       5,
@@ -449,13 +454,13 @@ export const current: Profile = {
       30,
       'verified',
       ['everpure-nutanix-nci-cfg', 'everpure-nutanix-301-deck', 'nvme-base-spec-2.1'],
-      'NTNX CQT, set automatically by the integration. In-flight commands on a connection the target closed wait CQT before retry on another path (NVMe 2.1 §9.6.2 step 2c). A silently lost path does not wait it (lostPathHoldKatoMultiplier).',
+      "NTNX CQT, set automatically by the integration (NVMe 2.1 §9.6.2 step 2c). The model does not wait it on retries: Stargate's initiator fails a path over the same way whether the path went silent or the target closed the connection (lostPathHoldKatoMultiplier; owner decision, 2026-11-09).",
     ),
     lostPathHoldKatoMultiplier: c(
       2,
       'assumption',
       ['spdk-nvme-multipath', 'spdk-bdev-nvme-src', 'nvme-base-spec-2.1'],
-      "Owner estimate (2026-11-08): after a storage NIC is lost, IO resumes on the surviving path in about 9–12 s. Stargate's SPDK initiator resets a controller whose keep-alive timed out and retries the aborted IO on another path; the model retries in-flight IO at 2 × KATO ≈ 10 s after the last exchange (detection at KATO, then the reset). The NVMe 2.1 §9.6 wait (k × KATT + CQT, about 45 s) would not fit that observation, so it is not applied.",
+      "Owner estimate (2026-11-08): after a storage NIC is lost, IO resumes on the surviving path in about 9–12 s. Stargate's SPDK initiator resets a controller whose keep-alive timed out and retries the aborted IO on another path; the model retries in-flight IO at 2 × KATO ≈ 10 s after the last exchange (detection at KATO, then the reset). The NVMe 2.1 §9.6 wait (k × KATT + CQT, about 45 s) would not fit that observation, so it is not applied. A connection the target closed fails over on the same schedule (owner decision, 2026-11-09).",
     ),
     reconnectDelayS: c(
       10,
@@ -473,7 +478,7 @@ export const current: Profile = {
       45,
       'inferred',
       ['nvme-base-spec-2.1', 'everpure-nutanix-nci-cfg'],
-      'Integration value not public. NVMe 2.1 §9.6 derivation 3 × KATO + CQT applied to the published timers (≥ the lost-path hold, so IO is never retried while still in flight). An IO timeout resets the path (the host tears the association down and reconnects); lab L5.',
+      'Integration value not public. NVMe 2.1 §9.6 derivation 3 × KATO + CQT applied to the published timers; it must be at least the lost-path hold, so IO is never retried while still in flight. An IO timeout resets the path (the host tears the association down and reconnects). Consistent with the owner lab (2026-11-07): under a hung LACP member that keeps sending LACPDUs, the VM IO resumed only through the Hades redirect, not by an earlier IO-timeout retry; lab L5.',
     ),
     tcpRtoMaxS: c(
       32,
@@ -540,11 +545,17 @@ export const current: Profile = {
       'Generic SCSI / dm-multipath hosts (fast_io_fail_tmo 10). Not the Stargate NVMe/TCP path, which detects loss by keep-alive (KATO) and holds in-flight IO (SPEC §6.4c). Informational; no model timing uses it.',
     ),
     worstCaseSingleIoS: c(60, 'verified', ['everpure-host-timeouts']),
+    plannedRebootDrainS: c(
+      10,
+      'assumption',
+      ['everpure-upgrade', 'everpure-ana-faq', 'nvme-base-spec-2.1'],
+      'Owner estimate (2026-11-09): a planned reboot first stops the controller taking new IO (rejected with a path status, so hosts retry it on the other controller at once) and lets in-flight IO finish, then reboots: about one step. No VM IO stalls.',
+    ),
     controllerRebootS: c(
-      300,
+      120,
       'assumption',
       ['everpure-upgrade'],
-      'Model value for one controller reboot during NDU (minutes; longer with firmware updates). Replace from lab testing.',
+      'Owner estimate (2026-11-09): the controller is back online two to three steps after its reboot starts (longer with firmware updates).',
     ),
     serviceTimeMs: c(
       { read: 0.2, write: 0.15 },

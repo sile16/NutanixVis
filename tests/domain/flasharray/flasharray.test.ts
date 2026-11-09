@@ -205,36 +205,74 @@ describe('controller HA', () => {
     runTo(r, T0);
     r.sim.applyAction({ kind: 'fa.ndu', target: 'fa' });
     const reboot = FA.controllerRebootS.value;
-    const w = watch(r, T0 + 2 * reboot + 200);
+    const drain = FA.plannedRebootDrainS.value;
+    const w = watch(r, T0 + 2 * (drain + reboot) + 200);
     expect(
       inOrder(r.events(), [
         ['fa.ndu.start', 'fa'],
+        ['fa.controller.draining', 'fa.ct1'],
         ['fa.controller.rebooting', 'fa.ct1'],
         ['fa.controller.online', 'fa.ct1'],
         ['fa.giveback', 'fa.ct0'],
         ['fa.promotion.complete', 'fa.ct1'],
+        ['fa.controller.draining', 'fa.ct0'],
         ['fa.controller.rebooting', 'fa.ct0'],
         ['fa.controller.online', 'fa.ct0'],
         ['fa.ndu.complete', 'fa'],
       ]),
     ).toBe(true);
+    const d1 = firstAt(r, 'fa.controller.draining', 'fa.ct1') ?? -1;
     const r1 = firstAt(r, 'fa.controller.rebooting', 'fa.ct1') ?? -1;
+    expect(r1).toBe(d1 + drain);
     expect(firstAt(r, 'fa.controller.online', 'fa.ct1')).toBe(r1 + reboot);
-    // A graceful reboot closes the connections: CT1's paths are lost at once, not after KATO.
-    expect(firstAt(r, 'nvme.path.lost')).toBe(r1);
+    // The drain marks CT1's paths inaccessible (a reject, or the keep-alive's ANA state) ...
+    expect(firstAt(r, 'nvme.path.inaccessible') ?? -1).toBeLessThan(d1 + KATO);
+    // ... and the reboot closes them with nothing in flight: lost at the next exchange.
+    const lost = firstAt(r, 'nvme.path.lost') ?? -1;
+    expect(lost).toBeGreaterThanOrEqual(r1);
+    expect(lost).toBeLessThanOrEqual(r1 + KATO);
+    expect(r.events('nvme.path.lost').every((e) => !e.text.includes('held'))).toBe(true);
     // The failover waits until every host has reconnected to the upgraded controller.
     const gb = firstAt(r, 'fa.giveback', 'fa.ct0') ?? -1;
     expect(gb).toBeGreaterThan(r1 + reboot);
     expect(gb).toBeLessThanOrEqual(r1 + reboot + RECONNECT);
     expect(r.events('nvme.all-paths.lost')).toHaveLength(0);
     expect(w.maxPause).toBe(FA.plannedFailoverPauseS.value);
-    // In-flight IO on a closed connection waits CQT only (NVMe 2.1 §9.6.2 step 2c); new IO moved
-    // to the peer's paths at once.
-    expect(w.maxPending).toBeLessThanOrEqual(Math.max(FA.plannedFailoverPauseS.value, CQT + 1));
+    // The drains leave nothing in flight on a rebooting controller: the only wait is the failover
+    // pause.
+    expect(w.maxPending).toBeLessThanOrEqual(FA.plannedFailoverPauseS.value + 1);
     expect(ctrl(r, 'fa.ct1')).toMatchObject({ role: 'primary', state: 'up' });
     expect(ctrl(r, 'fa.ct0')).toMatchObject({ role: 'secondary', state: 'up' });
     expect(allLive(r)).toBe(true);
     for (const st of r.stubs.values()) expect(st.errors()).toHaveLength(0);
+  });
+
+  it('planned reboot of the secondary: drain, reboot, back online, no IO waits', () => {
+    const r = loadWithStubs(T1, {}, { perTick: 2, depth: 8 });
+    runTo(r, T0);
+    r.sim.applyAction({ kind: 'fa.controller.reboot', target: 'fa.ct1' });
+    const drain = FA.plannedRebootDrainS.value;
+    const reboot = FA.controllerRebootS.value;
+    runTo(r, T0 + 2);
+    expect(ctrl(r, 'fa.ct1')).toMatchObject({ state: 'draining', role: 'secondary' });
+    const w = watch(r, T0 + drain + reboot + RECONNECT + KATO + 5);
+    const d = firstAt(r, 'fa.controller.draining', 'fa.ct1') ?? -1;
+    expect(firstAt(r, 'fa.controller.rebooting', 'fa.ct1')).toBe(d + drain);
+    expect(firstAt(r, 'fa.controller.online', 'fa.ct1')).toBe(d + drain + reboot);
+    expect(w.maxPause).toBe(0);
+    expect(w.maxPending).toBeLessThanOrEqual(1);
+    expect(r.events('nvme.all-paths.lost')).toHaveLength(0);
+    expect(ctrl(r, 'fa.ct0')).toMatchObject({ role: 'primary', state: 'up' });
+    expect(allLive(r)).toBe(true);
+    for (const st of r.stubs.values()) expect(st.errors()).toHaveLength(0);
+  });
+
+  it('rejects a planned reboot of the primary', () => {
+    const r = loadWithStubs(T1);
+    runTo(r, T0);
+    r.sim.applyAction({ kind: 'fa.controller.reboot', target: 'fa.ct0' });
+    r.sim.tick();
+    expect(ctrl(r, 'fa.ct0')).toMatchObject({ role: 'primary', state: 'up' });
   });
 
   it('whole array lost: IO retries until it returns, then everything reconnects', () => {

@@ -36,22 +36,20 @@ const FLAP_S = 3;
  *   IO has failed, the mounts stay bad, so every node enters maintenance, every Stargate restarts
  *   (`hades.servicesRestartS`, longer than the initiator session timeout), and every VM crashes and
  *   is powered back on.
- * - `port-flap`: every data port flaps for a few seconds, well under the silent threshold. When the
- *   ports return the array resets every connection, so the IO errors at once and the mounts go bad
- *   at once: the same cluster-wide maintenance and VM crashes. One fabric's ports flapping alone is
- *   harmless (the other fabric keeps the mounts healthy; T1-23).
+ * - `port-flap`: every data port flaps for a few seconds, well under the kernel IO timeout. The
+ *   paths are lost (the target dropped its connections) and fail over or reconnect, and the IO
+ *   completes once the ports are back: a plain stall, like `short`, however the paths ended. No
+ *   maintenance, no crash.
  */
 function variant(mode: Mode): ScenarioDef {
-  const crash = mode !== 'short';
+  const crash = mode === 'past-threshold';
   const flap = mode === 'port-flap';
   const BACK_AT = flap
     ? T0 + 1 + FLAP_S
     : mode === 'past-threshold'
       ? T0 + MOUNT_FAIL + 2
       : T0 + MOUNT_FAIL - 3;
-  const MAINT_BY = flap
-    ? BACK_AT + 2 + P.hades.volumeMonitorIntervalS + P.hades.externalStorageErrorThresholdS
-    : by(HADES_DETECT);
+  const MAINT_BY = by(HADES_DETECT);
   const END = crash
     ? MAINT_BY +
       P.hades.volumeMonitorIntervalS +
@@ -78,7 +76,7 @@ function variant(mode: Mode): ScenarioDef {
       ? 'a silent whole-array blip shorter than the kernel IO timeout'
       : mode === 'past-threshold'
         ? 'a silent whole-array blip just past the kernel IO timeout'
-        : `every array data port flaps for ${FLAP_S} s`;
+        : `every array data port flaps for ${FLAP_S} s (a plain stall)`;
   return defineScenario({
     id: `t1-28-whole-array-blip-${mode}`,
     title: `T1: ${title}`,
@@ -128,7 +126,7 @@ function variant(mode: Mode): ScenarioDef {
         ? 'The array goes silent and comes back before the kernel IO timeout on the service volumes runs out. The CVM kernel queues the service-volume IO instead of failing it, so the mounts never go bad and Hades does nothing. VM IO stalls a little longer than the outage while the paths reconnect, then resumes in place: no maintenance, no crash.'
         : mode === 'past-threshold'
           ? 'The array goes silent and comes back just after the kernel IO timeout on the service volumes, before Hades has acted. The service-volume IO has already failed, so the mounts stay bad and every node enters Hades maintenance at its next volume check, even though the array is back. Every Stargate restarts, which takes longer than the initiator session timeout, so every VM crashes and AHV powers it back on once the Stargates serve again.'
-          : `Every array data port on both fabrics loses link for ${FLAP_S} s. When the ports return, the array resets every connection, so the service-volume IO errors at once instead of queueing and the mounts go bad on every node, however short the flap. Every node enters Hades maintenance, every Stargate restarts for longer than the initiator session timeout, and every VM crashes and is powered back on.`,
+          : `Every array data port on both fabrics loses link for ${FLAP_S} s, so every path is lost and VM IO stalls everywhere. The array dropped the connections, so the hosts fail the paths over and reconnect once the ports are back, long before the kernel IO timeout on the service volumes. A plain stall a little longer than the flap: no maintenance, no crash.`,
     cite: ['ntnx-ncp-everpure-deploy-7.6', 'everpure-linux-dm-multipath', 'ntnx-cmdref-aos-7.6'],
     status: 'active',
   });

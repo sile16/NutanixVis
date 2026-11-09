@@ -198,13 +198,15 @@ describe('fast path loss (refused)', () => {
     const ev = r.events('nvme.path.lost')[0];
     expect(ev?.text).toMatch(/refused/);
     expect(ev?.confidence).toBe('inferred');
-    // Refused commands are still held CQT before the retry (NVMe 2.1 §9.6.2 step 2c: the
-    // controller closed the connection), not the silent-loss hold.
+    // A closed connection fails over like a lost path (owner decision): its in-flight commands
+    // are retried at k × KATO after the path's last exchange, not after CQT.
     const held = r.init.outstanding().held;
     expect(held).toBeGreaterThan(0);
-    r.runTo(11 + CQT - 1);
+    const until = (r.init.lastExchange(P0) ?? 0) + HOLD;
+    expect(until).toBeLessThan(11 + CQT);
+    r.runTo(until - 1);
     expect(r.init.outstanding().held).toBe(held);
-    r.sim.tick();
+    r.runTo(until);
     expect(r.init.outstanding().held).toBe(0);
   });
 });

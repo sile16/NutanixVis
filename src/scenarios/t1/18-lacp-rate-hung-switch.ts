@@ -10,6 +10,7 @@ import {
   by,
   eventSeen,
   faInterfacesBehind,
+  firstEventAt,
   isRunning,
   onlyPathsLostTo,
   SLACK,
@@ -79,6 +80,22 @@ function variant(rate: 'fast' | 'slow'): ScenarioDef {
         : [
             atCtx(
               by(detect),
+              'before the slow LACP detaches the member, every node goes into Hades maintenance (its connections through Switch B are blackholed, as for a hung member that keeps LACPDUs)',
+              (_s, ctx) =>
+                T1.nodes.every((n) => {
+                  const t = firstEventAt(ctx, 'hades.maintenance.enter', {
+                    device: `node-${n}.cvm`,
+                  });
+                  return t !== null && t < T0 + detect;
+                }),
+            ),
+            atCtx(
+              by(settled),
+              'with no Stargate left serving, the VMs crash and AHV powers them back on',
+              (s, ctx) => vms(s).every((v) => eventSeen(ctx, 'ha.vm.restarted', { device: v.id })),
+            ),
+            atCtx(
+              by(detect),
               'flows hashed to the hung member blackholed far longer than fast rate allows',
               (_s, ctx) =>
                 wasEver(
@@ -97,7 +114,7 @@ function variant(rate: 'fast' | 'slow'): ScenarioDef {
     narrative:
       rate === 'fast'
         ? 'Switch B hangs without dropping carrier, so only LACP can notice. At the fast rate the vs1 bonds stop receiving LACP PDUs and detach the Switch B member within about 3 s, before any keep-alive timeout, so connections hashed onto it recover on eth2. The paths to the FA ports behind Switch B are lost after the keep-alive timeout, and IO continues on Switch A. Management on vs0 runs LACP at the fast rate too, so it detaches the Switch B member in the same few seconds.'
-        : 'Switch B hangs without dropping carrier, and the host bonds run the slow LACP rate, which can only be set outside Prism (Prism Active-Active always uses fast, and a slow rate on the switch alone would still leave the host detecting in about 3 s). At the slow rate LACP takes up to 90 s to detach the member, and until then every TCP connection hashed onto it, including IO queues of paths whose keep-alive still gets through, is blackholed. Those commands wait for the NVMe IO timeout, which resets their path so it reconnects on fresh connections, far longer than at the fast rate, which is why the fast rate is the default.',
+        : "Switch B hangs without dropping carrier, and the host bonds run the slow LACP rate, which can only be set outside Prism (Prism Active-Active always uses fast). LACP takes up to 90 s to detach the member, and until then every connection with either direction through Switch B is blackholed, as with a hung member that keeps sending LACPDUs. The CVMs' IO stops, so every node goes into Hades maintenance before LACP acts, no Stargate is left serving and the VMs crash; AHV powers them back on once LACP has detached the member and the nodes recover. This is why the fast rate is the default.",
     cite: ['ntnx-ahv-admin-11.2', 'ovs-bonding', 'nvme-base-spec'],
     status: 'active',
   });

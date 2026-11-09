@@ -332,16 +332,18 @@ export class ClusterDevice implements Device<Profile> {
    * T1 service-volume migration: a seat whose CVM is lost (down, in Hades maintenance, off the
    * array, or outside `target`) moves to an inactive array-connected CVM of `target` once it has
    * been lost for `cluster.serviceVolumeMigrationDelayS`. With no target (no partition keeps
-   * N − tolerance array-connected CVMs) seats stay where they are. The upgrade exception
-   * ("During an upgrade, the cluster does not migrate cluster services") has no trigger here:
-   * the model simulates no AOS/AHV upgrade.
+   * N − tolerance array-connected CVMs) seats stay where they are. A CVM that is off after a
+   * planned shutdown (`cvm.planned-shutdown`, the upgrade and maintenance path) keeps its seat:
+   * the guide migrates services when an active node fails, "During an upgrade, the cluster does
+   * not migrate cluster services" (`inferred` for a planned shutdown outside an upgrade).
    */
   private migrateSeats(ctx: Ctx, target: readonly string[] | null): void {
     const reg = this.reg;
     const D = ctx.profile.cluster.serviceVolumeMigrationDelayS;
     const seats = [...reg.zkMembers].sort(nodeOrder);
     for (const s of seats) {
-      const lost = !reg.cvmCapable(s) || (target !== null && !target.includes(s));
+      const lost =
+        !reg.cvmPlannedOff(s) && (!reg.cvmCapable(s) || (target !== null && !target.includes(s)));
       if (!lost) reg.seatLostSince.delete(s);
       else if (!reg.seatLostSince.has(s)) reg.seatLostSince.set(s, ctx.now);
     }

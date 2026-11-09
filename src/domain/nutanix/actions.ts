@@ -56,8 +56,12 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
       spec: {
         kind: 'power-on',
         label: 'Power on',
+        // Only a device that was itself powered off: a CVM that is down because its host is off
+        // comes back with the host (the engine's `downReason` names the failed ancestor).
         appliesTo: (t) =>
-          (isKind(t, 'ahv-host', 'cvm') && t.status === 'failed') ||
+          (isKind(t, 'ahv-host', 'cvm') &&
+            t.status === 'failed' &&
+            (field(t, 'downReason') ?? 'failed') === 'failed') ||
           (isKind(t, 'vm') && field(t, 'state') === 'off'),
       },
       apply: (req, ctx) => {
@@ -207,7 +211,7 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
         kind: 'cvm.crash-stargate',
         label: 'Crash Stargate',
         description:
-          'The Stargate process exits on a running CVM: its connections are reset, so VMs log in elsewhere at once; its self-monitor restarts it within seconds.',
+          'The Stargate process exits on a running CVM: its connections are reset, so VMs log in elsewhere at once; its self-monitor restarts it shortly.',
         appliesTo: (t) =>
           isKind(t, 'cvm') && field(t, 'power') === 'running' && field(t, 'stargate') !== 'down',
       },
@@ -249,7 +253,7 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
         description:
           'The CVM’s inter-CVM interface stops answering, then returns; its host-internal link and storage paths stay up. A short flap leaves a partly unresponsive node that Degraded Node Detection may mark Degraded. A blackout as long as the Zookeeper session timeout makes its Stargate drop out, so its VMs’ IO moves to other Stargates; a node that stays unreachable is treated as dead, not Degraded.',
         appliesTo: (t) => isKind(t, 'cvm') && field(t, 'power') === 'running',
-        params: { durationS: { label: 'Blackout (s)', choices: [5, 10, 15, 60, 120] } },
+        params: { durationS: { label: 'Blackout', choices: [5, 10, 15, 60, 120] } },
       },
       apply: (req, ctx) => {
         const n = Number(req.params?.durationS);
@@ -316,9 +320,9 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
         kind: 'vm.set-path-loss-force-shutdown',
         label: 'Set path-loss force-shutdown timeout',
         description:
-          'Per-VM option (DEPLOY-GUIDE): off = retry IO until the array responds; otherwise power the VM off after this long without storage paths and restart it on a node with array connectivity.',
+          'Per-VM option (DEPLOY-GUIDE): off = retry IO until the array responds; otherwise, once the VM has had no storage path for the chosen timeout (short, medium or long), power it off and restart it on a node with array connectivity.',
         appliesTo: (t) => isKind(t, 'vm') && reg.facts.externalStorage,
-        params: { seconds: { label: 'Timeout (s)', choices: FORCE_SHUTDOWN_CHOICES } },
+        params: { seconds: { label: 'Timeout', choices: FORCE_SHUTDOWN_CHOICES } },
       },
       apply: (req) => {
         const raw = req.params?.seconds;

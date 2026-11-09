@@ -26,6 +26,11 @@ export type VmLifecycle = 'running' | 'paused' | 'crashed' | 'restarting' | 'off
 export type VmState = VmLifecycle | 'io-stalled';
 /** Why a stopped VM should come back: after an HA fence, or at the next HA cycle. */
 export type RestartNeed = 'none' | 'ha' | 'next-cycle';
+/**
+ * How the VM came to run where it last started (`placedBy`): its topology host, an AHV HA restart,
+ * a live migration (host maintenance mode) or a power-on.
+ */
+export type VmPlacedBy = 'topology' | 'ha-restart' | 'live-migration' | 'power-on';
 
 export type IoTarget =
   /** `session` changes on every (re-)login; outstanding IO is re-issued on a new session. */
@@ -143,7 +148,11 @@ export class Vm implements Device<Profile> {
   private pendingS = { all: 0, read: 0, write: 0 };
   /** Share of the guest's queue slots held by stuck IO, % (`stuckIoPct`). */
   private stuckPct = 0;
-  private latencyMs = 0;
+  /** Latency of the last completed IO; null while the VM is not running (no IO). */
+  private latencyMs: number | null = null;
+  /** How it got to its current (or last) host, and from where (`placedBy`, `placedFrom`). */
+  private placedBy: VmPlacedBy = 'topology';
+  private placedFrom: string | null = null;
   /** Live migration: IO is held until the switchover stun ends. */
   private migrationPauseUntil = Number.NEGATIVE_INFINITY;
 
@@ -185,6 +194,23 @@ export class Vm implements Device<Profile> {
   get currentState(): VmState {
     return this.state;
   }
+  /**
+   * This tick's state at `now`, from the IO completed so far: what `postTick` publishes. Devices
+   * that run before this VM's `postTick` (the throughput model, by id order) read it here.
+   */
+  stateAt(now: number): VmState {
+    if (this.lifecycle !== 'running') return this.lifecycle;
+    if (this.hostId !== null && this.env.hostFenced(this.hostId)) return 'io-stalled';
+    if (this.okThisTick > 0) return 'running';
+    // Stalled = outstanding IO that has had a tick to complete and has not. IO issued this tick
+    // and still in flight (pipeline fill right after a start or re-login) is not a stall.
+    for (const p of this.pending.values()) if (now - p.req.issuedAt > 0) return 'io-stalled';
+    return 'running';
+  }
+  /** Share of the guest's queue slots held by stuck IO at `now`, 0..100 (`stuckIoPct`). */
+  stuckIoPctAt(now: number): number {
+    return this.stateAt(now) === 'io-stalled' ? 100 : this.stuckShare(now);
+  }
   hasLiveInstance(): boolean {
     return this.hostId !== null;
   }
@@ -224,6 +250,8 @@ export class Vm implements Device<Profile> {
     if (this.hostId !== null) return null;
     this.lifecycle = 'running';
     this.state = 'running';
+    this.placedBy = viaHa ? 'ha-restart' : 'power-on';
+    this.placedFrom = this.home;
     this.hostId = host;
     this.home = host;
     this.need = 'none';
@@ -251,6 +279,8 @@ export class Vm implements Device<Profile> {
     const P = ctx.profile.ahvHa.liveMigrationPauseS;
     this.hostId = host;
     this.home = host;
+    this.placedBy = 'live-migration';
+    this.placedFrom = from;
     this.migrationPauseUntil = ctx.now + P.value;
     for (const p of this.pending.values()) {
       p.needsSend = true;
@@ -451,11 +481,15 @@ export class Vm implements Device<Profile> {
         selector ??= this.env.pathSelector?.(v) ?? null;
       }
       this.shownUplinks = [...this.uplinks].sort();
+    } else {
+      // Paused or stopped: no IO, so no uplinks or latency of its own (not last tick's).
+      this.shownUplinks = [];
+      this.latencyMs = null;
     }
     this.shownPaths = [...paths].sort();
     this.shownStorageNics = [...storageNics].sort();
     this.shownSelector = selector;
-    this.state = this.computeState();
+    this.state = this.stateAt(now);
 
     const timeout = ctx.profile.guest.linuxScsiTimeoutS;
     if (all > timeout.value && !this.guestTimeoutRaised) {
@@ -492,18 +526,27 @@ export class Vm implements Device<Profile> {
       stuckIoPct: this.state === 'io-stalled' ? 100 : this.stuckPct,
       ioLatencyMs: this.latencyMs,
       restartNeed: this.need,
+      placedBy: this.placedBy,
+      placedFrom: this.placedFrom,
     };
     const flow = this.env.flowOf?.(this.id);
     if (flow) {
+      // The workload setting is shown even while the VM is off (the `vm.set-load` form reads it).
       fields.offeredLoad = flow.offeredGbps === null ? 'line-rate' : flow.offeredGbps;
       fields.offeredIops = flow.offeredIops === null ? 'line-rate' : Math.round(flow.offeredIops);
-      fields.iops = Math.round(flow.iops);
       fields.readPct = flow.readPct;
-      fields.throughputGbps = round1(flow.gbps);
-      fields.readGbps = round1(flow.readGbps);
-      fields.writeGbps = round1(flow.writeGbps);
-      fields.ioLatencyUs = Math.round(flow.latencyUs);
-      fields.flowPaths = JSON.stringify(flow.paths);
+      // A process on a host has a rate now: 0 while paused or stalled (no IO completes).
+      if (this.hostId !== null) {
+        fields.iops = Math.round(flow.iops);
+        fields.throughputGbps = round1(flow.gbps);
+        fields.readGbps = round1(flow.readGbps);
+        fields.writeGbps = round1(flow.writeGbps);
+        // Latency and per-path rows only for a flow that runs over at least one path.
+        if (flow.paths.length > 0) {
+          fields.ioLatencyUs = Math.round(flow.latencyUs);
+          fields.flowPaths = JSON.stringify(flow.paths);
+        }
+      }
     }
     return {
       id: this.id,
@@ -560,15 +603,6 @@ export class Vm implements Device<Profile> {
       local: cvm === null || this.env.cvmHost?.(cvm) === this.hostId,
     });
     return JSON.stringify(chain);
-  }
-
-  private computeState(): VmState {
-    if (this.lifecycle !== 'running') return this.lifecycle;
-    if (this.hostId !== null && this.env.hostFenced(this.hostId)) return 'io-stalled';
-    if (this.okThisTick > 0) return 'running';
-    // Stalled = outstanding IO that has had a tick to complete and has not. IO issued this tick
-    // and still in flight (pipeline fill right after a start or re-login) is not a stall.
-    return this.pendingS.all > 0 ? 'io-stalled' : 'running';
   }
 
   private issue(vdisk: string, ctx: Ctx): void {
@@ -680,6 +714,7 @@ export class Vm implements Device<Profile> {
     this.guestTimeoutRaised = false;
     this.ioErrorRaised = false;
     this.pendingS = { all: 0, read: 0, write: 0 };
+    this.latencyMs = null;
     this.uplinks = new Set();
     this.shownUplinks = [];
     this.shownPaths = [];

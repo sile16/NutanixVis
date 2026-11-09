@@ -148,3 +148,39 @@ describe('throughput model (emergent congestion)', () => {
     expect(Number(s.devices['node-1.vm-1']?.fields.readGbps)).toBeCloseTo(12.5, 0);
   });
 });
+
+describe('throughput model: only VMs whose IO completes carry throughput', () => {
+  it('an array IO stall leaves every VM with 0 Gb/s and no per-path rows', () => {
+    const { sim } = loadSimulation({ topologyId: 't1-ahv-flasharray', options: base });
+    let s = sim.tick(8);
+    expect(vmGbps(s, 'node-1.vm-1')).toBeGreaterThan(0);
+    const primary = Object.values(s.devices).find(
+      (d) => d.kind === 'fa-controller' && d.fields.role === 'primary',
+    );
+    sim.applyAction({ kind: 'fa.io-stall', target: primary?.id ?? '' });
+    s = sim.tick(2);
+    const f = s.devices['node-1.vm-1']?.fields;
+    expect(f?.state).toBe('io-stalled');
+    expect(f?.throughputGbps).toBe(0);
+    expect(f?.ioLatencyUs).toBeUndefined();
+    expect(f?.flowPaths).toBeUndefined();
+    // No load on the VM's storage NICs either.
+    const rx = links(s)['l-node-1.eth2--sw-a'] ?? [];
+    expect(rx.every((d) => d.gbps === 0)).toBe(true);
+  });
+
+  it('a powered-off VM keeps its offered load (vm.set-load form) but has no rate', () => {
+    const { sim } = loadSimulation({ topologyId: 't1-ahv-flasharray', options: base });
+    sim.tick(3);
+    sim.applyAction({
+      kind: 'vm.set-load',
+      target: 'node-3.vm-1',
+      params: { gbps: 25, readPct: 50 },
+    });
+    const f = sim.tick(2).devices['node-3.vm-1']?.fields;
+    expect(f?.state).toBe('off');
+    expect(f?.offeredLoad).toBe(25);
+    expect(f?.readPct).toBe(50);
+    expect(f?.throughputGbps).toBeUndefined();
+  });
+});

@@ -27,7 +27,7 @@ import { buildTopology, isTopologyId } from '../src/topologies';
 // ── Registry and static validation ───────────────────────────────────────────
 
 /** SPEC §7.2 backlog sizes. */
-const BACKLOG: Readonly<Record<ScenarioFamily, number>> = { t1: 34, t2: 13, t3: 7, t1lab: 4 };
+const BACKLOG: Readonly<Record<ScenarioFamily, number>> = { t1: 36, t2: 13, t3: 7, t1lab: 4 };
 /** SPEC §7.2 items removed from the backlog (T1-16: isolated VLANs on a bond, not modeled). */
 const REMOVED: Readonly<Partial<Record<ScenarioFamily, readonly number[]>>> = { t1: [16] };
 
@@ -38,8 +38,10 @@ const ACTION_KINDS = new Set([
   'reboot',
   'link-down',
   'link-up',
+  'hang',
   'set-latency',
   'fa.controller.failover',
+  'fa.controller.reboot',
   'fa.ndu',
   'fa.io-stall',
   'fa.interface.disable',

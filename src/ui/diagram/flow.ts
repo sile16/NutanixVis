@@ -13,6 +13,7 @@ import type { LabelAnchor } from './label-anchor';
 import { type DiagramLayout, groupFrame } from './layout';
 import type { LineMeter, Meters, ShareSlice } from './meters';
 import type { PathUsage } from './path-usage';
+import { movedAria, movedBy } from './vm-placement';
 
 export type NodeKind =
   | 'switch'
@@ -64,8 +65,11 @@ export interface PortHandle {
 export type DeviceNodeData = {
   /** The device as drawn: status may be the effective one (see `effective-status.ts`). */
   device: EffectiveDevice;
-  /** AHV HA restarted this VM away from its topology host: that host's label. */
-  restartedFrom: string | null;
+  /**
+   * This VM runs away from its topology host (AHV HA restart, live migration, power-on): the label
+   * of the host it came from. How it moved is the VM's `placedBy` field (`vm-placement.ts`).
+   */
+  movedFrom: string | null;
   isGroup: boolean;
   frame: { pad: number; header: number };
   ports: readonly PortHandle[];
@@ -148,8 +152,8 @@ export interface NodeBuildOptions {
   readonly pathUsage: PathUsage | null;
   readonly utilLabels: ReadonlyMap<string, string>;
   readonly draggable: boolean;
-  /** VM id → label of the host AHV HA restarted it away from. */
-  readonly restartedFrom?: ReadonlyMap<string, string>;
+  /** VM id → label of the host it moved away from (HA restart, live migration, power-on). */
+  readonly movedFrom?: ReadonlyMap<string, string>;
   /** Data-path notes by device id. */
   readonly notes?: ReadonlyMap<string, Note>;
   readonly meters?: Meters;
@@ -179,7 +183,7 @@ export function buildNodes(
     const placed = dl.placed.get(id);
     const device = devices[id];
     if (!placed || !device) continue;
-    const restartedFrom = opts.restartedFrom?.get(id) ?? null;
+    const movedFrom = opts.movedFrom?.get(id) ?? null;
     const parentRect = placed.parent ? dl.placed.get(placed.parent)?.rect : undefined;
     const ports = portsByDevice.get(id) ?? [];
     const { w, h } = placed.rect;
@@ -203,10 +207,10 @@ export function buildNodes(
       deletable: false,
       ariaLabel: `${device.label} (${device.kind}), ${device.status}${
         device.downReason ? ` (${device.downReason})` : ''
-      }${restartedFrom ? `, restarted from ${restartedFrom}` : ''}`,
+      }${movedFrom ? `, ${movedAria(movedBy(device), movedFrom)}` : ''}`,
       data: {
         device,
-        restartedFrom,
+        movedFrom,
         isGroup: placed.isGroup,
         frame: groupFrame(device.kind),
         ports,

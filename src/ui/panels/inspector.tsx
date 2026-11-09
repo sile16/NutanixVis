@@ -5,6 +5,7 @@
  */
 import { ArrowUpRight, Gauge, History, Route } from 'lucide-react';
 import { type ReactNode, useMemo, useState } from 'react';
+import { actionChoiceLabel } from '../../engine/sim';
 import type { ActionSpec, DeviceView, LinkView, Snapshot, ViewField } from '../../engine/types';
 import { humanizeKey } from '../app/format';
 import { Button, Select, ShareBar } from '../components/controls';
@@ -20,6 +21,7 @@ import {
   isBondKind,
 } from '../diagram/path-usage';
 import { GUI_HIDDEN_CATEGORIES, trafficStyle } from '../diagram/traffic';
+import { placementText } from '../diagram/vm-placement';
 import { useSim, useSimControls, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import { currentChoice, initialParams, rejectionReason } from './action-params';
@@ -67,19 +69,28 @@ function DeviceLink({ id }: { id: string }) {
 }
 
 /**
- * Durations in view fields (`ioPendingS`, `…TimeoutS`) are not shown: time is steps, not seconds,
- * and the engine's internal clock must not read as a duration.
+ * Durations and clock readings in view fields (`ioPendingS`, `…TimeoutS`, `…At`, `…Until`,
+ * `…Since`) are not shown: time is steps, not seconds, and the engine's internal clock (a tick
+ * number) must not read as a time or a duration.
  */
-const isDurationField = (k: string, v: ViewField): boolean =>
-  typeof v === 'number' && /[a-z]S$/.test(k);
+const isTimeField = (k: string, v: ViewField): boolean =>
+  (typeof v === 'number' || v === null) && /[a-z](S|At|Until|Since)$/.test(k);
 
-/** Fields shown by their own section instead (`flowPaths`: Storage throughput). */
-const HIDDEN_FIELDS = new Set(['flowPaths']);
+/**
+ * Fields shown by their own section instead (`flowPaths`: Storage throughput; `placedBy`,
+ * `placedFrom`: the placement line under the title).
+ */
+const HIDDEN_FIELDS = new Set(['flowPaths', 'placedBy', 'placedFrom']);
+
+/** Display names where the key's wording would name a duration. */
+const FIELD_LABEL: Readonly<Record<string, string>> = {
+  offlineEventsLastHour: 'Recent offline events',
+};
 
 function Fields({ fields }: { fields: Readonly<Record<string, ViewField>> }) {
   const entries = Object.entries(fields).filter(
     ([k, v]) =>
-      !isDurationField(k, v) &&
+      !isTimeField(k, v) &&
       !HIDDEN_FIELDS.has(k) &&
       // With the throughput model running, its latency (µs, incl. queueing) replaces this one.
       !(k === 'ioLatencyMs' && typeof fields.ioLatencyUs === 'number'),
@@ -93,7 +104,7 @@ function Fields({ fields }: { fields: Readonly<Record<string, ViewField>> }) {
       {entries.map(([k, v]) => (
         <div key={k} className="contents">
           <dt className="truncate text-ink-muted" title={k}>
-            {humanizeKey(k)}
+            {FIELD_LABEL[k] ?? humanizeKey(k)}
           </dt>
           <dd className="truncate font-mono" title={formatField(v)}>
             {k === 'bondMode' && typeof v === 'string' ? (BOND_MODE_LABEL[v] ?? v) : formatField(v)}
@@ -127,9 +138,21 @@ function ActionForm({
       appliedAt === null ? null : rejectionReason(sim.eventLog(), spec.kind, target, appliedAt),
     [appliedAt, sim, spec.kind, target, snapshot.version],
   );
+  const submit = (
+    <Button
+      type="submit"
+      size="sm"
+      // Beside the choices it matches their height; when they fill the row it wraps to the right.
+      className={params.length > 0 ? 'ml-auto h-8 shrink-0' : 'shrink-0'}
+      variant={spec.kind === 'fail' ? 'danger' : 'default'}
+      data-testid={`action-${spec.kind}`}
+    >
+      {manual ? 'Queue' : 'Apply'}
+    </Button>
+  );
   return (
     <form
-      className="flex flex-wrap items-end gap-2 rounded-md border border-border bg-panel-2 p-2"
+      className="flex flex-col gap-2 rounded-md border border-border bg-panel-2 p-2"
       onSubmit={(e) => {
         e.preventDefault();
         // Queued actions apply at the start of the next tick.
@@ -139,42 +162,46 @@ function ActionForm({
         );
       }}
     >
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">{spec.label}</div>
-        {spec.description ? (
-          <div className="text-[11px] text-ink-muted">{spec.description}</div>
-        ) : null}
+      {/* Title and description take the full width; the choices and the button go below them. */}
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium leading-snug">{spec.label}</div>
+          {spec.description ? (
+            <p className="mt-0.5 text-[11px] leading-snug text-ink-muted">{spec.description}</p>
+          ) : null}
+        </div>
+        {params.length === 0 ? submit : null}
       </div>
-      {params.map(([key, p]) => (
-        <Select
-          key={key}
-          label={p.label}
-          value={String(values[key] ?? '')}
-          onChange={(e) => {
-            const choice = p.choices.find((c) => String(c) === e.target.value);
-            if (choice !== undefined) setValues((v) => ({ ...v, [key]: choice }));
-          }}
-        >
-          {p.choices.map((c) => (
-            <option key={String(c)} value={String(c)}>
-              {key === 'mode' ? (BOND_MODE_LABEL[String(c)] ?? String(c)) : String(c)}
-              {currentChoice(spec, key, current) === c ? ' (current)' : ''}
-            </option>
+      {params.length > 0 ? (
+        <div className="flex flex-wrap items-end gap-2">
+          {params.map(([key, p]) => (
+            <div key={key} className="min-w-[9rem] flex-1 [&_select]:w-full">
+              <Select
+                label={p.label}
+                value={String(values[key] ?? '')}
+                onChange={(e) => {
+                  const choice = p.choices.find((c) => String(c) === e.target.value);
+                  if (choice !== undefined) setValues((v) => ({ ...v, [key]: choice }));
+                }}
+              >
+                {p.choices.map((c) => (
+                  <option key={String(c)} value={String(c)}>
+                    {key === 'mode'
+                      ? (BOND_MODE_LABEL[String(c)] ?? String(c))
+                      : actionChoiceLabel(key, p.choices, c)}
+                    {currentChoice(spec, key, current) === c ? ' (current)' : ''}
+                  </option>
+                ))}
+              </Select>
+            </div>
           ))}
-        </Select>
-      ))}
-      <Button
-        type="submit"
-        size="sm"
-        variant={spec.kind === 'fail' ? 'danger' : 'default'}
-        data-testid={`action-${spec.kind}`}
-      >
-        {manual ? 'Queue' : 'Apply'}
-      </Button>
+          {submit}
+        </div>
+      ) : null}
       {rejected ? (
         <p
           role="status"
-          className="w-full text-[11px] text-status-failed"
+          className="text-[11px] text-status-failed"
           data-testid={`action-rejected-${spec.kind}`}
         >
           Not applied: {rejected}
@@ -189,8 +216,8 @@ function Actions({ target, view }: { target: string; view: DeviceView | LinkView
   const snapshot = useSnapshot();
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-query when the snapshot changes
   const specs = useMemo(
-    () => sim.availableActions(target).filter(isOfferedAction),
-    [sim, target, snapshot.version],
+    () => sim.availableActions(target).filter((s) => isOfferedAction(s, view)),
+    [sim, target, view, snapshot.version],
   );
   return (
     <Section title="Actions" testId="inspector-actions">
@@ -250,8 +277,16 @@ function ThroughputSection({ vm }: { vm: DeviceView }) {
       <div className="text-xs" data-testid="vm-throughput-summary">
         <span className="font-mono">{f.throughputGbps} Gb/s</span> of {offered} offered ·{' '}
         {String(f.readPct)}% read ({String(f.readGbps)} Gb/s) · {100 - Number(f.readPct)}% write (
-        {String(f.writeGbps)} Gb/s) · <span className="font-mono">{String(f.ioLatencyUs)} µs</span>{' '}
-        per IO
+        {String(f.writeGbps)} Gb/s) ·{' '}
+        {typeof f.ioLatencyUs === 'number' ? (
+          <>
+            <span className="font-mono">{f.ioLatencyUs} µs</span> per IO
+          </>
+        ) : (
+          <span data-testid="vm-throughput-none">
+            {f.state === 'paused' ? 'paused' : 'no IO completing'}
+          </span>
+        )}
       </div>
       <ul className="mt-1 space-y-1 text-[11px]" data-testid="vm-throughput-paths">
         {paths.map((p) => (
@@ -282,33 +317,95 @@ function ThroughputSection({ vm }: { vm: DeviceView }) {
   );
 }
 
-function PathUsageSection({ vmId }: { vmId: string }) {
+/** Path-usage text for a VM that runs no IO (`vm.ts` lifecycle states), or null if it runs. */
+const IDLE_STATE: Readonly<Record<string, string>> = {
+  off: 'Powered off',
+  paused: 'Paused',
+  crashed: 'Crashed',
+  restarting: 'Restarting',
+};
+
+const isServing = (cvm: DeviceView | undefined): boolean =>
+  !!cvm &&
+  cvm.fields.down !== true &&
+  cvm.status !== 'failed' &&
+  cvm.status !== 'offline' &&
+  (cvm.fields.stargate === 'up' || cvm.fields.stargate === 'unhealthy');
+
+/** `CVM 1 is down` / `CVM 1's Stargate is hung`: why a CVM serves nothing. */
+function notServingText(cvm: DeviceView): string {
+  if (cvm.fields.down === true || cvm.status === 'failed' || cvm.status === 'offline') {
+    return `${cvm.label} is down`;
+  }
+  const sg = cvm.fields.stargate;
+  return `${cvm.label}'s Stargate is ${typeof sg === 'string' ? sg : 'not serving'}`;
+}
+
+function PathUsageSection({ vm }: { vm: DeviceView }) {
+  const vmId = vm.id;
+  const snapshot = useSnapshot();
   // Same rolling window as the diagram, so shares don't jump with per-tick round-robin.
   const activityTicks = useUi((s) => s.activityTicks);
   const win = useActivityWindow(activityTicks);
   const usage = computePathUsage(win.snapshot, vmId, win.vmPaths.get(vmId));
   const windowLabel = 'recent activity';
+  // A VM that is not running sends no IO: show 0, not its host's traffic (the CVM's own).
+  const state = typeof vm.fields.state === 'string' ? vm.fields.state : '';
+  const idle = vm.status === 'failed' ? 'Failed' : IDLE_STATE[state];
+  if (idle) {
+    return (
+      <Section title="Path usage" testId="path-usage">
+        <p className="text-xs text-ink-muted" data-testid="path-usage-idle">
+          {idle}: this VM sends no storage IO, so no uplink or array port carries any of its traffic
+          (0%).
+        </p>
+      </Section>
+    );
+  }
   if (!usage) return null;
-  // An HCI VM whose vDisks are served by its own host's CVM: IO stays on virbr0.
+  const devices = snapshot.devices;
+  const ownCvmId = usage.hostId ? `${usage.hostId}.cvm` : undefined;
+  const ownCvm = ownCvmId ? devices[ownCvmId] : undefined;
+  // HCI only (no external array): a VM whose vDisks its own host's serving CVM owns has its IO
+  // on virbr0, with no network path; the host's storage traffic is the closest view.
+  const hasArray = Object.values(devices).some((d) => d.kind === 'fa-array');
   const local =
-    usage.scope === 'host' &&
-    usage.cvmId !== undefined &&
-    usage.hostId !== undefined &&
-    usage.cvmId.startsWith(`${usage.hostId}.`);
+    usage.scope === 'host' && !hasArray && usage.cvmId === ownCvmId && isServing(ownCvm);
+  const owner = (
+    <div className="mb-2 flex items-center gap-1 text-xs">
+      <Route size={13} className="text-accent-ink" aria-hidden="true" />
+      Owning CVM:{' '}
+      {usage.cvmId ? (
+        <DeviceLink id={usage.cvmId} />
+      ) : (
+        <span className="text-ink-muted">none (compute-only)</span>
+      )}
+    </div>
+  );
+  // Its own CVM is down or hung and none of its IO has reached another CVM yet: its host's
+  // traffic (management, the CVM's own) is not this VM's, so say so instead.
+  if (usage.scope === 'host' && ownCvm && !isServing(ownCvm)) {
+    return (
+      <Section title="Path usage" testId="path-usage">
+        {owner}
+        <p className="text-xs text-ink-muted" data-testid="path-usage-none">
+          {notServingText(ownCvm)}, and none of this VM's storage IO crossed the network in{' '}
+          {windowLabel}: no uplink or array port to show.
+        </p>
+      </Section>
+    );
+  }
   const toArray = usage.targets.every((t) =>
     ancestorOfKind(win.snapshot.devices, t.deviceId, 'fa-array'),
   );
+  const targetsTitle = toArray
+    ? 'Array ports'
+    : usage.scope === 'vm'
+      ? "Serving CVM's node ports"
+      : 'Peer-node ports (replication and remote IO of this host)';
   return (
     <Section title="Path usage" testId="path-usage">
-      <div className="mb-2 flex items-center gap-1 text-xs">
-        <Route size={13} className="text-accent-ink" aria-hidden="true" />
-        Owning CVM:{' '}
-        {usage.cvmId ? (
-          <DeviceLink id={usage.cvmId} />
-        ) : (
-          <span className="text-ink-muted">none (compute-only)</span>
-        )}
-      </div>
+      {owner}
       {local ? (
         <p className="mb-2 text-xs" data-testid="path-usage-local">
           Served by the local CVM over virbr0: this VM's IO has no network path. Below: all storage
@@ -335,8 +432,8 @@ function PathUsageSection({ vmId }: { vmId: string }) {
       </div>
       {usage.targets.length ? (
         <>
-          <p className="mb-1 text-[11px] text-ink-muted">
-            {toArray ? 'Array ports' : 'Far-end ports (serving CVM)'}
+          <p className="mb-1 text-[11px] text-ink-muted" data-testid="path-usage-targets-title">
+            {targetsTitle}
           </p>
           <div className="flex flex-col gap-1">
             {usage.targets.map((s) => (
@@ -426,21 +523,23 @@ function BondSection({ hostId }: { hostId: string }) {
   );
 }
 
-/** Where a VM runs now versus its topology host (AHV HA restarts move it). */
+/** Where a VM runs now versus its topology host (AHV HA restarts and live migrations move it). */
 function VmPlacement({ vm }: { vm: DeviceView }) {
   const snapshot = useSnapshot();
   const host = vm.fields.host;
   const origin = vm.parent;
   if (typeof host === 'string' && host !== origin) {
+    const prev = vm.fields.placedFrom;
+    const from = typeof prev === 'string' && prev !== host ? prev : origin;
     return (
       <div className="mt-1 text-xs text-ink-muted" data-testid="vm-placement">
         Runs on <DeviceLink id={host} />
-        {origin ? (
+        {from && from !== host ? (
           <>
             {' '}
-            · <History size={11} className="inline" aria-hidden="true" /> restarted by AHV HA from{' '}
-            <DeviceLink id={origin} />
-            <span className="sr-only"> (original host)</span>
+            · <History size={11} className="inline" aria-hidden="true" />{' '}
+            {placementText(vm.fields.placedBy)} <DeviceLink id={from} />
+            <span className="sr-only"> (previous host)</span>
           </>
         ) : null}
       </div>
@@ -507,7 +606,7 @@ function DeviceInspector({ device: raw }: { device: DeviceView }) {
         <Fields fields={device.fields} />
       </Section>
       {device.kind === 'vm' ? <ThroughputSection vm={device} /> : null}
-      {device.kind === 'vm' ? <PathUsageSection vmId={device.id} /> : null}
+      {device.kind === 'vm' ? <PathUsageSection vm={device} /> : null}
       {showBond && host ? <BondSection hostId={host.id} /> : null}
       <Actions target={device.id} view={device} />
       {children.length ? (

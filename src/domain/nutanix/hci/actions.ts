@@ -26,7 +26,7 @@ export function hciActions(
         kind: 'disk.recover',
         label: 'Recover disk',
         description:
-          'Clear the fault: Hades runs a SMART check and returns the disk unless it went offline too often within an hour. On a disk kept offline, an operator re-adds it.',
+          'Clear the fault: Hades runs a SMART check and returns the disk unless it went offline too many times recently. On a disk kept offline, an operator re-adds it.',
         appliesTo: (t) => {
           const d = isLinkView(t) ? undefined : disks.get(t.id);
           return d !== undefined && (d.isFaulted || d.diskState === 'failed');

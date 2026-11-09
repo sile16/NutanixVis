@@ -40,7 +40,7 @@ export const P: NumericProfile = numericView(current);
 
 /** NVMe keep-alive timeout: a silent path is lost KATO after its last exchange (SPEC §6.4c). */
 export const KATO = P.externalStorage.keepAliveTimeoutS;
-/** NVMe Command Quiesce Time: in-flight IO on a connection the target closed waits this long. */
+/** NVMe Command Quiesce Time (set by the integration; not waited on retries, see `CLOSED_PATH_WORST`). */
 export const CQT = P.externalStorage.commandQuiesceTimeS;
 /**
  * Worst case for one command when a path is lost silently: it is retried at k × KATO after the
@@ -50,11 +50,11 @@ export const PATH_LOSS_WORST = P.externalStorage.lostPathHoldKatoMultiplier * KA
 /** `PATH_LOSS_WORST` as a rule, for expectation labels. */
 export const PATH_LOSS_RULE = `${P.externalStorage.lostPathHoldKatoMultiplier} × KATO`;
 /**
- * Worst case for one command when the target closes the connection (a disabled FA IP, a graceful
- * controller reboot): the path is lost at once and in-flight IO waits CQT only (NVMe 2.1 §9.6.2
- * step 2c; SPEC §6.4c).
+ * Worst case for one command when the target closes the connection (a disabled FA IP): the path is
+ * lost at once and its in-flight IO fails over like a lost path, at k × KATO after the last
+ * exchange (SPEC §6.4c). A planned controller reboot drains first, so nothing waits.
  */
-export const CLOSED_PATH_WORST = CQT;
+export const CLOSED_PATH_WORST = PATH_LOSS_WORST;
 /**
  * Initiator detection of a silent Stargate: `missesToUnhealthy` unanswered NOPs, `nopIntervalS`
  * apart (SPEC §6.2 "iSCSI redirector"). One NOP cycle of a parked session takes as long.

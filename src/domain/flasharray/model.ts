@@ -12,9 +12,12 @@
  * - Primary IO stall: an IO outstanding for `ioDelayTimeoutS` triggers a giveback, then the peer
  *   promotes (pause = delay + promotion, inside `failoverObjectiveS`).
  * - Planned failover: giveback, then promotion, with a `plannedFailoverPauseS` pause.
- * - NDU (Everpure "Performing the Upgrade"): reboot the secondary (ports gone for
- *   `controllerRebootS`: no NPIV for Ethernet/NVMe), fail over, reboot the old primary. No
- *   failback (SPEC §14 #2).
+ * - Planned reboot (of the secondary, and each reboot of an NDU): the controller drains for
+ *   `plannedRebootDrainS` (new IO is answered ANA Inaccessible, so hosts retry it on the other
+ *   controller at once; in-flight IO finishes), then reboots: its ports are gone for
+ *   `controllerRebootS` (no NPIV for Ethernet/NVMe). No VM IO stalls.
+ * - NDU (Everpure "Performing the Upgrade"): reboot the secondary, fail over, reboot the old
+ *   primary. No failback (SPEC §14 #2).
  * - The mgmt VIP follows the primary (DEPLOY-GUIDE Tables 3 and 10).
  */
 import type {
@@ -37,7 +40,7 @@ import type { Profile } from '../versions/profile';
 import type { FaFacts } from './facts';
 
 export type FaRole = 'primary' | 'secondary' | 'promoting' | 'offline';
-export type FaState = 'up' | 'crashed' | 'rebooting' | 'stalled';
+export type FaState = 'up' | 'draining' | 'crashed' | 'rebooting' | 'stalled';
 
 /** What a model transition may do; implemented by device contexts and action contexts. */
 export interface FaEnv {
@@ -56,6 +59,8 @@ export interface ControllerState {
   role: FaRole;
   state: FaState;
   stalledAt: SimTime | null;
+  /** End of a planned reboot's drain; the reboot starts then. */
+  drainUntil: SimTime | null;
   rebootUntil: SimTime | null;
   /** Host endpoint → time of its last admin exchange (connect/keep-alive) on this controller. */
   readonly hosts: Map<EndpointId, SimTime>;
@@ -137,6 +142,7 @@ export class FlashArrayModel {
   private unacked: Unacked[] = [];
   private ndu: Ndu | null = null;
   private readonly stallCauses = new Map<DeviceId, readonly string[]>();
+  private readonly drainCauses = new Map<DeviceId, readonly string[]>();
   /** `<iface>|<host endpoint>` → association state (target-side TCP/NVMe connection). */
   private readonly assocs = new Map<string, Assoc>();
 
@@ -153,6 +159,7 @@ export class FlashArrayModel {
       role: c.initialRole,
       state: 'up',
       stalledAt: null,
+      drainUntil: null,
       rebootUntil: null,
       hosts: new Map(),
     }));
@@ -289,6 +296,7 @@ export class FlashArrayModel {
     c.state = 'crashed';
     c.role = 'offline';
     c.stalledAt = null;
+    c.drainUntil = null;
     c.rebootUntil = null;
     if (this.promotion?.ctrl === id) this.promotion = null;
     this.held = this.held.filter((h) => h.ctrl !== id);
@@ -386,6 +394,17 @@ export class FlashArrayModel {
     this.startPromotion(to, f.value, env, [gb], f.cite, f.confidence);
   }
 
+  /** `fa.controller.reboot`: planned reboot of the secondary (drain, then reboot). */
+  plannedReboot(id: DeviceId, env: FaEnv, causes: readonly string[]): void {
+    if (this.ndu) throw new FaModelError('an NDU is in progress');
+    const c = this.requireController(id);
+    if (c.state !== 'up' || c.role !== 'secondary') {
+      throw new FaModelError(`${c.label} is not an up secondary (fail over first)`);
+    }
+    if (!this.serving()) throw new FaModelError('the array has no serving primary');
+    this.drain(c, env, causes);
+  }
+
   /** `fa.ndu`: secondary reboot → failover → old-primary reboot. */
   startNdu(env: FaEnv, causes: readonly string[]): void {
     if (this.ndu) throw new FaModelError('an NDU is already in progress');
@@ -413,7 +432,28 @@ export class FlashArrayModel {
       promotedAt: null,
       waitWarned: false,
     };
-    this.reboot(s, env, [start]);
+    this.drain(s, env, [start]);
+  }
+
+  /**
+   * Start a planned reboot: the controller answers new IO with ANA Inaccessible (hosts retry it on
+   * the other controller's paths at once) while its in-flight IO finishes, then reboots.
+   */
+  private drain(c: ControllerState, env: FaEnv, causes: readonly string[]): void {
+    const d = this.fa.plannedRebootDrainS;
+    c.state = 'draining';
+    c.drainUntil = env.now + Math.max(1, d.value);
+    const ev = this.ev(
+      env,
+      c.id,
+      'fa.controller.draining',
+      `${c.label} stops taking new IO (ANA Inaccessible) and finishes the IO in flight; then it reboots`,
+      causes,
+      d.cite,
+      d.confidence,
+      'info',
+    );
+    this.drainCauses.set(c.id, [ev]);
   }
 
   /** Graceful reboot: ports disappear (no NPIV for Ethernet/NVMe; Everpure NPIV KB). */
@@ -429,6 +469,7 @@ export class FlashArrayModel {
     }
     c.state = 'rebooting';
     c.role = 'offline';
+    c.drainUntil = null;
     c.rebootUntil = env.now + Math.max(1, r.value);
     c.hosts.clear();
     for (const i of c.interfaces) this.tearDown(i);
@@ -516,6 +557,12 @@ export class FlashArrayModel {
     }
 
     for (const c of this.controllers) {
+      if (c.state === 'draining' && c.drainUntil !== null && now >= c.drainUntil) {
+        this.reboot(c, env, this.drainCauses.get(c.id) ?? []);
+      }
+    }
+
+    for (const c of this.controllers) {
       if (c.state === 'rebooting' && c.rebootUntil !== null && now >= c.rebootUntil) {
         c.state = 'up';
         c.role = 'secondary';
@@ -595,12 +642,12 @@ export class FlashArrayModel {
       }
     }
     if (n.phase === 'failover' && first.role === 'primary') {
-      // Reboot the old primary only after IO held during the failover pause has been released
-      // (one tick later), so the pause is not compounded by a second path loss.
+      // Drain the old primary only after IO held during the failover pause has been released
+      // (one tick later).
       n.promotedAt ??= env.now;
       if (env.now > n.promotedAt) {
         n.phase = 'reboot-primary';
-        this.reboot(second, env, n.causes);
+        this.drain(second, env, n.causes);
       }
     }
     if (n.phase === 'reboot-primary' && second.state === 'up') {
@@ -644,6 +691,10 @@ export class FlashArrayModel {
     const c = this.controller(ctrl);
     if (!c) return;
     if (this.held.some((h) => h.msg.payload.key === msg.payload.key)) return;
+    if (c.state === 'draining') {
+      this.respond(c, msg, 0, reqLatencyMs, send, 'ana-inaccessible');
+      return;
+    }
     if (c.state === 'up' && this.serving()) {
       this.respond(c, msg, 0, reqLatencyMs, send);
     } else {
@@ -657,8 +708,10 @@ export class FlashArrayModel {
     const keep: Held[] = [];
     for (const h of this.held) {
       const c = this.controller(h.ctrl);
-      if (c?.state === 'up') this.respond(c, h.msg, this.now - h.receivedAt, h.reqLatencyMs, send);
-      else if (c?.state === 'stalled') keep.push(h);
+      // A draining controller still finishes the IO it already holds.
+      if (c?.state === 'up' || c?.state === 'draining') {
+        this.respond(c, h.msg, this.now - h.receivedAt, h.reqLatencyMs, send);
+      } else if (c?.state === 'stalled') keep.push(h);
     }
     this.held = keep;
   }
@@ -681,9 +734,10 @@ export class FlashArrayModel {
     heldS: number,
     reqLatencyMs: number,
     send: SendReply,
+    reject?: CommandStatus,
   ): void {
     const cmd = msg.payload;
-    const status = this.execute(cmd);
+    const status = reject ?? this.execute(cmd);
     const read = cmd.type === 'io' && cmd.op === 'read';
     const draft: Reply = {
       kind: cmd.type === 'io' ? NVME_MSG.ioResp : NVME_MSG.resvResp,
@@ -727,7 +781,7 @@ export class FlashArrayModel {
     const keep: Unacked[] = [];
     for (const u of this.unacked) {
       const c = this.controller(u.ctrl);
-      if (!c || (c.state !== 'up' && c.state !== 'stalled')) continue;
+      if (!c || (c.state !== 'up' && c.state !== 'stalled' && c.state !== 'draining')) continue;
       const f = fate(u.msgId, u.sentAt);
       if (f === 'delivered') continue;
       if (f === 'dropped') {

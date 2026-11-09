@@ -11,6 +11,7 @@ import {
   type AdminPayload,
   type CommandPayload,
   type ConnectRespPayload,
+  type KeepAliveRespPayload,
   NVME_MSG,
   type ReplyDraft,
   type ResetPayload,
@@ -197,7 +198,7 @@ export class FaControllerDevice implements EngineDevice<Profile> {
     const m = this.model;
     m.observe(ctx.now);
     const ctrl = m.controller(this.id);
-    if (!ctrl || (ctrl.state !== 'up' && ctrl.state !== 'stalled')) return;
+    if (!ctrl || ctrl.state === 'crashed' || ctrl.state === 'rebooting') return;
     if (!this.admitted(msg, ctx)) return;
     switch (msg.kind) {
       case NVME_MSG.connect:
@@ -205,14 +206,17 @@ export class FaControllerDevice implements EngineDevice<Profile> {
         // Admin queue is answered even while the array pauses IO (the target is alive).
         m.noteHost(this.id, msg.src, ctx.now);
         const pl = msg.payload as AdminPayload;
-        replySender(ctx)<AdminPayload | ConnectRespPayload>({
+        replySender(ctx)<AdminPayload | ConnectRespPayload | KeepAliveRespPayload>({
           kind: msg.kind === NVME_MSG.connect ? NVME_MSG.connectResp : NVME_MSG.keepAliveResp,
           src: msg.dst,
           dst: msg.src,
           size: 'small',
           srcPort: msg.flow.dstPort,
           dstPort: msg.flow.srcPort,
-          payload: msg.kind === NVME_MSG.connect ? { ...pl, ok: true } : pl,
+          payload:
+            msg.kind === NVME_MSG.connect
+              ? { ...pl, ok: true }
+              : { ...pl, inaccessible: ctrl.state === 'draining' },
         });
         return;
       }
@@ -271,7 +275,7 @@ export class FaControllerDevice implements EngineDevice<Profile> {
           ? 'offline'
           : c.state === 'stalled'
             ? 'stalled'
-            : c.role === 'promoting'
+            : c.role === 'promoting' || c.state === 'draining'
               ? 'degraded'
               : 'healthy';
     return view(
@@ -285,7 +289,6 @@ export class FaControllerDevice implements EngineDevice<Profile> {
         slot: c.slot,
         role: c.role,
         state: c.state,
-        rebootUntil: c.rebootUntil,
         hosts: c.hosts.size,
       },
     );
@@ -316,7 +319,7 @@ export class FaInterfaceDevice implements EngineDevice<Profile> {
       ? m.controllers.find((c) => c.mgmtNic === nic)
       : m.controllerOf(this.id);
     const enabled = m.enabled.get(this.id) ?? true;
-    const ctrlUp = ctrl === undefined || ctrl.state === 'up' || ctrl.state === 'stalled';
+    const ctrlUp = ctrl === undefined || (ctrl.state !== 'crashed' && ctrl.state !== 'rebooting');
     // A port with no cable is not connected, by design (a topology option): neither up nor failed.
     const cabled = this.fact.floating || m.facts.linkOfNic.has(nic);
     const oper = enabled && ctrlUp && this.array.carrierOf(nic) ? 'up' : 'down';

@@ -229,8 +229,9 @@ export interface Profile {
      */
     readonly keepAliveTimeoutS: Cited<number>;
     /**
-     * NVMe Command Quiesce Time (CQT, TP4129). Commands in flight on a connection the target closed
-     * wait CQT before they are retried on another path (NVMe 2.1 §9.6.2 step 2c).
+     * NVMe Command Quiesce Time (CQT, TP4129), set by the integration (NVMe 2.1 §9.6.2 step 2c).
+     * The model does not wait it on retries: a closed connection fails over like a lost path
+     * (`lostPathHoldKatoMultiplier`).
      */
     readonly commandQuiesceTimeS: Cited<number>;
     /**
@@ -283,7 +284,13 @@ export interface Profile {
     readonly plannedFailoverPauseS: Cited<number>;
     readonly hostMultipathRetryS: Cited<number>;
     readonly worstCaseSingleIoS: Cited<number>;
-    /** One controller reboot during NDU (ports absent meanwhile). */
+    /**
+     * Planned controller reboot (NDU, or a reboot of the secondary): how long the controller drains
+     * first. It answers new IO with ANA Inaccessible, so hosts retry it on the other controller,
+     * and lets in-flight IO finish; then it reboots.
+     */
+    readonly plannedRebootDrainS: Cited<number>;
+    /** One controller reboot, from the drain's end until it is back online (ports absent meanwhile). */
     readonly controllerRebootS: Cited<number>;
     /** Illustrative array service time added to IO completions (never drives timing). */
     readonly serviceTimeMs: Cited<{ readonly read: number; readonly write: number }>;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { loadSimulation } from '../../loader/simulation';
-import { islLabel, islShares } from './isl-share';
+import { portChannelUsage } from './flow-data';
+import { islGroups, islLabel, islShares } from './isl-share';
 
 const BOND = { 'node-count': 3, 'vm-layout': 'two', 'storage-vswitch-layout': 'single-bond' };
 /** ISL share over the next `n` ticks (the diagram reads a rolling window too). */
@@ -80,5 +81,24 @@ describe('ISL share of storage IO', () => {
       ),
     };
     expect(islShares(noIsl)).toEqual([]);
+  });
+});
+
+describe('ISL port-channel with a member down', () => {
+  it('labels a live member and counts only the up members in its line rate', () => {
+    const { sim } = loadSimulation({ topologyId: 't1-ahv-flasharray' });
+    sim.tick(5);
+    const both = portChannelUsage(sim.getSnapshot(), islGroups(sim.getSnapshot()));
+    const full = both?.get('l-sw-a--sw-b-1')?.[0]?.capacityGbps ?? 0;
+    sim.applyAction({ kind: 'link-down', target: 'l-sw-a--sw-b-1' });
+    const s = sim.tick(3);
+    const [g] = islGroups(s);
+    expect(g?.members).toEqual(['l-sw-a--sw-b-1', 'l-sw-a--sw-b-2']);
+    expect(g?.id).toBe('l-sw-a--sw-b-2');
+    const usage = portChannelUsage(s, islGroups(s));
+    expect(usage?.has('l-sw-a--sw-b-1')).toBe(false);
+    const dirs = usage?.get('l-sw-a--sw-b-2') ?? [];
+    expect(dirs.length).toBeGreaterThan(0);
+    for (const d of dirs) expect(d.capacityGbps).toBeCloseTo(full / 2, 5);
   });
 });

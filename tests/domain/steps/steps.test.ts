@@ -4,14 +4,25 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  countsAt,
+  deriveArrayOpSteps,
+  deriveVmRuns,
   deriveVmSteps,
+  EventIndex,
   FIRST_STEP_TICKS,
+  faultWindows,
+  finishRuns,
   ioChainOf,
+  isWaiting,
   nextStepTick,
+  RunScanner,
+  type RunSpan,
   STAGES,
   stepAt,
+  stepBoundary,
   stepOfElapsed,
   type VmSample,
+  vmSampleState,
   vmSeries,
 } from '../../../src/domain/steps';
 import type { SimEvent } from '../../../src/engine/types';
@@ -309,5 +320,240 @@ describe('ioChain view field', () => {
       const at = (stage: string) => r.milestones.find((m) => m.stage === stage)?.step as number;
       expect(at('failed-back') - at('resumed')).toBeGreaterThanOrEqual(2);
     }
+  });
+});
+
+/** A sample on an explicit host and CVM (HA restarts and migrations change both). */
+const on = (t: number, state: string, pend: number, host: string | null, owner: string | null) => ({
+  t,
+  state,
+  ioPendingS: pend,
+  host,
+  ownerCvm: owner,
+});
+
+describe('HA restart and live migration are not redirects', () => {
+  it('a VM restarted by AHV HA on another host: its own outcome, the run ends when its IO resumes there', () => {
+    const series = run(0, 200, (t) =>
+      t < 10
+        ? on(t, 'running', 0, 'n1', 'n1.cvm')
+        : t < 70
+          ? on(t, 'crashed', 0, null, 'n1.cvm')
+          : t < 130
+            ? on(t, 'restarting', 0, null, 'n1.cvm')
+            : on(t, 'running', 0, 'n2', 'n2.cvm'),
+    );
+    const events = [ev(10, 'vm.crashed', 'v'), ev(130, 'ha.vm.restarted', 'v')];
+    const r = deriveVmSteps('v', events, series);
+    expect(r.impact).toBe('restarted');
+    expect(r.redirected).toBe(false);
+    expect(r.restartedOn).toBe('n2');
+    expect(r.endT).toBe(130);
+    expect(r.holds).toEqual([]);
+    const stages = r.milestones.map((m) => m.stage);
+    expect(stages).toEqual(['vm-down', 'ha-restarted', 'resumed']);
+    expect(stages).not.toContain('redirected');
+    // The counter stops at the restart (no failback to wait for).
+    expect(stepAt(r, 5000)).toBe(stepAt(r, 130));
+  });
+
+  it('a live migration (owner changes with the host) is no interruption and no redirect', () => {
+    const series = run(0, 60, (t) =>
+      t < 20
+        ? on(t, 'running', 0, 'n1', 'n1.cvm')
+        : on(t, 'running', t === 20 ? 1 : 0, 'n2', 'n2.cvm'),
+    );
+    const r = deriveVmSteps('v', [ev(20, 'vm.migrated', 'v')], series);
+    expect(r.impact).toBe('none');
+    expect(r.startT).toBeNull();
+  });
+
+  it('a stall that ends with the VM on another host is not counted as a redirect either', () => {
+    const series = run(0, 60, (t) =>
+      t < 10
+        ? on(t, 'running', 0, 'n1', 'n1.cvm')
+        : t < 20
+          ? on(t, 'io-stalled', t - 9, 'n1', 'n1.cvm')
+          : on(t, 'running', 0, 'n2', 'n2.cvm'),
+    );
+    const r = deriveVmSteps('v', [], series);
+    expect(r.redirected).toBe(false);
+    expect(r.milestones.map((m) => m.stage)).not.toContain('redirected');
+    expect(r.endT).toBe(20);
+  });
+});
+
+describe('several interruptions of one VM', () => {
+  it('each run of impacted samples is its own run; deriveVmSteps is the first', () => {
+    const series = run(0, 100, (t) =>
+      sample(t, (t >= 10 && t < 20) || (t >= 50 && t < 70) ? 'io-stalled' : 'running', 0),
+    );
+    const runs = deriveVmRuns('v', [], series);
+    // Each is dated from the tick its stuck IO was sent (the tick before it showed).
+    expect(runs.map((r) => [r.startT, r.endT])).toEqual([
+      [9, 20],
+      [49, 70],
+    ]);
+    expect(deriveVmSteps('v', [], series).startT).toBe(9);
+  });
+
+  it('the incremental scanner reads the same runs as one pass, sample by sample', () => {
+    const series = run(0, 120, (t) =>
+      sample(t, (t >= 10 && t < 25) || (t >= 60 && t < 90) ? 'io-stalled' : 'running', 0),
+    );
+    const scanner = new RunScanner();
+    for (let n = 1; n <= series.length; n++) {
+      const part = series.slice(0, n);
+      const a = finishRuns('v', [], part, scanner.scans(part), []);
+      const b = deriveVmRuns('v', [], part, []);
+      expect(a).toEqual(b);
+    }
+  });
+});
+
+describe('runs waiting on the user (holds)', () => {
+  it('the hold math: held ticks are not counted, and the next step comes that much later', () => {
+    const span: RunSpan = { startT: 0, endT: null, holds: [{ from: 15, to: 45 }] };
+    expect(stepAt(span, 14)).toBe(2);
+    expect(stepAt(span, 40)).toBe(2);
+    expect(nextStepTick(span, 16)).toBe(stepBoundary(3) + 30);
+    expect(stepAt(span, stepBoundary(3) + 30)).toBe(3);
+    expect(stepAt(span, stepBoundary(3) + 29)).toBe(2);
+    expect(countsAt(span, 15)).toBe(true);
+    expect(countsAt(span, 30)).toBe(false);
+    expect(countsAt(span, 45)).toBe(true);
+    const open: RunSpan = { startT: 0, endT: null, holds: [{ from: 15, to: null }] };
+    expect(isWaiting(open, 20)).toBe(true);
+    expect(nextStepTick(open, 16)).toBeNull();
+    expect(stepAt(open, 10_000)).toBe(stepAt(open, 15));
+  });
+
+  it('a failed CVM never recovered: the IO resumed remotely, the failback cannot come, the counter stops', () => {
+    const series = run(0, 400, (t) =>
+      t < 5
+        ? sample(t, 'running', 0)
+        : t < 25
+          ? sample(t, 'io-stalled', t - 4, t < 20 ? 'n1.cvm' : 'n2.cvm')
+          : sample(t, 'running', 0, 'n2.cvm'),
+    );
+    const failed = [ev(5, 'device.failed', 'n1.cvm'), ev(20, 'redirector.redirect', 'n1')];
+    const r = deriveVmSteps('v', failed, series);
+    expect(r.impact).toBe('redirected');
+    expect(r.endT).toBeNull();
+    expect(r.holds).toEqual([{ from: 25, to: null }]);
+    expect(isWaiting(r, 400)).toBe(true);
+    expect(stepAt(r, 400)).toBe(stepAt(r, 25));
+    expect(nextStepTick(r, 300)).toBeNull();
+    // Recovered at 100: counting picks up from where it stopped, through the failback.
+    const later = [
+      ...failed,
+      ev(100, 'device.recovered', 'n1.cvm'),
+      ev(130, 'stargate.up', 'n1.cvm'),
+      ev(300, 'redirector.failback', 'n1'),
+    ];
+    const r2 = deriveVmSteps('v', later, series);
+    expect(r2.holds).toEqual([{ from: 25, to: 100 }]);
+    expect(r2.endT).toBe(300);
+    expect(stepAt(r2, 300)).toBe(stepOfElapsed(300 - (r2.startT as number) - 75));
+    const steps = r2.milestones.map((m) => m.step);
+    expect(steps).toEqual([...steps].sort((a, b) => a - b));
+  });
+
+  it('a CVM that reboots on its own is not a hold: the counter climbs to the failback', () => {
+    const series = run(0, 400, (t) =>
+      t < 5
+        ? sample(t, 'running', 0)
+        : t < 25
+          ? sample(t, 'io-stalled', t - 4, t < 20 ? 'n1.cvm' : 'n2.cvm')
+          : sample(t, 'running', 0, 'n2.cvm'),
+    );
+    const events = [ev(20, 'redirector.redirect', 'n1'), ev(150, 'stargate.up', 'n1.cvm')];
+    const r = deriveVmSteps('v', events, series);
+    expect(r.holds).toEqual([]);
+    expect(isWaiting(r, 400)).toBe(false);
+    expect(stepAt(r, 400)).toBeGreaterThan(stepAt(r, 150));
+  });
+
+  it('a VM failed by the user is down with nothing restarting it: held until it is recovered', () => {
+    const series = run(0, 200, (t) => sample(t, t >= 10 && t < 150 ? 'failed' : 'running', 0));
+    const open = deriveVmSteps('v', [], series.slice(0, 120));
+    expect(open.impact).toBe('down');
+    expect(open.milestones.map((m) => m.stage)).toEqual(['vm-down']);
+    expect(isWaiting(open, 119)).toBe(true);
+    expect(stepAt(open, 119)).toBe(1);
+    const done = deriveVmSteps('v', [], series);
+    expect(done.endT).toBe(150);
+    expect(done.holds).toEqual([{ from: 10, to: 150 }]);
+    expect(stepAt(done, 150)).toBe(1);
+  });
+
+  it('a crashed VM while the cluster has no quorum (no HA leader) is held; HA restarting it is not', () => {
+    const series = run(0, 300, (t) =>
+      t < 10 ? on(t, 'running', 0, 'n1', 'n1.cvm') : on(t, 'crashed', 0, null, 'n1.cvm'),
+    );
+    const r = deriveVmSteps('v', [ev(50, 'zk.quorum.lost', 'cluster')], series);
+    expect(r.holds).toEqual([{ from: 50, to: null }]);
+    expect(isWaiting(r, 299)).toBe(true);
+    const ha = deriveVmSteps('v', [], series);
+    expect(ha.holds).toEqual([]);
+  });
+
+  it('fault windows pair each fault with its own recovery; VMs can be ignored', () => {
+    const events = [
+      ev(5, 'device.failed', 'a'),
+      ev(8, 'device.failed', 'vm'),
+      ev(10, 'action.cvm.planned-shutdown', 'c'),
+      ev(20, 'device.recovered', 'a'),
+      ev(30, 'action.cvm.planned-start', 'c'),
+      ev(40, 'device.failed', 'b'),
+    ];
+    // The failed VM is never recovered: counted, it keeps a fault in place for good.
+    expect(faultWindows(events)).toEqual([{ from: 5, to: null }]);
+    expect(faultWindows(new EventIndex(events), (id) => id === 'vm')).toEqual([
+      { from: 5, to: 30 },
+      { from: 40, to: null },
+    ]);
+    expect(faultWindows([ev(8, 'device.failed', 'vm')], (id) => id === 'vm')).toEqual([]);
+  });
+
+  it('a VM whose host is down keeps its own state (HA restarts it); one failed itself reads failed', () => {
+    expect(vmSampleState('failed', 'running')).toBe('failed');
+    expect(vmSampleState('failed', 'crashed')).toBe('crashed');
+    expect(vmSampleState('failed', 'restarting')).toBe('restarting');
+    expect(vmSampleState('ok', 'running')).toBe('running');
+  });
+});
+
+describe('planned array operations', () => {
+  it('a controller that fails during its planned reboot ends the operation there', () => {
+    const events = [
+      ev(10, 'fa.controller.draining', 'fa.ct1'),
+      ev(20, 'fa.controller.rebooting', 'fa.ct1'),
+      ev(40, 'device.failed', 'fa.ct1'),
+    ];
+    const op = deriveArrayOpSteps(events, 0);
+    expect(op.endT).toBe(40);
+    expect(op.crashed).toBe(true);
+    const ok = deriveArrayOpSteps(
+      [...events.slice(0, 2), ev(200, 'fa.controller.online', 'fa.ct1')],
+      0,
+    );
+    expect(ok.endT).toBe(200);
+    expect(ok.crashed).toBe(false);
+  });
+
+  it('an NDU paused for hosts waits on the user: the pause is a hold', () => {
+    const events = [
+      ev(0, 'fa.ndu.start', 'fa'),
+      ev(0, 'fa.controller.draining', 'fa.ct1'),
+      ev(100, 'fa.ndu.waiting-for-hosts', 'fa'),
+      ev(300, 'fa.giveback', 'fa.ct0'),
+      ev(400, 'fa.ndu.complete', 'fa'),
+    ];
+    const op = deriveArrayOpSteps(events, 0);
+    expect(op.holds).toEqual([{ from: 100, to: 300 }]);
+    expect(op.endT).toBe(400);
+    const waiting = deriveArrayOpSteps(events.slice(0, 3), 0);
+    expect(isWaiting(waiting, 250)).toBe(true);
   });
 });

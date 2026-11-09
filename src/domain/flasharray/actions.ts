@@ -1,5 +1,6 @@
 /**
- * FlashArray actions (SPEC §5.5): `fa.io-stall`, `fa.controller.failover`, `fa.ndu`,
+ * FlashArray actions (SPEC §5.5): `fa.io-stall`, `fa.controller.failover`, `fa.controller.reboot`,
+ * `fa.ndu`,
  * `fa.interface.disable` / `enable` (one FA IP), and `vm.snapshot` (an array task through the
  * mgmt API; SPEC §14 contract backlog). Precondition failures surface as `action.rejected`.
  */
@@ -74,6 +75,19 @@ export function faActions(model: FlashArrayModel): ActionDefinition[] {
     },
     {
       spec: {
+        kind: 'fa.controller.reboot',
+        label: 'Planned controller reboot',
+        description:
+          'The secondary stops taking new IO (hosts retry it on the primary’s paths at once), finishes the IO in flight, then reboots. No VM IO stalls.',
+        appliesTo: kindIs(
+          'fa-controller',
+          (d) => d.fields.role === 'secondary' && d.fields.state === 'up',
+        ),
+      },
+      apply: (req, ctx) => run(ctx, (env) => model.plannedReboot(req.target, env, ctx.causeIds)),
+    },
+    {
+      spec: {
         kind: 'fa.ndu',
         label: 'Purity upgrade (NDU)',
         description:
@@ -101,7 +115,7 @@ export function faActions(model: FlashArrayModel): ActionDefinition[] {
           'fa-interface',
           (d) => d.fields.service === 'nvme-tcp' && d.fields.floating !== true,
         ),
-        params: { durationS: { label: 'Outage (s)', choices: [3, 10, 20, 60] } },
+        params: { durationS: { label: 'Outage', choices: [3, 10, 20, 60] } },
       },
       apply: (req, ctx) => {
         const f = model.facts.interfaces.find((i) => i.id === req.target);

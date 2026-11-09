@@ -27,13 +27,25 @@ export type StepStage =
   | 'services-stopped'
   /** The AHV redirector sends each vDisk session to a remote CVM's Stargate; IO can resume. */
   | 'redirected'
+  /** The VM itself is down: its process stopped (host failure, self-termination, or a fault). */
+  | 'vm-down'
+  /** AHV HA started the VM again on another host (its own outcome, not a redirect). */
+  | 'ha-restarted'
   /** The VM's IO completes again (see `resumeStep`). */
   | 'resumed'
   /** Recovery, after the failure ends; the VM is not interrupted by any of it. */
   | 'path-restored'
   | 'maintenance-exited'
   | 'services-restarted'
-  | 'failed-back';
+  | 'failed-back'
+  /**
+   * A planned array operation (a controller reboot, or the reboots of an NDU). These belong to
+   * the array's own run, not to a VM's: the step counter climbs through them while no VM stalls.
+   */
+  | 'controller-draining'
+  | 'controller-rebooting'
+  | 'controller-online'
+  | 'controller-failover';
 
 export interface StageInfo {
   readonly stage: StepStage;
@@ -95,6 +107,22 @@ export const STAGES: Readonly<Record<StepStage, StageInfo>> = {
     confidence: 'lab-observed',
     eventCode: 'redirector.redirect',
   },
+  'vm-down': {
+    stage: 'vm-down',
+    label: 'VM down',
+    text: 'The VM process is no longer running: its host failed, it was shut down because no Stargate served its disks, or it failed itself. Its IO stops until it runs again.',
+    cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-5b'],
+    confidence: 'inferred',
+    eventCode: 'vm.crashed',
+  },
+  'ha-restarted': {
+    stage: 'ha-restarted',
+    label: 'Restarted by AHV HA',
+    text: 'AHV HA powers the VM on again on another host that can run it. It is a fresh boot there, served by that host’s CVM: not a redirect, and nothing fails back later.',
+    cite: ['ntnx-ahv-admin-11.2', 'ntnx-bible-5b'],
+    confidence: 'inferred',
+    eventCode: 'ha.vm.restarted',
+  },
   resumed: {
     stage: 'resumed',
     label: 'IO completes again',
@@ -135,7 +163,43 @@ export const STAGES: Readonly<Record<StepStage, StageInfo>> = {
     confidence: 'unverified',
     eventCode: 'redirector.failback',
   },
+  'controller-draining': {
+    stage: 'controller-draining',
+    label: 'Controller drains',
+    text: 'The controller stops taking new IO: it answers with ANA Inaccessible, so each host retries the IO on the other controller’s paths at once. The IO already in flight finishes. No VM IO stalls.',
+    cite: ['everpure-upgrade', 'everpure-ana-faq', 'nvme-base-spec-2.1'],
+    confidence: 'assumption',
+    eventCode: 'fa.controller.draining',
+  },
+  'controller-rebooting': {
+    stage: 'controller-rebooting',
+    label: 'Controller reboots',
+    text: 'With nothing left in flight on it, the controller reboots and its ports disappear. The hosts lose those paths without waiting on any IO.',
+    cite: ['everpure-upgrade', 'everpure-npiv'],
+    confidence: 'assumption',
+    eventCode: 'fa.controller.rebooting',
+  },
+  'controller-online': {
+    stage: 'controller-online',
+    label: 'Controller back online',
+    text: 'The controller is back as secondary; the hosts reconnect and IO uses its paths again.',
+    cite: ['everpure-upgrade'],
+    confidence: 'assumption',
+    eventCode: 'fa.controller.online',
+  },
+  'controller-failover': {
+    stage: 'controller-failover',
+    label: 'Planned failover',
+    text: 'The primary gives back and the upgraded controller promotes, with a short array-wide IO pause.',
+    cite: ['everpure-ha-planned', 'everpure-upgrade'],
+    confidence: 'assumption',
+    eventCode: 'fa.promotion.complete',
+  },
 };
 
-/** The relative scale shown to users for how an interruption ended (never a duration). */
-export type ImpactScale = 'none' | 'brief' | 'longer' | 'redirected';
+/**
+ * The relative scale shown to users for how an interruption ended (never a duration):
+ * `restarted` is a VM that AHV HA started again on another host; `down` a VM that is down with
+ * nothing restarting it (failed or paused by the user, or no host can run it).
+ */
+export type ImpactScale = 'none' | 'brief' | 'longer' | 'redirected' | 'restarted' | 'down';

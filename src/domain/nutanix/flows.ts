@@ -191,8 +191,10 @@ export class FlowsDevice implements Device<Profile> {
     for (const vm of [...reg.vms.values()].sort((a, b) => a.id.localeCompare(b.id))) {
       const host = vm.host;
       const vdisk = vm.vdisks[0];
-      if (host === null || vdisk === undefined || vm.currentState === 'off') continue;
-      if (vm.currentState === 'crashed' || vm.currentState === 'paused') continue;
+      // Only a VM whose IO completes carries throughput: off, crashed, restarting, paused and
+      // io-stalled VMs (a hung Stargate, an array IO stall) move no data. This device runs before
+      // the VMs' `postTick` (id order), so it reads their state for this tick directly.
+      if (host === null || vdisk === undefined || vm.stateAt(ctx.now) !== 'running') continue;
       const cvm = reg.ownerCvm(vdisk);
       const set = cvm === null ? undefined : reg.backends.get(cvm)?.flowPaths?.(vdisk);
       if (cvm === null || !set || set.paths.length === 0) continue;
@@ -207,16 +209,21 @@ export class FlowsDevice implements Device<Profile> {
         legDown = this.learned(c, h, up);
         if (legUp.length === 0 || legDown.length === 0) continue;
       }
+      // A path whose route is not known (yet, or no longer: a tick or two after a start, a
+      // failover, a redirect, or a switch failure before the initiator drops the path) carries
+      // nothing; the VM's flow runs over the paths that do have a route.
       const paths = set.paths.flatMap((p) => {
         const ups = this.learned(p.local, p.remote, up);
         const downs = this.learned(p.remote, p.local, up);
         if (ups.length === 0 || downs.length === 0) return [];
         return [{ id: p.id, routes: combine(legUp, ups, downs, legDown) }];
       });
-      // Until every live path has carried a sampled IO (a tick or two after start, failover or
-      // a redirect), its route is unknown: leave the VM out rather than crowd the known paths.
-      if (paths.length === 0 || paths.length < set.paths.length) continue;
+      if (paths.length === 0) continue;
       const load = this.loadOf(vm.id);
+      // A partial stall: stuck IO holds part of the guest's queue slots, so only the rest is
+      // in flight on the live paths (closed loop).
+      const free = Math.max(0, 100 - vm.stuckIoPctAt(ctx.now)) / 100;
+      if (free === 0) continue;
       const r = load.readPct / 100;
       const slowest = Math.min(
         ...paths.flatMap((p) =>
@@ -228,7 +235,7 @@ export class FlowsDevice implements Device<Profile> {
       out.push({
         id: vm.id,
         capBps: load.gbps === null ? null : load.gbps * G,
-        outstandingBits: qd * ioBits * vm.vdisks.length,
+        outstandingBits: qd * ioBits * vm.vdisks.length * free,
         readFraction: r,
         selector: set.selector,
         paths,
@@ -268,6 +275,7 @@ export class FlowsDevice implements Device<Profile> {
 
   private publish(flows: readonly FlowDemand[], sol: FlowSolution): void {
     this.reg.vmFlow.clear();
+    const ioBits = THROUGHPUT.ioSizeKiB.value * 1024 * 8;
     const crossesIsl = (k: DirKey) => {
       const info = this.dirInfo.get(k);
       return !!info && this.switches.has(info.from) && this.switches.has(info.to);
@@ -298,7 +306,6 @@ export class FlowsDevice implements Device<Profile> {
         };
       });
       const load = this.loadOf(f.id);
-      const ioBits = THROUGHPUT.ioSizeKiB.value * 1024 * 8;
       this.reg.vmFlow.set(f.id, {
         offeredGbps: load.gbps,
         offeredIops: load.gbps === null ? null : (load.gbps * G) / ioBits,
@@ -309,6 +316,22 @@ export class FlowsDevice implements Device<Profile> {
         writeGbps: (res.bps * (1 - f.readFraction)) / G,
         latencyUs: res.latencyS * 1e6,
         paths,
+      });
+    }
+    // Every other VM: no rate now, but its offered load (the `vm.set-load` form shows it).
+    for (const vm of this.reg.vms.values()) {
+      if (this.reg.vmFlow.has(vm.id)) continue;
+      const load = this.loadOf(vm.id);
+      this.reg.vmFlow.set(vm.id, {
+        offeredGbps: load.gbps,
+        offeredIops: load.gbps === null ? null : (load.gbps * G) / ioBits,
+        iops: 0,
+        readPct: load.readPct,
+        gbps: 0,
+        readGbps: 0,
+        writeGbps: 0,
+        latencyUs: 0,
+        paths: [],
       });
     }
   }

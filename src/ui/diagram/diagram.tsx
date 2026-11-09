@@ -109,7 +109,7 @@ export function Diagram({
   }, [model, snapshot.devices, layoutMap]);
   // What is drawn: a failed device's children are drawn failed too.
   const shown = useMemo(() => effectiveDevices(placed.devices), [placed.devices]);
-  const restartedFrom = useMemo(() => {
+  const movedFrom = useMemo(() => {
     const out = new Map<string, string>();
     for (const [vm, from] of placed.movedFrom) out.set(vm, snapshot.devices[from]?.label ?? from);
     return out;
@@ -230,11 +230,11 @@ export function Diagram({
         pathUsage,
         utilLabels,
         draggable: layoutEdit,
-        restartedFrom,
+        movedFrom,
         notes: model.notes,
         meters,
       }),
-    [shown, dl, selectedId, pathUsage, utilLabels, layoutEdit, restartedFrom, model, meters],
+    [shown, dl, selectedId, pathUsage, utilLabels, layoutEdit, movedFrom, model, meters],
   );
   const edges = useMemo<CableEdge[]>(
     () =>

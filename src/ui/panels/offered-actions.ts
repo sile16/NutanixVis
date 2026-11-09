@@ -1,4 +1,4 @@
-import type { ActionSpec } from '../../engine/types';
+import type { ActionSpec, DeviceView, LinkView } from '../../engine/types';
 
 /**
  * Failure actions the UI does not offer. They stay in the engine (guided scenarios and tests
@@ -35,4 +35,20 @@ const HIDDEN = new Set([
   'vm.resume',
 ]);
 
-export const isOfferedAction = (spec: Pick<ActionSpec, 'kind'>): boolean => !HIDDEN.has(spec.kind);
+const isDown = (v: DeviceView): boolean => v.status === 'failed' || v.status === 'offline';
+
+/**
+ * Whether the inspector offers `spec` on `view` (the device as drawn, `effective-status.ts`).
+ * Beyond the hidden kinds: a powered-off VM offers no `fail` (nothing runs to fail), and a virtual
+ * switch on a host that is down offers no bond changes (there is no running OVS to change).
+ */
+export function isOfferedAction(
+  spec: Pick<ActionSpec, 'kind'>,
+  view?: DeviceView | LinkView,
+): boolean {
+  if (HIDDEN.has(spec.kind)) return false;
+  if (!view || !('kind' in view)) return true;
+  if (view.kind === 'vm' && spec.kind === 'fail' && view.fields.state === 'off') return false;
+  if (spec.kind.startsWith('vswitch.') && isDown(view)) return false;
+  return true;
+}

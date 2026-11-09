@@ -176,6 +176,11 @@ interface Relax {
   readonly status: boolean;
   readonly vlan: boolean;
   readonly mtu: boolean;
+  /**
+   * Route as a switch would: a hung link or NIC keeps carrier, so nothing upstream knows to avoid
+   * it (MAC tables and LAG hashes still point there); its frames die when forwarded.
+   */
+  readonly hungUnknown?: boolean;
 }
 const STRICT: Relax = { status: false, vlan: false, mtu: false };
 const RELAXATIONS: readonly Relax[] = [
@@ -195,6 +200,8 @@ export class NetworkRuntime implements NetworkQuery {
   private readonly nics = new Map<string, NicState>();
   private readonly switches = new Map<string, SwitchState>();
   private readonly links = new Map<LinkId, LinkState>();
+  /** Hung elements that still exchange LACPDUs (`setHung` with `lacpdusFlow`). */
+  private readonly lacpdusFlow = new Set<string>();
   private readonly bonds = new Map<string, BondRuntime>();
   private readonly bridges = new Map<string, BridgeSpec>();
   private readonly endpoints = new Map<EndpointId, EndpointState>();
@@ -455,12 +462,24 @@ export class NetworkRuntime implements NetworkQuery {
     this.reconcile();
   }
 
-  /** Hang a link, NIC or switch: carrier stays up but every frame is dropped. */
-  setHung(id: string, hung: boolean): void {
+  /**
+   * Hang a link, NIC or switch: carrier stays up but every data frame is dropped. With
+   * `lacpdusFlow` the element keeps exchanging LACPDUs (a data-plane hang, e.g. a stuck
+   * forwarding ASIC): LACP judges liveness by LACPDU receipt alone (OVS `lib/lacp.c`), so the
+   * member is never detached and its hashed flows stay blackholed until repaired.
+   */
+  setHung(id: string, hung: boolean, lacpdusFlow = false): void {
     const el = this.links.get(id) ?? this.nics.get(id) ?? this.switches.get(id);
     if (!el) throw new NetworkError(`no link, NIC or switch '${id}'`);
     el.hung = hung;
+    if (hung && lacpdusFlow) this.lacpdusFlow.add(id);
+    else this.lacpdusFlow.delete(id);
     this.reconcile();
+  }
+
+  /** Hung, and its LACPDUs stop too (what LACP can detect). */
+  private lacpSilent(id: string, hung: boolean): boolean {
+    return hung && !this.lacpdusFlow.has(id);
   }
 
   setLinkLatency(id: LinkId, ms: number): void {
@@ -845,6 +864,8 @@ export class NetworkRuntime implements NetworkQuery {
     relax: Relax,
     flow?: FlowId,
   ): { links: LinkId[]; nodes: string[] } | null {
+    // A hung link or NIC is not routed around: nothing on the path can tell it is hung.
+    relax = { ...relax, hungUnknown: true };
     if (this.nodeFault(start, vlan, need, relax)) return null;
     const prev = new Map<string, { node: string; link: LinkId }>();
     const seen = new Set([start]);
@@ -911,7 +932,9 @@ export class NetworkRuntime implements NetworkQuery {
     const l = this.links.get(id);
     if (!l) return { reason: 'no-route', at: id };
     if (!relax.status && !l.adminUp) return { reason: 'link-down', at: id };
-    if (!relax.status && l.hung) return { reason: 'link-down', at: id, detail: 'hung' };
+    if (!relax.status && !relax.hungUnknown && l.hung) {
+      return { reason: 'link-down', at: id, detail: 'hung' };
+    }
     if (!relax.vlan && l.allowed && !l.allowed.has(vlan)) {
       return { reason: 'vlan-not-carried', at: id };
     }
@@ -936,7 +959,9 @@ export class NetworkRuntime implements NetworkQuery {
       if (!relax.status && (!nic.adminUp || this.host.isDown(id))) {
         return { reason: 'port-down', at: id };
       }
-      if (!relax.status && nic.hung) return { reason: 'port-down', at: id, detail: 'hung' };
+      if (!relax.status && !relax.hungUnknown && nic.hung) {
+        return { reason: 'port-down', at: id, detail: 'hung' };
+      }
       if (!relax.mtu && need > nic.mtu) return { reason: 'mtu', at: id };
       return null;
     }
@@ -996,7 +1021,11 @@ export class NetworkRuntime implements NetworkQuery {
     const linkEvent = this.linkEvents.get(linkId);
     return {
       carrier: this.computeLinkStatus(linkId) === 'up',
-      hung: n.hung || l.hung || this.isHung(peer),
+      // LACP sees a hang only when the LACPDUs stop as well.
+      hung:
+        this.lacpSilent(nic, n.hung) ||
+        this.lacpSilent(linkId, l.hung) ||
+        this.lacpSilent(peer, this.isHung(peer)),
       partnerKey: this.partnerKey(peer),
       causeIds: linkEvent === undefined ? [] : [linkEvent],
     };

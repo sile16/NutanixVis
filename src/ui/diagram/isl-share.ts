@@ -22,7 +22,10 @@ export interface IslShare {
 export const isStorageIoCategory = (c: string): boolean => c.startsWith('io-') || c === 'nvme-io';
 
 export interface IslGroup {
-  /** First member's link id: the group's label, bars and hover text sit on it. */
+  /**
+   * The link the group's label, bars and hover text sit on: its first member that is up (the
+   * first member when every one is down), so the label stays while any member carries traffic.
+   */
   readonly id: string;
   /** Every member link (parallel switch-to-switch links between the same two switches). */
   readonly members: readonly string[];
@@ -43,12 +46,13 @@ export function islGroups(snapshot: Pick<Snapshot, 'devices' | 'links'>): IslGro
   return [...by.values()]
     .map((m) => {
       const members = [...m].sort();
-      return { id: members[0] as string, members };
+      const live = members.find((id) => snapshot.links[id]?.status !== 'down');
+      return { id: live ?? (members[0] as string), members };
     })
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-/** One link id per ISL port-channel (its first member, where the label sits). */
+/** One link id per ISL port-channel (its first live member, where the label sits). */
 export function islLinks(snapshot: Pick<Snapshot, 'devices' | 'links'>): string[] {
   return islGroups(snapshot).map((g) => g.id);
 }

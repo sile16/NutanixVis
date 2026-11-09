@@ -26,6 +26,8 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 |---|---|---|
 | `state` | `running` \| `io-stalled` \| `paused` \| `crashed` \| `restarting` \| `off` | `running`: some of its IO completes, possibly with latency outliers (SPEC §6.4c). `io-stalled`: alive, but none of its IO completes and it has outstanding IO at least one tick old (a just-issued IO is not a stall). `paused`: suspended by the hypervisor. `crashed`: its process died unexpectedly (host power loss, self-termination). `restarting`: an HA restart is in progress. `off`: powered off, or force-shut down. |
 | `host` | string \| null | AHV host it runs on now; `null` when no process exists. |
+| `placedBy` | `topology` \| `ha-restart` \| `live-migration` \| `power-on` | How it came to run on its current (or last) host: where the topology placed it, an AHV HA restart, a live migration (host maintenance mode), or a power-on. The diagram's moved-VM marker and the inspector's placement line word it by this. |
+| `placedFrom` | string \| null | The host it ran on before that move; `null` for `topology`. |
 | `instances` | JSON string[] | Hosts with a live QEMU process for this VM. Normally 0 or 1. The "no VM runs twice" invariant checks that it has ≤ 1 entry. |
 | `ioPendingS` | number | Age of its oldest outstanding IO (0 when nothing is outstanding). This measures the worst-case wait of a single command. |
 | `stuckIoPct` | number | Share of the guest's IO slots (queue depth × vDisks) held by IO that is stuck rather than in flight, in % (0–100). Below 100 with `running`: a partial stall, as when a silent path loss under the queue-depth selector strands only the commands on the dead path's queues. 100 with `io-stalled`: all of its IO is stalled. |
@@ -33,13 +35,14 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `writePendingS` | number | The same, for writes only (for example, writes waiting on RF replication). |
 | `ownerCvm` | string \| null | CVM whose Stargate serves its vDisks: the local CVM normally, a remote one after a redirect, and always remote on CO nodes. |
 | `ioPaths` | JSON string[] | T1 only: NVMe path ids that carried this VM's vDisk IO during the last tick. |
-| `ioUplinks` | JSON string[] | Physical NICs, on any host, that carried this VM's storage IO (iSCSI or NVMe/TCP) during the last tick. It is empty for HCI VMs served locally over `virbr0`. |
+| `ioUplinks` | JSON string[] | Physical NICs, on any host, that carried this VM's storage IO (iSCSI or NVMe/TCP) during the last tick. It is empty for HCI VMs served locally over `virbr0`, and while the VM is not running (paused, off, crashed, restarting). |
+| `ioLatencyMs` | number \| null | Latency of its last completed IO (sampled model); `null` while it is not running. With the throughput model the inspector shows `ioLatencyUs` instead. |
 | `ioChain` | JSON object | The VM's IO path as ordered hops, for drawing: `{vm, stalled, remote, selector, hops:[{role, ids, label, via?}]}`. Roles in order: `vm`, `redirector` (the AHV iSCSI redirector, Frodo; `via` lists the host NICs the iSCSI leg crosses when the CVM is remote), `cvm`, `stargate` (inside the CVM; the SPDK NVMe/TCP initiator on T1), `nic` (the CVM's storage NICs that carried IO), `array-port` (FlashArray interfaces reached). `selector` is the path selector among optimized paths (T1, e.g. `queue-depth`). HCI VMs end at `stargate`. `src/domain/steps` exports `ioChainOf`. |
 | `pathLossForceShutdownS` | number \| null | Optional. The per-VM force-shutdown timeout on storage path loss (T1); `null` means unset (retry forever). |
-| `offeredLoad` | number \| `line-rate` | T1 throughput model (`docs/research/link-congestion.md`): the VM's offered storage load in Gb/s; `line-rate` = no cap. Set by option `vm-load-gbps` or action `vm.set-load`. |
+| `offeredLoad` | number \| `line-rate` | T1 throughput model (`docs/research/link-congestion.md`): the VM's offered storage load in Gb/s; `line-rate` = no cap. Set by option `vm-load-gbps` or action `vm.set-load`. Present on every VM of the model, running or not (with `offeredIops` and `readPct`). |
 | `readPct` | number | T1 throughput model: read share of the load, %. |
-| `throughputGbps`, `readGbps`, `writeGbps` | number | T1 throughput model: the rate the VM achieves (read + write, and each), after NIC and link limits. |
-| `ioLatencyUs` | number | T1 throughput model: mean round-trip latency of one IO, µs, including queueing on congested links. |
+| `throughputGbps`, `readGbps`, `writeGbps`, `iops` | number | T1 throughput model: the rate the VM achieves (read + write, and each), after NIC and link limits. Present while the VM has a process (`host` set); 0 unless its state is `running` (a paused or `io-stalled` VM moves no data). A partial stall (`stuckIoPct` below 100) leaves only the free share of its queue in flight. A path whose route is not yet (or no longer) known carries nothing; the rest of the VM's paths carry its flow. |
+| `ioLatencyUs` | number | T1 throughput model: mean round-trip latency of one IO, µs, including queueing on congested links. Absent while the VM moves no data. |
 | `flowPaths` | JSON array | T1 throughput model, per NVMe path: `{id, gbps, latencyUs, islPct, routes:[{pct, out, back}]}`. `out` and `back` name the hops each way, marking a switch-to-switch hop `⇒ ISL ⇒` and a full direction `[full +N µs]`. The inspector's "Storage throughput" section shows it. |
 
 ### `cvm`
@@ -50,6 +53,7 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `stargate` | `up` \| `down` \| `unhealthy` \| `hung` | The Stargate process. `unhealthy`: running but failing (for example, ZK or metadata unavailable). `hung`: alive but answering neither IO nor NOPs (`cvm.hang-stargate`). |
 | `nvmePathsUp` | number \| null | T1: count of `live` paths. `null` outside T1. |
 | `nvmePathsTotal` | number \| null | T1: count of configured paths, live or not. |
+| `nvmePathsInaccessible` | JSON string[] | T1: live paths whose controller reports ANA Inaccessible (it drains for a planned reboot). They carry no new IO until they reconnect. |
 | `nvmePaths` | JSON Record<pathId, `live` \| `lost` \| `removed`> | T1: per-path state. `lost`: keep-alive expired, the target reset the connection, or an IO timeout reset the path; reconnecting every `reconnectDelayS`. `removed`: the controller was deleted after `controllerLossTimeoutS`. |
 | `nvmePathLatencyMs` | JSON Record<pathId, number \| null> | T1: latest IO completion latency seen on each path (network + array service, illustrative); `null` before any. The queue-depth selector weighs it (SPEC §6.4c "Slow link"). |
 | `nvmePathIoShare` | JSON Record<pathId, number> | T1: share (%) of this CVM's IO commands sent on each path over the last 30 s. |
@@ -123,7 +127,7 @@ The engine reports AHV virtual switches with view `kind: 'bond'`; the UI and sce
 | Key | Type | Meaning |
 |---|---|---|
 | `role` | `primary` \| `secondary` \| `promoting` \| `offline` | |
-| `state` | `up` \| `crashed` \| `rebooting` \| `stalled` | `stalled`: alive but not completing IO (`fa.io-stall`). |
+| `state` | `up` \| `draining` \| `crashed` \| `rebooting` \| `stalled` | `stalled`: alive but not completing IO (`fa.io-stall`). `draining`: a planned reboot's first phase; new IO is answered ANA Inaccessible, in-flight IO finishes. |
 
 ### `fa-interface`
 
@@ -145,7 +149,7 @@ A logical device (not drawn). `links`: JSON `{linkId: [{from, to, gbps, capacity
 | Key | Type | Meaning |
 |---|---|---|
 | `state` | `online` \| `offline` \| `smart-check` \| `failed` | `failed`: kept offline, for example after 3 offline events in an hour. |
-| `offlineEventsLastHour` | number | |
+| `offlineEventsLastHour` | number | Times the disk went offline within Hades's recent window (`hci.diskOfflineWindowS`); at the profile's limit Hades keeps it offline. The inspector labels it "Recent offline events". |
 
 ## `Snapshot.derived` (cluster-level)
 
@@ -189,12 +193,14 @@ All of these are scalars.
 | `nvme.path.lost` | cvm | One path was lost: its keep-alive expired, the target refused or reset the connection, or an IO timeout reset it. The text says which. |
 | `nvme.io.timeout` | cvm | Commands on a live path got no completion in `ioTimeoutS`: retried elsewhere, and the path is reset. |
 | `nvme.io.released` | cvm | After a silent loss, the target's TCP reset of the old connection released the held commands before the hold expired. |
+| `nvme.path.inaccessible` | cvm | The path's controller reports ANA Inaccessible (it drains for a planned reboot): IO is retried on the other paths and none is sent on this one until it reconnects. |
 | `nvme.path.restored` | cvm | A lost path reconnected. |
 | `nvme.all-paths.lost` | cvm | That CVM has no live path left. |
 | `fa.claim.expired` | the controller that saw it | The primary's drive-quorum claim expired. |
 | `fa.promotion.start` / `fa.promotion.complete` | the promoting controller | |
 | `fa.io-delay.timeout` | the stalled primary | The IO delay timeout fired. |
 | `fa.giveback` | the controller giving up the primary role | |
+| `fa.controller.draining` | controller | A planned reboot began: the controller answers new IO with ANA Inaccessible and finishes the IO in flight. |
 | `fa.controller.rebooting` / `fa.controller.online` | controller | |
 | `fa.ndu.start` / `fa.ndu.complete` | `fa` | |
 | `mgmt.task.failed` / `mgmt.task.succeeded` | the VM (or object) the task was for | An array-management task finished. |

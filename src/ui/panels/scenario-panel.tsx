@@ -8,7 +8,7 @@
 import { clsx } from 'clsx';
 import { Circle, CircleCheck, Info, StepForward } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { deriveVmSteps } from '../../domain/steps';
+import { deriveArrayOpSteps, deriveVmSteps } from '../../domain/steps';
 import { scenarios } from '../../scenarios';
 import type { GuideObservation, ScenarioDef } from '../../scenarios/define';
 import { Button, Select } from '../components/controls';
@@ -80,8 +80,11 @@ function useObservedStages(vm: string | null, from: number | null): ReadonlySet<
   return useMemo(() => {
     if (vm === null || from === null) return new Set<string>();
     const samples = (steps.samples.get(vm) ?? []).filter((x) => x.t >= from);
-    const r = deriveVmSteps(vm, sim.eventLog(), samples);
-    return new Set(r.milestones.map((m) => m.stage));
+    const events = sim.eventLog();
+    const r = deriveVmSteps(vm, events, samples);
+    // A planned array operation (controller reboot, NDU) has stages of its own.
+    const op = deriveArrayOpSteps(events, from);
+    return new Set([...r.milestones, ...op.milestones].map((m) => m.stage));
   }, [steps, sim, vm, from]);
 }
 

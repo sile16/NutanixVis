@@ -1,13 +1,23 @@
 /**
- * Per-VM impact strip: for each workload and each step, one of normal, partly stalled (x % of its
- * IO), all IO stalled, redirected via CVM x, or recovered, as colour plus icon plus text. It reads the steps view only; time is steps,
- * never seconds. A VM that nothing touched has no row, so the strip stays compact.
+ * Per-VM impact strip: for each workload and each step, the worst it went through in that step:
+ * normal, partly stalled (x % of its IO), all IO stalled, down (crashed, restarting, paused),
+ * redirected via CVM x, or recovered, as colour plus icon plus text. It reads the steps view
+ * only; time is steps, never seconds. A VM that nothing touched has no row, so the strip stays
+ * compact.
  */
 import { clsx } from 'clsx';
-import { CircleAlert, CircleCheck, CirclePause, type LucideIcon, Minus, Route } from 'lucide-react';
+import {
+  CircleAlert,
+  CircleCheck,
+  CirclePause,
+  CircleX,
+  type LucideIcon,
+  Minus,
+  Route,
+} from 'lucide-react';
 import { useMemo } from 'react';
 import { useSnapshot, useSteps } from '../store/sim-context';
-import { buildImpact, type CellKind } from './impact';
+import { buildImpact, type CellKind, type ImpactCell, impactCacheFor } from './impact';
 
 const KIND: Readonly<Record<CellKind, { Icon: LucideIcon; cls: string }>> = {
   normal: { Icon: Minus, cls: 'border-border bg-panel-2 text-ink-muted' },
@@ -19,6 +29,10 @@ const KIND: Readonly<Record<CellKind, { Icon: LucideIcon; cls: string }>> = {
     Icon: CirclePause,
     cls: 'border-status-failed/60 bg-status-failed/15 text-status-failed',
   },
+  down: {
+    Icon: CircleX,
+    cls: 'border-status-failed/60 bg-status-failed/25 text-status-failed',
+  },
   redirected: { Icon: Route, cls: 'border-accent/60 bg-accent/15 text-accent-ink' },
   recovered: {
     Icon: CircleCheck,
@@ -26,13 +40,31 @@ const KIND: Readonly<Record<CellKind, { Icon: LucideIcon; cls: string }>> = {
   },
 };
 
+function Cell({ cell, step }: { cell: ImpactCell; step: number | 'now' }) {
+  const { Icon, cls } = KIND[cell.kind];
+  return (
+    <span
+      className={clsx('flex items-center gap-1 whitespace-nowrap rounded border px-1 py-px', cls)}
+      data-testid="impact-cell"
+      data-kind={cell.kind}
+      data-step={step}
+    >
+      <Icon size={10} aria-hidden="true" />
+      {cell.text}
+    </span>
+  );
+}
+
 /** Most step columns shown at once; earlier ones scroll away so the strip stays compact. */
 const MAX_COLS = 8;
 
 export function ImpactStrip() {
   const steps = useSteps();
   const snapshot = useSnapshot();
-  const impact = useMemo(() => buildImpact(steps, snapshot), [steps, snapshot]);
+  const impact = useMemo(
+    () => buildImpact(steps, snapshot, impactCacheFor(steps)),
+    [steps, snapshot],
+  );
   const first = Math.max(0, impact.steps + 1 - MAX_COLS);
   const cols = Array.from({ length: impact.steps + 1 - first }, (_, i) => first + i);
 
@@ -74,6 +106,11 @@ export function ImpactStrip() {
                   {c === 0 ? 'step 0' : `step ${c}`}
                 </th>
               ))}
+              {impact.now ? (
+                <th scope="col" className="font-medium" data-testid="impact-now">
+                  {impact.now === 'waiting' ? 'now (waiting)' : 'now'}
+                </th>
+              ) : null}
               <th scope="col" className="font-medium">
                 result
               </th>
@@ -87,25 +124,9 @@ export function ImpactStrip() {
                 </th>
                 {cols.map((c) => {
                   const cell = r.cells[c];
-                  if (!cell) return <td key={c} />;
-                  const { Icon, cls } = KIND[cell.kind];
-                  return (
-                    <td key={c}>
-                      <span
-                        className={clsx(
-                          'flex items-center gap-1 whitespace-nowrap rounded border px-1 py-px',
-                          cls,
-                        )}
-                        data-testid="impact-cell"
-                        data-kind={cell.kind}
-                        data-step={c}
-                      >
-                        <Icon size={10} aria-hidden="true" />
-                        {cell.text}
-                      </span>
-                    </td>
-                  );
+                  return <td key={c}>{cell ? <Cell cell={cell} step={c} /> : null}</td>;
                 })}
+                {impact.now ? <td>{r.now ? <Cell cell={r.now} step="now" /> : null}</td> : null}
                 <td className="whitespace-nowrap text-ink-muted">{r.summary}</td>
               </tr>
             ))}

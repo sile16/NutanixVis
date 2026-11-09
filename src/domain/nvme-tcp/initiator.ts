@@ -22,8 +22,9 @@
  *    lost path are retried on another path at `lostPathHoldKatoMultiplier × KATO` after its last
  *    successful exchange: the keep-alive detects the loss, Stargate's initiator resets the
  *    controller and retries the aborted IO on a live path (SPDK bdev_nvme; the profile note gives
- *    the owner's estimate it matches). On a connection the target closed, CQT after the loss
- *    (§9.6.2 step 2c). A command stuck on a live but
+ *    the owner's estimate it matches). A connection the target closed fails over the same way
+ *    (owner decision; CQT is not waited on top). A planned controller reboot drains first, so
+ *    nothing is in flight when it closes. A command stuck on a live but
  *    broken queue (hung bond member, lossy link, no carrier loss) is aborted after `ioTimeoutS`,
  *    retried on another path, and the path is reset (it reconnects after `reconnectDelayS`).
  *    After a silent loss the old connection is still probed; a TCP reset from the target (it tore
@@ -70,6 +71,7 @@ import {
   type CommandPayload,
   type CommandRespPayload,
   type ConnectRespPayload,
+  type KeepAliveRespPayload,
   NVME_MSG,
   NVME_TCP_PORT,
   pathIdOf,
@@ -106,6 +108,8 @@ interface Wire {
   readonly sentAt: SimTime;
   readonly draft: MessageDraft;
   resend: boolean;
+  /** Its delivery was already noted (the queue showed life when it arrived). */
+  seen?: boolean;
 }
 
 interface Path {
@@ -129,6 +133,11 @@ interface Path {
   lastDropAt: string | undefined;
   /** Last IO completion on this path (data-plane liveness, as opposed to keep-alive). */
   lastIoOkAt: SimTime;
+  /**
+   * Last time each IO queue showed life: a frame of it reached the target, or a completion came
+   * back (each queue is its own TCP connection, hashed onto a bond member on its own).
+   */
+  queueAliveAt: SimTime[];
   /** Latest observed IO completion latency on this path, ms (null: none yet). */
   rttMs: number | null;
   /** Queue-depth selector: share credit of a slower path (see `choose`). */
@@ -139,6 +148,11 @@ interface Path {
   heldGen: number;
   /** TCP retransmission of the oldest held command on the old connection (silent loss only). */
   probe: { nextAt: SimTime; tries: number; wire: Wire | null } | null;
+  /**
+   * The controller answered with ANA Inaccessible (it drains for a planned reboot): the path stays
+   * connected but carries no new IO until it reconnects.
+   */
+  inaccessible: boolean;
 }
 
 type LossHow = 'silent' | 'refused' | 'reset' | 'io-timeout';
@@ -159,6 +173,8 @@ interface Cmd {
   wire: Wire | null;
   /** Path to avoid on the next dispatch (the one that failed it). */
   avoid: string | null;
+  /** IO queue of its path the current attempt went out on. */
+  queue: number;
   /** Held, retried or retransmitted: latency is then the real wait, not the wire time. */
   delayed: boolean;
   /** Its frame was dropped on a path the initiator still believes live (a silent dead path). */
@@ -206,6 +222,9 @@ function hash(s: string): number {
   }
   return h;
 }
+
+/** A path new IO may use: connected, and its controller is not ANA Inaccessible. */
+const usable = (p: Path): boolean => p.state === 'live' && !p.inaccessible;
 
 const EPHEMERAL_BASE = 33000;
 /** Rolling window of the per-path IO share view (a display choice, not vendor behavior). */
@@ -265,9 +284,6 @@ export class NvmeTcpInitiator implements StorageBackend {
 
   private get kato(): number {
     return this.es.keepAliveTimeoutS.value;
-  }
-  private get cqt(): number {
-    return this.es.commandQuiesceTimeS.value;
   }
   /** Retry time of commands in flight on a silently lost path, from its last exchange. */
   private get silentHoldS(): number {
@@ -333,16 +349,28 @@ export class NvmeTcpInitiator implements StorageBackend {
   health(): 'ok' | 'degraded' | 'unavailable' {
     const live = this.liveCount();
     if (live === 0) return 'unavailable';
-    return live === this.paths.length ? 'ok' : 'degraded';
+    return live === this.paths.length && !this.paths.some((p) => p.inaccessible)
+      ? 'ok'
+      : 'degraded';
   }
 
-  /** Every path is down and the target closed or reset each one (not a silent loss). */
-  lostByTarget(): boolean {
-    return (
-      this.paths.length > 0 &&
-      this.liveCount() === 0 &&
-      this.paths.every((p) => p.lostHow === 'refused' || p.lostHow === 'reset')
-    );
+  /**
+   * How long the oldest command has been stuck in flight on a blackholed connection, at `now`: its
+   * frame was dropped, its path is still believed live (keep-alives pass on the admin
+   * connection), and nothing of its IO queue has reached the target or come back since it went
+   * out. A slow or lossy queue, or one that only drops large frames (an MTU mismatch), still shows
+   * life and does not count, nor does a command held or queued after a path loss (the initiator
+   * knows and waits for a path).
+   */
+  stuckIoAgeS(now: SimTime): number {
+    let oldest = now;
+    for (const c of this.cmds.values()) {
+      if (c.state !== 'inflight' || !c.stuck || c.path === null) continue;
+      const p = this.path(c.path);
+      if (p?.state !== 'live' || (p.queueAliveAt[c.queue] ?? 0) >= c.startedAt) continue;
+      oldest = Math.min(oldest, c.startedAt);
+    }
+    return now - oldest;
   }
 
   /** NVMe path ids that carried this vDisk's IO during the last tick. */
@@ -494,11 +522,12 @@ export class NvmeTcpInitiator implements StorageBackend {
     const ctx = asEngineContext(c);
     switch (msg.kind) {
       case NVME_MSG.keepAliveResp: {
-        const pl = msg.payload as AdminPayload;
+        const pl = msg.payload as KeepAliveRespPayload;
         const p = this.path(pl.pathId);
         if (p?.state === 'live' && pl.gen === p.gen) {
           p.lastOkAt = ctx.now;
           p.ka = null;
+          if (pl.inaccessible === true) this.markInaccessible(p, ctx);
         }
         return true;
       }
@@ -515,7 +544,14 @@ export class NvmeTcpInitiator implements StorageBackend {
         const cmd = this.cmds.get(id);
         if (cmd && cmd.state === 'inflight' && cmd.attempt === attempt) {
           const p = cmd.path === null ? undefined : this.path(cmd.path);
-          if (p) this.noteIoOk(p, pl, ctx.trace(msg.id), ctx);
+          if (pl.status === 'ana-inaccessible') {
+            if (p) this.onInaccessible(p, cmd, ctx);
+            return true;
+          }
+          if (p) {
+            this.noteIoOk(p, pl, ctx.trace(msg.id), ctx);
+            p.queueAliveAt[cmd.queue] = ctx.now;
+          }
           this.complete(cmd, pl, ctx.trace(msg.id), ctx);
         } else if (cmd && cmd.state === 'held' && cmd.silentHeld && cmd.attempt === attempt) {
           // A probe on the old connection was served after all: that connection works again,
@@ -558,8 +594,15 @@ export class NvmeTcpInitiator implements StorageBackend {
       const p = this.path(cmd.path);
       if (!p) continue;
       const fate = this.fate(cmd.wire, p, ctx);
+      if (fate === 'delivered' && cmd.wire.seen !== true) {
+        cmd.wire.seen = true;
+        p.queueAliveAt[cmd.queue] = ctx.now;
+      }
       if (fate === 'refused') this.lose(p, ctx, 'refused');
       else if (fate === 'dropped') {
+        // Dropped for size only (an MTU mismatch): the connection itself still works, since its
+        // ACKs and small segments pass; only the large segment dies. Not a blackhole.
+        if (ctx.trace(cmd.wire.msgId)?.reason === 'mtu') p.queueAliveAt[cmd.queue] = ctx.now;
         cmd.wire.resend = true;
         cmd.nextResendAt = ctx.now + this.rto(cmd.tries);
         cmd.tries++;
@@ -629,6 +672,9 @@ export class NvmeTcpInitiator implements StorageBackend {
       nvmePathsUp: this.liveCount(),
       nvmePathsTotal: this.paths.length,
       nvmePaths: JSON.stringify(this.pathStates()),
+      nvmePathsInaccessible: JSON.stringify(
+        this.paths.filter((p) => p.state === 'live' && p.inaccessible).map((p) => p.id),
+      ),
       nvmeMultipathPolicy: this.policy,
       nvmePathSelector: this.selector,
       nvmeHealth: this.health(),
@@ -685,11 +731,13 @@ export class NvmeTcpInitiator implements StorageBackend {
         nextReconnectAt: null,
         lastDropAt: undefined,
         lastIoOkAt: 0,
+        queueAliveAt: [],
         rttMs: null,
         credit: 1,
         lostHow: null,
         heldGen: 0,
         probe: null,
+        inaccessible: false,
       };
       this.newAssociation(p);
       return p;
@@ -739,6 +787,7 @@ export class NvmeTcpInitiator implements StorageBackend {
       holdUntil: 0,
       wire: null,
       avoid: null,
+      queue: 0,
       delayed: false,
       stuck: false,
       gen: 0,
@@ -781,7 +830,7 @@ export class NvmeTcpInitiator implements StorageBackend {
       perPath.set(c.path, (perPath.get(c.path) ?? 0) + 1);
       if (!c.stuck) continue;
       const p = this.path(c.path);
-      if (p?.state === 'live' && p.lastIoOkAt < c.startedAt && !dead.includes(p)) dead.push(p);
+      if (p && usable(p) && p.lastIoOkAt < c.startedAt && !dead.includes(p)) dead.push(p);
     }
     if (this.selector === 'round-robin') return dead[0];
     return dead.find((p) => (perPath.get(p.id) ?? 0) < this.queues);
@@ -812,7 +861,7 @@ export class NvmeTcpInitiator implements StorageBackend {
 
   /** Multipath policy and selector (SPEC §6.4b; policy `assumption`, selector `inferred`). */
   private choose(vdisk: string, avoid: string | null): Path | null {
-    const live = this.order.filter((p) => p.state === 'live');
+    const live = this.order.filter(usable);
     if (live.length === 0) return null;
     const ok = (p: Path) => p.id !== avoid || live.length === 1;
     if (this.policy === 'active-active') {
@@ -865,11 +914,11 @@ export class NvmeTcpInitiator implements StorageBackend {
     }
     // Active-passive: one sticky path per vDisk, vDisks spread by hash; fail over on loss.
     const cur = this.path(this.active.get(vdisk) ?? '');
-    if (cur?.state === 'live' && ok(cur)) return cur;
+    if (cur !== undefined && usable(cur) && ok(cur)) return cur;
     const start = hash(vdisk) % this.paths.length;
     for (let k = 0; k < this.paths.length; k++) {
       const p = this.paths[(start + k) % this.paths.length] as Path;
-      if (p.state === 'live' && ok(p)) {
+      if (usable(p) && ok(p)) {
         this.active.set(vdisk, p.id);
         return p;
       }
@@ -923,6 +972,7 @@ export class NvmeTcpInitiator implements StorageBackend {
     };
     cmd.state = 'inflight';
     cmd.path = p.id;
+    cmd.queue = q;
     cmd.startedAt = ctx.now;
     cmd.avoid = null;
     cmd.stuck = false;
@@ -976,7 +1026,8 @@ export class NvmeTcpInitiator implements StorageBackend {
    * Declare a path lost. What happens to its in-flight commands depends on how (SPEC §6.4c):
    * - `silent` (keep-alive timeout): held until k × KATO after the last exchange (the controller
    *   reset), while the old connection is probed; a target reset releases them early.
-   * - `refused` (the target closed the connection): held CQT (§9.6.2 step 2c).
+   * - `refused` (the target closed the connection): failed over like a lost path, at k × KATO
+   *   after the last exchange (owner decision; CQT is not waited).
    * - `reset` (the target reset a connection it had already torn down): retried after
    *   `targetResetRetryS`.
    * - `io-timeout` (the host's own error recovery after an IO timeout): retried at once.
@@ -996,10 +1047,12 @@ export class NvmeTcpInitiator implements StorageBackend {
     p.ka = null;
     p.connect = null;
     const silent = how === 'silent';
-    const holdUntil = silent
-      ? Math.max(now + 1, p.lastOkAt + this.silentHoldS)
-      : how === 'refused'
-        ? now + Math.max(1, this.cqt)
+    // A closed connection fails over like a lost one: Stargate's initiator resets the controller
+    // and retries the in-flight IO on the same schedule (owner decision, 2026-11-09); CQT is not
+    // waited on top.
+    const holdUntil =
+      silent || how === 'refused'
+        ? Math.max(now + 1, p.lastOkAt + this.silentHoldS)
         : now + this.es.targetResetRetryS.value;
     let held = 0;
     let retried = 0;
@@ -1030,9 +1083,10 @@ export class NvmeTcpInitiator implements StorageBackend {
     } else p.probe = null;
     const remoteOwner = ctx.net.endpoint(p.remote)?.owner;
     const causeIds = [...extraCauses, ...this.causes.causeOf(p.lastDropAt, remoteOwner, p.remote)];
+    const k = this.es.lostPathHoldKatoMultiplier.value;
     const rule = silent
-      ? `${this.es.lostPathHoldKatoMultiplier.value} × KATO after the last exchange, or earlier if the target resets the old connection`
-      : 'CQT';
+      ? `${k} × KATO after the last exchange, or earlier if the target resets the old connection`
+      : `${k} × KATO after the last exchange, as for a lost path`;
     const heldText = held
       ? `; ${held} in-flight command(s) held (${rule})`
       : retried
@@ -1048,7 +1102,12 @@ export class NvmeTcpInitiator implements StorageBackend {
       silent: [
         ...new Set([...this.es.keepAliveTimeoutS.cite, ...this.es.lostPathHoldKatoMultiplier.cite]),
       ],
-      refused: ['nvme-base-spec-2.1', 'nvme-tcp-spec'] satisfies KnownCitationId[],
+      refused: [
+        ...new Set([
+          ...this.es.lostPathHoldKatoMultiplier.cite,
+          'nvme-tcp-spec' satisfies KnownCitationId,
+        ]),
+      ],
       reset: this.es.targetResetRetryS.cite,
       'io-timeout': this.es.ioTimeoutS.cite,
     };
@@ -1077,6 +1136,32 @@ export class NvmeTcpInitiator implements StorageBackend {
         confidence: this.es.pathLossDefault.confidence,
       });
     }
+  }
+
+  /**
+   * The controller behind `p` answered ANA Inaccessible (it drains for a planned reboot): the
+   * command is retried on another path at once, and no new IO goes to `p` until it reconnects.
+   * The connection closes later with nothing in flight on it, so no command waits on it.
+   */
+  private onInaccessible(p: Path, cmd: Cmd, ctx: EngineTickContext<Profile>): void {
+    this.requeue(cmd, p.id);
+    this.markInaccessible(p, ctx);
+  }
+
+  /** Stop sending new IO on `p`: its controller is ANA Inaccessible (until `p` reconnects). */
+  private markInaccessible(p: Path, ctx: EngineTickContext<Profile>): void {
+    if (p.inaccessible) return;
+    p.inaccessible = true;
+    const remoteOwner = ctx.net.endpoint(p.remote)?.owner;
+    ctx.emit({
+      severity: 'info',
+      deviceId: this.cvm,
+      code: 'nvme.path.inaccessible',
+      text: `${p.id}: the controller reports ANA Inaccessible; IO is retried on the other paths and none is sent on this one until it reconnects`,
+      causeIds: this.causes.causeOf(p.remote, remoteOwner),
+      cite: ['nvme-base-spec-2.1', 'everpure-ana-faq'] satisfies KnownCitationId[],
+      confidence: 'inferred',
+    });
   }
 
   /** TCP reset from the target on `p` (a frame of an association it no longer has). */
@@ -1135,6 +1220,7 @@ export class NvmeTcpInitiator implements StorageBackend {
 
   private restore(p: Path, ctx: EngineTickContext<Profile>): void {
     p.state = 'live';
+    p.inaccessible = false;
     p.lostHow = null;
     p.credit = 1;
     // The reconnect replaced the old association at the target: probe the old connection at once,

@@ -9,6 +9,8 @@ import {
   at,
   atCtx,
   baseInvariants,
+  cvms,
+  device,
   eventsInOrder,
   fa,
   faController,
@@ -20,11 +22,11 @@ import {
   t1Steady,
 } from '../helpers';
 import { CT0, CT1, FA, T1 } from '../ids';
-import { CLOSED_PATH_WORST, P } from '../timers';
+import { P } from '../timers';
 
 const PAUSE = P.flasharray.plannedFailoverPauseS;
-/** Controller reboot length is not in the profile (no public figure); allow a long run. */
-const END = 1200;
+/** Both reboots (each a drain, then the reboot), the host reconnects and the failover between. */
+const END = 600;
 
 export default defineScenario({
   id: 't1-05-purity-ndu',
@@ -50,14 +52,19 @@ export default defineScenario({
       'the planned failover pause stays within its bound',
       (s) => fa(s).pauseS <= PAUSE + SLACK,
     ),
-    alwaysFrom(T0, 'VMs only ever run or stall briefly', (s) =>
-      allVms(
-        s,
-        (v) =>
-          (isRunning(v) || isStalled(v)) &&
-          // A rebooting controller closes its connections: in-flight IO waits CQT, not the silent-loss hold.
-          v.ioPendingS <= Math.max(PAUSE, CLOSED_PATH_WORST) + SLACK,
-      ),
+    alwaysFrom(T0, 'VMs only ever wait out the failover pause; the reboots never stall them', (s) =>
+      allVms(s, (v) => (isRunning(v) || isStalled(v)) && v.ioPendingS <= PAUSE + SLACK),
+    ),
+    atCtx(END, 'each controller drains before it reboots', (_s, ctx) =>
+      eventsInOrder(ctx, [
+        { code: 'fa.controller.draining', device: CT1 },
+        { code: 'fa.controller.rebooting', device: CT1 },
+        { code: 'fa.controller.draining', device: CT0 },
+        { code: 'fa.controller.rebooting', device: CT0 },
+      ]),
+    ),
+    alwaysFrom(T0, 'no host holds a command waiting on a rebooted controller', (s) =>
+      cvms(s).every((c) => device(s, c.id).fields.nvmeIoHeld === 0),
     ),
     at(
       END,
@@ -70,7 +77,7 @@ export default defineScenario({
     ...baseInvariants(),
   ],
   narrative:
-    "A Purity upgrade reboots the secondary controller first; its Ethernet ports disappear while it reboots, so each CVM temporarily loses that controller's paths. Once it is back, the primary gives back and the upgraded controller promotes, with an IO pause of at most 15 s. Then the old primary reboots and returns as secondary.",
+    "A Purity upgrade reboots the secondary controller first. It drains before it reboots: new IO is answered ANA Inaccessible and retried on the primary's paths at once, so its ports disappear with nothing in flight and no VM IO stalls. Once it is back, the primary gives back and the upgraded controller promotes, with a short IO pause (at most 15 s). Then the old primary drains and reboots the same way and returns as secondary.",
   cite: ['everpure-ha-planned', 'everpure-upgrade', 'everpure-npiv', 'everpure-ana-faq'],
   status: 'active',
 });

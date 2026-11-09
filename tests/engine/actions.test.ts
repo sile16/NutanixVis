@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { type ActionDefinition, ActionError, ActionRegistry, numberParam } from '../../src/engine';
+import { actionChoiceLabel } from '../../src/engine/sim';
+import { loadSimulation } from '../../src/loader/simulation';
 import { fabric, probeSim } from './helpers';
 
 const kinds = (specs: readonly { kind: string }[]) => specs.map((s) => s.kind);
@@ -101,9 +103,9 @@ describe('action registry', () => {
       ['action.rejected', 'unknown action'],
       ['action.rejected', 'unknown target'],
       ['action.rejected', 'not applicable to this target'],
-      ['action.set-latency', 'l-isl (ms=fast)'],
+      ['action.set-latency', 'l-isl (Latency fast)'],
       ['action.rejected', "param 'ms' must be a number"],
-      ['action.vswitch.set-bond-mode', 'h1.vs1 (mode=lacp)'],
+      ['action.vswitch.set-bond-mode', 'h1.vs1 (Bond mode lacp)'],
       ['action.rejected', "'lacp' is not one of active-backup, balance-slb, balance-tcp, no-bond"],
     ]);
     expect(snap.devices['h1.vs1']?.fields.mode).toBe('active-backup');
@@ -155,5 +157,37 @@ describe('action registry', () => {
     ]);
     expect(ev[1]?.causeIds).toEqual([`e${ev[0]?.seq}`]);
     expect(() => new ActionRegistry([custom, custom])).toThrow(/already registered/);
+  });
+});
+
+describe('action-applied event text', () => {
+  it('names duration choices by rank, never in seconds', () => {
+    expect(actionChoiceLabel('seconds', ['off', 60, 120, 300], 60)).toBe('short');
+    expect(actionChoiceLabel('seconds', ['off', 60, 120, 300], 300)).toBe('long');
+    expect(actionChoiceLabel('seconds', ['off', 60, 120, 300], 'off')).toBe('off');
+    expect(actionChoiceLabel('durationS', [5, 10, 15, 60, 120], 15)).toBe('medium');
+    expect(actionChoiceLabel('gbps', [10, 25], 25)).toBe('25');
+  });
+
+  it('logs a force-shutdown timeout without seconds or raw keys', () => {
+    const { sim } = loadSimulation({ topologyId: 't1-ahv-flasharray' });
+    sim.applyAction({
+      kind: 'vm.set-path-loss-force-shutdown',
+      target: 'node-1.vm-1',
+      params: { seconds: 120 },
+    });
+    sim.applyAction({
+      kind: 'vm.set-load',
+      target: 'node-1.vm-1',
+      params: { gbps: 25, readPct: 50 },
+    });
+    const texts = sim
+      .tick()
+      .events.filter((e) => e.code.startsWith('action.vm.'))
+      .map((e) => e.text);
+    expect(texts).toEqual([
+      'Set path-loss force-shutdown timeout: node-1.vm-1 (Timeout medium)',
+      'Set offered load: node-1.vm-1 (Offered load 25 Gb/s, Read share 50 %)',
+    ]);
   });
 });

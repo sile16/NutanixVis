@@ -8,6 +8,7 @@ import { current as P } from '../../../src/domain/versions/profiles/current';
 import { WORKLOAD } from '../../../src/domain/workload/io';
 import { type IoTarget, Vm, type VmEnv } from '../../../src/domain/workload/vm';
 import { createSimulation } from '../../../src/engine/sim';
+import { loadSimulation } from '../../../src/loader/simulation';
 
 type Mode = 'ok' | 'stall' | 'retry' | 'error';
 
@@ -234,5 +235,47 @@ describe('lifecycle', () => {
     sim.tick(1);
     expect(f('state')).toBe('off');
     expect(f('restartNeed')).toBe('none');
+  });
+});
+
+describe('vm view fields in a full topology', () => {
+  it('placedBy says how a VM moved: live migration (maintenance mode) vs AHV HA restart', () => {
+    const { sim } = loadSimulation({ topologyId: 't1-ahv-flasharray' });
+    sim.tick(5);
+    expect(sim.getSnapshot().devices['node-1.vm-1']?.fields.placedBy).toBe('topology');
+    sim.applyAction({ kind: 'host.enter-maintenance', target: 'node-1' });
+    let s = sim.tick();
+    for (let i = 0; i < 40 && s.devices['node-1.vm-1']?.fields.host === 'node-1'; i++)
+      s = sim.tick();
+    const f = s.devices['node-1.vm-1']?.fields;
+    expect(f?.host).not.toBe('node-1');
+    expect(f?.placedBy).toBe('live-migration');
+    expect(f?.placedFrom).toBe('node-1');
+
+    const t2 = loadSimulation({ topologyId: 't2-hci-ahv' }).sim;
+    t2.tick(3);
+    t2.applyAction({ kind: 'fail', target: 'node-4' });
+    let u = t2.tick();
+    for (let i = 0; i < 400 && typeof u.devices['node-4.vm-1']?.fields.host !== 'string'; i++) {
+      u = t2.tick();
+    }
+    for (let i = 0; i < 400 && u.devices['node-4.vm-1']?.fields.host === 'node-4'; i++)
+      u = t2.tick();
+    expect(u.devices['node-4.vm-1']?.fields.placedBy).toBe('ha-restart');
+    expect(u.devices['node-4.vm-1']?.fields.placedFrom).toBe('node-4');
+  });
+
+  it('a paused VM shows no uplinks or latency of its own', () => {
+    const { sim } = loadSimulation({ topologyId: 't1-ahv-flasharray' });
+    let f = sim.tick(5).devices['node-1.vm-1']?.fields;
+    expect(JSON.parse(String(f?.ioUplinks)).length).toBeGreaterThan(0);
+    expect(typeof f?.ioLatencyMs).toBe('number');
+    sim.applyAction({ kind: 'vm.pause', target: 'node-1.vm-1' });
+    f = sim.tick(2).devices['node-1.vm-1']?.fields;
+    expect(f?.state).toBe('paused');
+    expect(f?.ioUplinks).toBe('[]');
+    expect(f?.ioPaths).toBe('[]');
+    expect(f?.ioLatencyMs).toBeNull();
+    expect(f?.throughputGbps).toBe(0);
   });
 });

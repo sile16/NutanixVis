@@ -45,9 +45,9 @@ export function nicLoad(
 }
 
 /**
- * `linkUsage` with each ISL port-channel's members merged onto its first member (Gb/s, line rate
- * and drops summed per direction, the worst member's queueing delay), the others removed: what the
- * ISL label and its bars show.
+ * `linkUsage` with each ISL port-channel's members merged onto the group's label link (Gb/s and
+ * drops summed per direction, the worst member's queueing delay), the others removed: what the ISL
+ * label and its bars show. Line rate counts only the members that are up.
  */
 export function portChannelUsage(
   snapshot: Pick<Snapshot, 'devices' | 'links'>,
@@ -60,7 +60,9 @@ export function portChannelUsage(
     if (g.members.length < 2) continue;
     const by = new Map<string, DirUsage>();
     for (const m of g.members) {
-      for (const d of usage.get(m) ?? []) {
+      const down = snapshot.links[m]?.status === 'down';
+      for (const raw of usage.get(m) ?? []) {
+        const d = down ? { ...raw, capacityGbps: 0 } : raw;
         const k = `${d.from}>${d.to}`;
         const cur = by.get(k);
         by.set(

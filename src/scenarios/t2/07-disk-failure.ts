@@ -77,7 +77,7 @@ function flapping(): ScenarioDef {
   const END = lastRecover + 300;
   return defineScenario({
     id: 't2-07-disk-flapping',
-    title: `T2: a disk goes offline ${LIMIT} times within an hour`,
+    title: `T2: a disk goes offline ${LIMIT} times in a short period`,
     topology: T2.topology,
     durationS: END,
     timeline: steps,
@@ -97,7 +97,7 @@ function flapping(): ScenarioDef {
       ...baseInvariants(),
     ],
     narrative:
-      'A disk keeps dropping offline and coming back. Each time, Hades runs a SMART check and returns it to service if it passes, but a disk that goes offline three times within an hour stays offline. VM IO is served from replicas throughout.',
+      'A disk keeps dropping offline and coming back. Each time, Hades runs a SMART check and returns it to service if it passes, but a disk that goes offline three times in a short period stays offline. VM IO is served from replicas throughout.',
     cite: ['ntnx-bible-4i'],
     status: 'active',
   });

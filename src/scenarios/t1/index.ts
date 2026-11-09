@@ -32,6 +32,8 @@ import s31 from './31-rolling-maintenance';
 import s32 from './32-steps-both-storage-nics-down';
 import s33 from './33-steps-one-storage-nic-dual-fabric-vs-bond';
 import s34 from './34-steps-bond-does-not-fail-back';
+import s35 from './35-steps-planned-controller-reboot';
+import s36 from './36-hung-lacp-member-lacpdus-flowing';
 
 /** T1 (AHV + FlashArray): SPEC §7.2 items 1–30 (19: flow-control misconfiguration; 16 removed: isolated VLANs on a bond are not modeled), 31 (rolling maintenance) and 32–34 (steps view). */
 export const t1Scenarios: readonly ScenarioDef[] = [
@@ -68,4 +70,6 @@ export const t1Scenarios: readonly ScenarioDef[] = [
   s32,
   s33,
   s34,
+  s35,
+  s36,
 ].flat();

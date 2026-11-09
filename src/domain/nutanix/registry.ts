@@ -338,6 +338,9 @@ export class Registry implements NutanixClusterView, VmEnv {
     if (!c) return null;
     return c.stargateDownCause();
   }
+  cvmPlannedOff(cvm: DeviceId): boolean {
+    return this.cvms.get(cvm)?.plannedState() === 'off';
+  }
   vdiskOwner(vdisk: string): DeviceId | null {
     return this.owner.get(vdisk) ?? null;
   }

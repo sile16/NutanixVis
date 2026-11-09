@@ -1,7 +1,7 @@
 /**
  * NVMe/TCP initiator state machine (SPEC §6.4c) on a minimal fabric with a fake target. Timing is
  * asserted at its boundaries: keep-alive cadence, loss at exactly KATO, in-flight retry at
- * k × KATO + CQT after the last exchange (CQT on a closed connection), the path selectors'
+ * k × KATO after the last exchange (CQT on a closed connection), the path selectors'
  * detection-window behavior, reconnect cadence and controller deletion, all read from the profile.
  */
 import { describe, expect, it } from 'vitest';
@@ -20,8 +20,8 @@ const CQT = ES.commandQuiesceTimeS.value;
 const RECONNECT = ES.reconnectDelayS.value;
 const CTRL_LOSS = ES.controllerLossTimeoutS.value;
 const IO_TIMEOUT = ES.ioTimeoutS.value;
-/** NVMe 2.1 §9.6.2–9.6.3: in-flight IO on a silently lost path retries this long after its last exchange. */
-const HOLD = ES.lostPathHoldKatoMultiplier.value * KATO + CQT;
+/** In-flight IO on a silently lost path retries this long after its last exchange (SPEC §6.4c). */
+const HOLD = ES.lostPathHoldKatoMultiplier.value * KATO;
 
 const P0 = 'h1.cvm.ep10~tgt.ep0';
 const P1 = 'h1.cvm.ep10~tgt.ep1';
@@ -126,13 +126,13 @@ describe('silent path loss (KATO)', () => {
     expect(r.init.health()).toBe('degraded');
   });
 
-  it('holds in-flight commands until k × KATO + CQT after the last exchange, then retries', () => {
+  it('holds in-flight commands until k × KATO after the last exchange, then retries', () => {
     expect(IO_TIMEOUT).toBeGreaterThanOrEqual(HOLD);
     const r = rig();
     r.runTo(10);
     const last = r.init.lastExchange(P0) ?? -1;
     r.sim.applyAction({ kind: 'link-down', target: 'l-tgt-p0' });
-    r.runTo(30);
+    r.runTo(last + KATO);
     const lost = lostAt(r, P0) ?? -1;
     expect(lost).toBe(last + KATO);
     const held = r.init.outstanding().held;
@@ -199,7 +199,7 @@ describe('fast path loss (refused)', () => {
     expect(ev?.text).toMatch(/refused/);
     expect(ev?.confidence).toBe('inferred');
     // Refused commands are still held CQT before the retry (NVMe 2.1 §9.6.2 step 2c: the
-    // controller closed the connection, so no keep-alive wait), not k × KATO + CQT.
+    // controller closed the connection), not the silent-loss hold.
     const held = r.init.outstanding().held;
     expect(held).toBeGreaterThan(0);
     r.runTo(11 + CQT - 1);
@@ -230,7 +230,7 @@ describe('detection window: new IO still reaches a silently dead path', () => {
     r.runTo(last + HOLD + 1);
     // IO completed every tick: the stall is partial (fewer free slots, some outliers).
     expect(perTick(r, 12, last + HOLD).every((n) => n > 0)).toBe(true);
-    expect(outlier).toBeGreaterThan(KATO + CQT);
+    expect(outlier).toBeGreaterThan(KATO);
     expect(r.cvm.maxPendingS(last + HOLD + 1)).toBeLessThanOrEqual(1);
     expect(r.cvm.errors()).toHaveLength(0);
   });

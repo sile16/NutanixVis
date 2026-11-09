@@ -1,14 +1,18 @@
 /**
  * Scenario tab: guided scenarios from `src/scenarios` (SPEC §7). Picking one loads its topology and
- * options into the diagram; its timeline is applied by hand, one group at a time, so the user
- * watches each step before the next change. Only the steps-view scenarios are offered: their text
- * speaks in steps, never in durations.
+ * options into the diagram; its timeline is applied by hand, one group at a time. After each group
+ * the panel lists what to watch for (the scenario's `guide`, held to the run by its own test), with
+ * a Step button in the flow; each observation is ticked off live when the VM's steps show it. Only
+ * the steps-view scenarios are offered: their text speaks in steps, never in durations.
  */
+import { clsx } from 'clsx';
+import { Circle, CircleCheck, Info, StepForward } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { deriveVmSteps } from '../../domain/steps';
 import { scenarios } from '../../scenarios';
-import type { ScenarioDef } from '../../scenarios/define';
+import type { GuideObservation, ScenarioDef } from '../../scenarios/define';
 import { Button, Select } from '../components/controls';
-import { useSimControls } from '../store/sim-context';
+import { useSim, useSimControls, useSteps } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 
 /** The scenario name without its "T1" / "T1 steps:" prefix, first letter capitalised. */
@@ -69,13 +73,76 @@ export function ScenarioPanel() {
   );
 }
 
+/** Stages the guided VM has reached since the scenario's first group was applied. */
+function useObservedStages(vm: string | null, from: number | null): ReadonlySet<string> {
+  const steps = useSteps();
+  const sim = useSim();
+  return useMemo(() => {
+    if (vm === null || from === null) return new Set<string>();
+    const samples = (steps.samples.get(vm) ?? []).filter((x) => x.t >= from);
+    const r = deriveVmSteps(vm, sim.eventLog(), samples);
+    return new Set(r.milestones.map((m) => m.stage));
+  }, [steps, sim, vm, from]);
+}
+
+function Observations({
+  items,
+  observed,
+}: {
+  items: readonly GuideObservation[];
+  observed: ReadonlySet<string>;
+}) {
+  return (
+    <ul className="mt-1.5 flex flex-col gap-1" aria-label="Expected observations">
+      {items.map((o) => {
+        const seen = o.stage !== undefined && observed.has(o.stage);
+        return (
+          <li
+            key={o.text}
+            className={clsx('flex items-start gap-1.5', seen ? 'text-ink' : 'text-ink-muted')}
+            data-testid="scenario-observation"
+            data-seen={seen ? 'yes' : 'no'}
+            {...(o.stage ? { 'data-stage': o.stage } : {})}
+          >
+            {o.stage === undefined ? (
+              <Info size={12} aria-hidden="true" className="mt-px shrink-0" />
+            ) : seen ? (
+              <CircleCheck
+                size={12}
+                aria-label="observed"
+                className="mt-px shrink-0 text-status-healthy"
+              />
+            ) : (
+              <Circle size={12} aria-label="not yet" className="mt-px shrink-0" />
+            )}
+            <span className="flex-1">{o.text}</span>
+            {o.step !== undefined ? (
+              <span className="shrink-0 rounded border border-border px-1 text-[10px] tabular-nums">
+                step {o.step}
+              </span>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function ActiveScenario({ def }: { def: ScenarioDef }) {
-  const { apply } = useSimControls();
+  const { apply, stepForward } = useSimControls();
+  const sim = useSim();
+  const current = useSteps().current;
   const simEpoch = useUi((s) => s.simEpoch);
   const groups = useMemo(() => timelineGroups(def), [def]);
-  const [applied, setApplied] = useState<{ epoch: number; n: number }>({ epoch: simEpoch, n: 0 });
+  const [applied, setApplied] = useState<{ epoch: number; n: number; from: number | null }>({
+    epoch: simEpoch,
+    n: 0,
+    from: null,
+  });
   // A rebuilt simulation (reset) starts the timeline again.
-  const done = applied.epoch === simEpoch ? applied.n : 0;
+  const fresh = applied.epoch === simEpoch;
+  const done = fresh ? applied.n : 0;
+  const observed = useObservedStages(def.guide?.vm ?? null, fresh ? applied.from : null);
   return (
     <section aria-label="Scenario" className="flex flex-col gap-2" data-testid="scenario-active">
       <p className="text-xs">{def.narrative}</p>
@@ -86,28 +153,61 @@ function ActiveScenario({ def }: { def: ScenarioDef }) {
             .filter(Boolean)
             .join(' ');
           const state = i < done ? 'applied' : i === done ? 'next' : 'later';
+          const items = def.guide?.groups[i] ?? [];
+          const latest = i === done - 1;
           return (
             <li
               key={g[0]?.at}
-              className="flex items-center gap-2 rounded-md border border-border bg-panel-2 p-2 text-xs"
+              className="rounded-md border border-border bg-panel-2 p-2 text-xs"
               data-testid="scenario-group"
               data-state={state}
             >
-              <span className="flex-1">
-                <span className="font-semibold">{i === 0 ? 'Failure' : 'Then'}</span>
-                {note ? `: ${note}` : `: ${g.length} change${g.length === 1 ? '' : 's'}`}
-              </span>
-              <Button
-                size="sm"
-                disabled={state !== 'next'}
-                data-testid={`scenario-apply-${i}`}
-                onClick={() => {
-                  for (const s of g) apply(s.action);
-                  setApplied({ epoch: simEpoch, n: i + 1 });
-                }}
-              >
-                {state === 'applied' ? 'Applied' : i === 0 ? 'Inject' : 'Apply'}
-              </Button>
+              <div className="flex items-center gap-2">
+                <span className="flex-1">
+                  <span className="font-semibold">{i === 0 ? 'Failure' : 'Then'}</span>
+                  {note ? `: ${note}` : `: ${g.length} change${g.length === 1 ? '' : 's'}`}
+                </span>
+                <Button
+                  size="sm"
+                  disabled={state !== 'next'}
+                  data-testid={`scenario-apply-${i}`}
+                  onClick={() => {
+                    // Observations are read from the first group on (the scenario's own run).
+                    const from =
+                      fresh && applied.from !== null ? applied.from : sim.getSnapshot().simTime;
+                    for (const s of g) apply(s.action);
+                    setApplied({ epoch: simEpoch, n: i + 1, from });
+                  }}
+                >
+                  {state === 'applied' ? 'Applied' : i === 0 ? 'Inject' : 'Apply'}
+                </Button>
+              </div>
+              {items.length > 0 ? (
+                <>
+                  <p className="mt-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-muted">
+                    {state === 'applied' ? 'Watch for' : 'You will see'}
+                  </p>
+                  <Observations
+                    items={items}
+                    observed={state === 'applied' ? observed : new Set()}
+                  />
+                </>
+              ) : null}
+              {latest ? (
+                <div className="mt-2 flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    data-testid={`scenario-step-${i}`}
+                    onClick={stepForward}
+                  >
+                    <StepForward size={12} aria-hidden="true" /> Step
+                  </Button>
+                  <span className="text-ink-muted" data-testid="scenario-step-now">
+                    now at step {current}
+                  </span>
+                </div>
+              ) : null}
             </li>
           );
         })}

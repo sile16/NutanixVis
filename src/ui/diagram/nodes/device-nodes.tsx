@@ -103,10 +103,25 @@ export function CvmNode({ data, selected, width }: P) {
 }
 
 export function VmNode({ data, selected }: P) {
+  // A partial stall: the VM runs, but some of its IO is stuck (for example on a silently dead path).
+  const stuck = data.device.fields.stuckIoPct;
+  const partial =
+    data.device.fields.state === 'running' && typeof stuck === 'number' && stuck > 0 && stuck < 100
+      ? stuck
+      : null;
   return (
     <LeafCard data={data} selected={selected} Icon={Box}>
       <span className="flex min-w-0 flex-col leading-tight">
         <span className="truncate text-[11px] font-medium">{data.device.label}</span>
+        {partial !== null ? (
+          <span
+            className="truncate text-[8px] font-medium text-status-stalled"
+            data-testid={`vm-partial-${data.device.id}`}
+            title={`${partial}% of this VM's queued IO is stuck; the rest completes`}
+          >
+            {partial}% of IO stalled
+          </span>
+        ) : null}
         {data.restartedFrom ? (
           <span
             className="flex items-center gap-0.5 truncate text-[8px] text-accent-ink"

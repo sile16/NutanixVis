@@ -83,6 +83,28 @@ describe('I/O data path (T1)', () => {
     expect(bondMoves(s)).toHaveLength(1);
   });
 
+  it('impact strip: one per-fabric NIC down is a partial stall, both NICs stall all IO', () => {
+    const one = run({ 'storage-vswitch-layout': 'per-fabric' });
+    one.sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
+    const row1 = () =>
+      buildImpact(one.steps.view(), one.sim.getSnapshot()).rows.find((r) => r.vm === 'node-1.vm-1');
+    one.sim.tick(6);
+    // Mid-stall: some of its IO is stuck on the dead paths, the rest completes.
+    expect(row1()?.cells.find((c) => c.kind === 'partial')?.text).toMatch(/^\d+% of IO stalled$/);
+    one.sim.tick(34);
+    expect(row1()?.cells.some((c) => c.kind === 'stalled')).toBe(false);
+    expect(row1()?.summary).toMatch(/^up to \d+% of IO stalled 1 step$/);
+
+    const both = run({ 'storage-vswitch-layout': 'per-fabric' });
+    both.sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });
+    both.sim.applyAction({ kind: 'fail', target: 'node-1.eth3' });
+    both.sim.tick(40);
+    const r2 = buildImpact(both.steps.view(), both.sim.getSnapshot()).rows.find(
+      (r) => r.vm === 'node-1.vm-1',
+    );
+    expect(r2?.cells.find((c) => c.kind === 'stalled')?.text).toBe('all IO stalled');
+  });
+
   it('impact strip: stalled steps come before the redirect step, and the order holds', () => {
     const { sim, steps } = run();
     sim.applyAction({ kind: 'fail', target: 'node-1.eth2' });

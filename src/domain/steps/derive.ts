@@ -25,6 +25,8 @@ export interface VmSample {
   readonly ioPendingS: number;
   readonly host: string | null;
   readonly ownerCvm: string | null;
+  /** Share of the guest's queue slots held by stuck IO, % (`stuckIoPct`; 100 = all IO stalled). */
+  readonly stuckPct?: number | undefined;
 }
 
 export interface StepMilestone {
@@ -56,6 +58,11 @@ export interface VmSteps {
   readonly cells: readonly ('stalled' | 'ok')[];
   /** The VM was served by a different CVM after the interruption (the redirect happened). */
   readonly redirected: boolean;
+  /**
+   * Largest share of the guest's IO stalled during the run, % (0 with no interruption). Below 100
+   * the run was a partial stall: some IO kept completing (a silent path loss under queue-depth).
+   */
+  readonly peakStuckPct: number;
 }
 
 /**
@@ -78,6 +85,7 @@ export function vmSeries(history: readonly Snapshot[], vm: string): VmSample[] {
       ioPendingS: typeof f.ioPendingS === 'number' ? f.ioPendingS : 0,
       host: typeof f.host === 'string' ? f.host : null,
       ownerCvm: typeof f.ownerCvm === 'string' ? f.ownerCvm : null,
+      stuckPct: typeof f.stuckIoPct === 'number' ? f.stuckIoPct : undefined,
     });
   }
   return out;
@@ -92,6 +100,16 @@ const impacted = (x: VmSample): boolean =>
   x.state === 'restarting' ||
   (x.state === 'running' && x.ioPendingS > BLIP);
 
+/**
+ * Share of the VM's IO stalled in a sample, %: the model's `stuckIoPct` when present; otherwise
+ * 100 for a VM whose IO is interrupted (stalled, down) and 0 for one that runs.
+ */
+export function stuckPctOf(x: VmSample): number {
+  if (!impacted(x)) return 0;
+  if (x.state !== 'running') return 100;
+  return x.stuckPct ?? 100;
+}
+
 const NONE = (vm: string): VmSteps => ({
   vm,
   stalledSteps: 0,
@@ -102,6 +120,7 @@ const NONE = (vm: string): VmSteps => ({
   milestones: [],
   cells: [],
   redirected: false,
+  peakStuckPct: 0,
 });
 
 /**
@@ -117,7 +136,17 @@ export function deriveVmSteps(
   if (first < 0) return NONE(vm);
   let last = first;
   while (last + 1 < series.length && impacted(series[last + 1] as VmSample)) last++;
-  const start = (series[first] as VmSample).t;
+  // The interruption began when its oldest stuck IO was sent, not when the stall became visible
+  // (`BLIP` later): the first impacted sample's pending age dates it (an IO younger than `BLIP`
+  // in the sample before was not yet counted). An IO stamped tick k was sent during the tick
+  // that ended at k, so the stall began at k − 1 (for a failure, the tick it was applied at);
+  // never before the series starts.
+  const head = series[first] as VmSample;
+  const floor = (series[0] as VmSample).t;
+  const start =
+    head.state === 'running' || head.state === 'io-stalled'
+      ? Math.max(floor, Math.min(head.t, Math.floor(head.t - head.ioPendingS) - 1))
+      : head.t;
   const stillStalled = last === series.length - 1;
   const end = stillStalled ? Number.POSITIVE_INFINITY : (series[last + 1] as VmSample).t;
   const before = series[Math.max(0, first - 1)] as VmSample;
@@ -224,6 +253,7 @@ export function deriveVmSteps(
     milestones: ms,
     cells: Array.from({ length: stalledSteps }, () => 'stalled' as const),
     redirected,
+    peakStuckPct: series.slice(first, last + 1).reduce((m, x) => Math.max(m, stuckPctOf(x)), 0),
   };
 }
 

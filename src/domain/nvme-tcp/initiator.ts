@@ -19,10 +19,11 @@
  *    Keep-alive is traffic-based: a completed IO command counts as an exchange.
  * 3. Until then the initiator cannot tell the path is dead, so the selector keeps giving it new IO
  *    (see "Path selection"). Once lost, new IO uses the live paths. Commands in flight on a silently
- *    lost path are retried on another path at `lostPathHoldKatoMultiplier × KATO + CQT` after its
- *    last successful exchange (§9.6.2–9.6.3: give the controller time to detect the loss, then CQT
- *    to quiesce); on a connection the target closed, CQT after the loss (§9.6.2 step 2c). Reads
- *    could retry at detection; the model holds all IO (conservative). A command stuck on a live but
+ *    lost path are retried on another path at `lostPathHoldKatoMultiplier × KATO` after its last
+ *    successful exchange: the keep-alive detects the loss, Stargate's initiator resets the
+ *    controller and retries the aborted IO on a live path (SPDK bdev_nvme; the profile note gives
+ *    the owner's estimate it matches). On a connection the target closed, CQT after the loss
+ *    (§9.6.2 step 2c). A command stuck on a live but
  *    broken queue (hung bond member, lossy link, no carrier loss) is aborted after `ioTimeoutS`,
  *    retried on another path, and the path is reset (it reconnects after `reconnectDelayS`).
  *    After a silent loss the old connection is still probed; a TCP reset from the target (it tore
@@ -270,7 +271,7 @@ export class NvmeTcpInitiator implements StorageBackend {
   }
   /** Retry time of commands in flight on a silently lost path, from its last exchange. */
   private get silentHoldS(): number {
-    return this.es.lostPathHoldKatoMultiplier.value * this.kato + this.cqt;
+    return this.es.lostPathHoldKatoMultiplier.value * this.kato;
   }
   private get reconnectDelay(): number {
     return Math.max(1, this.es.reconnectDelayS.value);
@@ -973,8 +974,8 @@ export class NvmeTcpInitiator implements StorageBackend {
 
   /**
    * Declare a path lost. What happens to its in-flight commands depends on how (SPEC §6.4c):
-   * - `silent` (keep-alive timeout): held until k × KATO + CQT after the last exchange (NVMe 2.1
-   *   §9.6.2–9.6.3), while the old connection is probed; a target reset releases them early.
+   * - `silent` (keep-alive timeout): held until k × KATO after the last exchange (the controller
+   *   reset), while the old connection is probed; a target reset releases them early.
    * - `refused` (the target closed the connection): held CQT (§9.6.2 step 2c).
    * - `reset` (the target reset a connection it had already torn down): retried after
    *   `targetResetRetryS`.
@@ -1030,7 +1031,7 @@ export class NvmeTcpInitiator implements StorageBackend {
     const remoteOwner = ctx.net.endpoint(p.remote)?.owner;
     const causeIds = [...extraCauses, ...this.causes.causeOf(p.lastDropAt, remoteOwner, p.remote)];
     const rule = silent
-      ? `${this.es.lostPathHoldKatoMultiplier.value} × KATO + CQT after the last exchange, or earlier if the target resets the old connection`
+      ? `${this.es.lostPathHoldKatoMultiplier.value} × KATO after the last exchange, or earlier if the target resets the old connection`
       : 'CQT';
     const heldText = held
       ? `; ${held} in-flight command(s) held (${rule})`
@@ -1045,11 +1046,7 @@ export class NvmeTcpInitiator implements StorageBackend {
     };
     const cite: Record<LossHow, readonly string[]> = {
       silent: [
-        ...new Set([
-          ...this.es.keepAliveTimeoutS.cite,
-          ...this.es.lostPathHoldKatoMultiplier.cite,
-          ...this.es.commandQuiesceTimeS.cite,
-        ]),
+        ...new Set([...this.es.keepAliveTimeoutS.cite, ...this.es.lostPathHoldKatoMultiplier.cite]),
       ],
       refused: ['nvme-base-spec-2.1', 'nvme-tcp-spec'] satisfies KnownCitationId[],
       reset: this.es.targetResetRetryS.cite,

@@ -160,7 +160,7 @@ These are `assumption` values in the model and are tested by lab experiments L12
 - **Round-robin.** Every Nth new command goes to the dead path. A guest that keeps a fixed queue depth re-issues each completed IO at once, so with sub-millisecond service times all of its queue slots end up on the dead path within moments: a **full stall** until the stuck commands are retried.
 - **Queue-depth** (`_bdev_nvme_find_io_path_min_qd`, SPDK-SRC; dm-multipath `queue-length`). The dead path's outstanding count only grows, so it soon stops getting new IO. About the commands in flight at the failure, plus a few, get stuck: a **partial stall** (a lower effective queue depth plus latency outliers). Everpure's Linux guidance for FlashArray NVMe devices is queue-length based (DM-MPIO; TCP-BP "Queue Length Based"), so the model defaults to it (`inferred`); the topology option `nvme-path-selector` switches to round-robin.
 
-**In-flight IO on a lost path** (NVME-2.1 §9.6.2–9.6.3). Before retrying an outstanding command that modifies data on another path, the host should wait until the controller must have detected the loss: 2 × KATT after the most recent Keep Alive with command-based keep-alive, or 3 × KATT after the most recent command with traffic-based keep-alive. Then it waits CQT (or an implementation-specific time if CQT is 0). Reads may be retried right after detection. The model holds **all** in-flight IO until **3 × KATO + CQT ≈ 45 s after the last successful exchange** (`lostPathHoldKatoMultiplier` 3, an `assumption`: the conservative traffic-based case; which mode the array uses is not published). On a connection the target closed, the keep-alive wait does not apply (§9.6.2 step 2c), so in-flight IO waits CQT and new IO moves to the remaining paths at once.
+**In-flight IO on a lost path** (NVME-2.1 §9.6.2–9.6.3). Before retrying an outstanding command that modifies data on another path, the host should wait until the controller must have detected the loss: 2 × KATT after the most recent Keep Alive with command-based keep-alive, or 3 × KATT after the most recent command with traffic-based keep-alive. Then it waits CQT (or an implementation-specific time if CQT is 0). Reads may be retried right after detection. The model does **not** apply that wait to a silent loss: it retries in-flight IO **2 × KATO ≈ 10 s after the last successful exchange** (`lostPathHoldKatoMultiplier` 2, an `assumption`), when Stargate's SPDK initiator has reset the controller and retries the aborted IO on a live path. The value follows the owner's estimate (2026-11-08) that IO resumes on the surviving path about 9–12 s after a storage NIC is lost; the spec's 3 × KATO + CQT (about 45 s) would not fit it. On a connection the target closed, the keep-alive wait does not apply (§9.6.2 step 2c), so in-flight IO waits CQT and new IO moves to the remaining paths at once.
 
 **Values.**
 
@@ -169,8 +169,8 @@ These are `assumption` values in the model and are tested by lab experiments L12
 | `keepAliveTimeoutS` | 5 s | NCI-CFG | verified |
 | `commandQuiesceTimeS` | 30 s | NCI-CFG ("NTNX CQT") | verified |
 | `controllerLossTimeoutS` | 3600 s | NCI-CFG, CMDREF | verified |
-| `lostPathHoldKatoMultiplier` | 3 | NVME-2.1 §9.6.2, traffic-based case | assumption |
-| `ioTimeoutS` | 45 s | 3 × KATO + CQT: an IO timeout shorter than the hold could retry a command still in flight | inferred |
+| `lostPathHoldKatoMultiplier` | 2 | Owner estimate: IO resumes 9–12 s after a NIC loss | assumption |
+| `ioTimeoutS` | 45 s | 3 × KATO + CQT (NVME-2.1 §9.6): never shorter than the hold, so a command is not retried while still in flight | inferred |
 | `reconnectDelayS` | 10 s | Linux `NVMF_DEF_RECONNECT_DELAY` (LINUX-SRC); SPDK has no default and its multipath example uses 20 s | assumption |
 | `ioQueuesPerPath` | 4 | CMDREF `--nvme_num_io_queues` (kernel stack) | inferred |
 | `pathSelector` | queue-depth | DM-MPIO, TCP-BP, SPDK-SRC | inferred |
@@ -217,7 +217,7 @@ The 10 s "multipath retry" in HA-Scenarios is the SCSI / dm-multipath `fast_io_f
 | Name | Value | Source | Confidence |
 |---|---|---|---|
 | NVMe keep-alive / CQT / controller loss (integration) | 5 s / 30 s / 3600 s | NCI-CFG, CMDREF | verified |
-| NVMe in-flight retry after a silent path loss | 3 × KATO + CQT ≈ 45 s after the last exchange | NVME-2.1 §9.6 | assumption (multiplier) |
+| NVMe in-flight retry after a silent path loss | 2 × KATO ≈ 10 s after the last exchange | owner estimate (9–12 s) | assumption (multiplier) |
 | NVMe IO timeout / reconnect delay | 45 s / 10 s (model) | NVME-2.1 derivation / LINUX-SRC default | inferred / assumption |
 | FA IO delay timeout | 15 s | HA-IODelay | verified |
 | FA promotion | ≤15 s | HA-Timing | verified |

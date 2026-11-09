@@ -146,8 +146,8 @@ export interface Profile {
     readonly maintenanceOnStorageError: Cited<boolean>;
     readonly volumeMonitorIntervalS: Cited<number>;
     /**
-     * Every path to the service volumes gone this long → multipath fails their IO and the mounts
-     * go bad, staying bad (until Hades remounts them) even if the array returns.
+     * Every path to the service volumes gone this long → the CVM kernel fails their queued IO and
+     * the mounts go bad, staying bad (until Hades remounts them) even if the array returns.
      */
     readonly mountFailAfterS: Cited<number>;
     /** An external-storage error lasting this long is critical: the node enters maintenance. */
@@ -229,16 +229,14 @@ export interface Profile {
      */
     readonly keepAliveTimeoutS: Cited<number>;
     /**
-     * NVMe Command Quiesce Time (CQT, TP4129). Commands in flight on a lost path are not retried on
-     * another path until the target has had time to detect the loss and then CQT to quiesce them
-     * (prevents stale-write corruption). See `lostPathHoldKatoMultiplier`.
+     * NVMe Command Quiesce Time (CQT, TP4129). Commands in flight on a connection the target closed
+     * wait CQT before they are retried on another path (NVMe 2.1 §9.6.2 step 2c).
      */
     readonly commandQuiesceTimeS: Cited<number>;
     /**
      * Commands in flight on a silently lost path are retried on another path at
-     * `lostPathHoldKatoMultiplier × KATO + CQT` after the path's last successful exchange (NVMe Base
-     * Spec 2.1 §9.6.2: the controller detects the loss within 2 × KATT with command-based or 3 × KATT
-     * with traffic-based keep-alive; then CQT). On a connection the target closed, only CQT applies.
+     * `lostPathHoldKatoMultiplier × KATO` after the path's last successful exchange: keep-alive
+     * detection, then the initiator resets the controller and retries the aborted IO on a live path.
      */
     readonly lostPathHoldKatoMultiplier: Cited<number>;
     /** Delay between reconnect attempts on a lost path. */

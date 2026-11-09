@@ -236,7 +236,7 @@ describe('T1 rules (DEPLOY-GUIDE "Compute Cluster High Availability")', () => {
     h.run(10);
     const b = h.backends.get('node-1.cvm');
     if (b) b.state = 'unavailable';
-    // The mounts fail once every path has been gone the fast-IO-fail time; the volume check sees
+    // The mounts fail once every path has been gone the kernel IO timeout; the volume check sees
     // it, then the error must last the threshold (SPEC §6.2 "Hades service volumes").
     const limit =
       HADES.mountFailAfterS.value +

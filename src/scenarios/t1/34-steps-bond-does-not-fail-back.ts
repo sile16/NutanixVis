@@ -13,13 +13,31 @@ import {
   vswitch,
 } from '../helpers';
 import { T1, vmId } from '../ids';
-import { stepsOf } from '../steps';
+import { guideChecks, stepsOf } from '../steps';
 import { P } from '../timers';
 
 const VM = vmId(1, 1);
 const RESTORE_AT = T0 + 60;
 /** Long after the restore: several rebalance cycles with nothing to move. */
 const END = RESTORE_AT + 12 * P.bond.slbRebalanceIntervalS;
+
+const GUIDE = {
+  vm: VM,
+  groups: [
+    [
+      {
+        io: 'none',
+        text: 'The bond moves the storage vNIC to eth3. No IO stalls: the step counter stays at 0.',
+      },
+    ],
+    [
+      {
+        io: 'none',
+        text: 'eth2 rejoins the bond but the vNIC stays pinned to eth3: no failback, and eth2 stays idle.',
+      },
+    ],
+  ],
+} as const;
 
 export default defineScenario({
   id: 't1-34-steps-bond-does-not-fail-back',
@@ -65,8 +83,10 @@ export default defineScenario({
     }),
     alwaysFrom(T0, 'the VMs keep running throughout', (s) => vmsOfNode(s, 1).every(isRunning)),
     neverSeen(END, 'nvme.path.lost'),
+    ...guideChecks(GUIDE, END),
     ...baseInvariants(),
   ],
+  guide: GUIDE,
   narrative:
     'A MAC-pinning bond moves the storage vNIC to the surviving NIC when one fails, without any interruption. When the failed NIC returns it rejoins the bond but the vNIC stays where it is: with a single pinned source there is nothing to rebalance, so there is no failback and the restored NIC stays idle.',
   cite: ['ntnx-ahv-admin-11.2', 'ovs-bonding', 'ntnx-community-slb-rebalance'],

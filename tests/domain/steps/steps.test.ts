@@ -60,8 +60,10 @@ describe('steps derivation', () => {
 
   it('a stall that ends within the first step counts as one stalled step', () => {
     const events = [ev(6, 'nvme.path.lost', 'n1.cvm')];
-    const series = run(0, 40, (t) => sample(t, 'running', t >= 4 && t < 12 ? t - 3 : 0));
+    // The stuck IO was sent in the tick after 2; the stall runs to 10, inside the first step.
+    const series = run(0, 40, (t) => sample(t, 'running', t >= 4 && t < 10 ? t - 3 : 0));
     const r = deriveVmSteps('v', events, series);
+    expect(r.startT).toBe(2);
     expect(r.stalledSteps).toBe(1);
     expect(r.resumeStep).toBe(1);
     expect(r.impact).toBe('brief');
@@ -86,7 +88,7 @@ describe('steps derivation', () => {
       ev(7, 'nvme.path.lost', 'n1.cvm'),
       ev(7, 'nvme.all-paths.lost', 'n1.cvm'),
     ];
-    const full = run(0, 12, (t) => sample(t, 'running', t >= 4 ? t - 3 : 0));
+    const full = run(0, 11, (t) => sample(t, 'running', t >= 4 ? t - 3 : 0));
     let peak = 0;
     for (let n = 5; n <= full.length; n++) {
       const t = (full[n - 1] as VmSample).t;
@@ -219,6 +221,54 @@ describe('ioChain view field', () => {
     }
     expect(everRerouted).toBe(false);
     expect(peak).toBeGreaterThanOrEqual(3);
+  });
+
+  it('per-fabric: one storage NIC resumes steps before both NICs redirect through another CVM', () => {
+    const resumeStep = (
+      nics: readonly string[],
+    ): { step: number; stages: string[]; peak: number } => {
+      const sim = loadSimulation({
+        topologyId: 't1-ahv-flasharray',
+        options: { 'storage-vswitch-layout': 'per-fabric' },
+        seed: 1,
+      }).sim;
+      sim.tick(30);
+      const hist = [sim.getSnapshot()];
+      for (const n of nics) sim.applyAction({ kind: 'fail', target: n });
+      for (let i = 0; i < 120; i++) hist.push(sim.tick(1));
+      const r = deriveVmSteps('node-1.vm-1', sim.eventLog(), vmSeries(hist, 'node-1.vm-1'));
+      return {
+        step: r.resumeStep ?? Number.POSITIVE_INFINITY,
+        stages: r.milestones.map((m) => m.stage),
+        peak: r.peakStuckPct,
+      };
+    };
+    const one = resumeStep(['node-1.eth2']);
+    const both = resumeStep(['node-1.eth2', 'node-1.eth3']);
+    expect(one.stages).toContain('path-rerouted');
+    expect(one.stages).not.toContain('maintenance');
+    expect(both.stages).toEqual(
+      expect.arrayContaining(['all-paths-lost', 'maintenance', 'redirected', 'resumed']),
+    );
+    // A NIC loss is a brief interruption (owner estimate 9–12 s); the node redirect lands several
+    // steps later (about 53 s), on the compressive scale.
+    expect(one.step).toBeLessThanOrEqual(2);
+    expect(both.step - one.step).toBeGreaterThanOrEqual(2);
+    // One NIC strands only the IO queued on its paths (a partial stall); both stall all of it.
+    expect(one.peak).toBeGreaterThan(0);
+    expect(one.peak).toBeLessThan(100);
+    expect(both.peak).toBe(100);
+  });
+
+  it('the interruption is dated from its oldest stuck IO, not from when the stall became visible', () => {
+    // IO stamped t=11 (sent during the tick after 10) is still pending at t=14 (age 3 > BLIP):
+    // the run starts at 10.
+    const r = deriveVmSteps(
+      'v',
+      [],
+      run(0, 40, (t) => sample(t, 'running', t >= 12 && t < 30 ? t - 11 : 0)),
+    );
+    expect(r.startT).toBe(10);
   });
 
   it('CVM failure: stall, redirect, IO resumes; failback comes long after the CVM returns', () => {

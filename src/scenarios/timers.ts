@@ -40,15 +40,15 @@ export const P: NumericProfile = numericView(current);
 
 /** NVMe keep-alive timeout: a silent path is lost KATO after its last exchange (SPEC §6.4c). */
 export const KATO = P.externalStorage.keepAliveTimeoutS;
-/** NVMe Command Quiesce Time: the last part of the wait before in-flight IO on a lost path retries. */
+/** NVMe Command Quiesce Time: in-flight IO on a connection the target closed waits this long. */
 export const CQT = P.externalStorage.commandQuiesceTimeS;
 /**
- * Worst case for one command when a path is lost silently: it is retried at k × KATO + CQT after
- * the path's last successful exchange (k = `lostPathHoldKatoMultiplier`, 3; SPEC §6.4c), ≈ 45 s.
+ * Worst case for one command when a path is lost silently: it is retried at k × KATO after the
+ * path's last successful exchange (k = `lostPathHoldKatoMultiplier`, 2; SPEC §6.4c), ≈ 10 s.
  */
-export const PATH_LOSS_WORST = P.externalStorage.lostPathHoldKatoMultiplier * KATO + CQT;
+export const PATH_LOSS_WORST = P.externalStorage.lostPathHoldKatoMultiplier * KATO;
 /** `PATH_LOSS_WORST` as a rule, for expectation labels. */
-export const PATH_LOSS_RULE = `${P.externalStorage.lostPathHoldKatoMultiplier} × KATO + CQT`;
+export const PATH_LOSS_RULE = `${P.externalStorage.lostPathHoldKatoMultiplier} × KATO`;
 /**
  * Worst case for one command when the target closes the connection (a disabled FA IP, a graceful
  * controller reboot): the path is lost at once and in-flight IO waits CQT only (NVMe 2.1 §9.6.2
@@ -109,8 +109,8 @@ export function nodeRebuildS(
 }
 /**
  * T1: a loss of every array path at T0 makes the service-volume mounts fail (and stay bad) at
- * `MOUNT_FAIL`: paths are lost after KATO (keep-alive), then multipath fails the IO after its
- * fast-IO-fail time (`hades.mountFailAfterS`). A shorter loss is a plain stall.
+ * `MOUNT_FAIL`: paths are lost after KATO (keep-alive), then the CVM kernel fails the queued IO
+ * (`hades.mountFailAfterS`). A shorter loss is a plain stall.
  */
 export const MOUNT_FAIL = KATO + P.hades.mountFailAfterS;
 /**

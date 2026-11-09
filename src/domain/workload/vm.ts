@@ -16,6 +16,12 @@ import { buildIoChain } from '../steps/io-chain';
 import type { Profile } from '../versions/profile';
 import { WORKLOAD, type WorkloadModel } from './io';
 
+/**
+ * Age past which an outstanding IO counts as stuck rather than in flight: the pipeline-fill
+ * tolerance (the steps view's `BLIP`), not a timing claim.
+ */
+const STUCK_AGE = 2;
+
 export type VmLifecycle = 'running' | 'paused' | 'crashed' | 'restarting' | 'off';
 export type VmState = VmLifecycle | 'io-stalled';
 /** Why a stopped VM should come back: after an HA fence, or at the next HA cycle. */
@@ -135,6 +141,8 @@ export class Vm implements Device<Profile> {
   private shownSelector: string | null = null;
   private state: VmState = 'running';
   private pendingS = { all: 0, read: 0, write: 0 };
+  /** Share of the guest's queue slots held by stuck IO, % (`stuckIoPct`). */
+  private stuckPct = 0;
   private latencyMs = 0;
   /** Live migration: IO is held until the switchover stun ends. */
   private migrationPauseUntil = Number.NEGATIVE_INFINITY;
@@ -428,6 +436,7 @@ export class Vm implements Device<Profile> {
       else write = Math.max(write, age);
     }
     this.pendingS = { all, read, write };
+    this.stuckPct = this.stuckShare(now);
     const paths = new Set<string>();
     const storageNics = new Set<string>();
     let selector: string | null = null;
@@ -480,6 +489,7 @@ export class Vm implements Device<Profile> {
       pathLossForceShutdownS: this.forceShutdownS,
       vdisks: JSON.stringify(this.vdisks),
       outstandingIo: this.pending.size,
+      stuckIoPct: this.state === 'io-stalled' ? 100 : this.stuckPct,
       ioLatencyMs: this.latencyMs,
       restartNeed: this.need,
     };
@@ -509,6 +519,20 @@ export class Vm implements Device<Profile> {
   // ── Internals ───────────────────────────────────────────────────────────
 
   /**
+   * Share of the guest's queue slots (queue depth × vDisks) held by IO older than `STUCK_AGE`:
+   * the IO that is stuck, not merely in flight. A silent path loss under the queue-depth selector
+   * strands only the commands on the dead path's queues (a partial stall); a VM with no IO
+   * completing at all is 100 % (`io-stalled`, set in `view`).
+   */
+  private stuckShare(now: number): number {
+    let stuck = 0;
+    for (const p of this.pending.values()) if (now - p.req.issuedAt > STUCK_AGE) stuck++;
+    if (stuck === 0) return 0;
+    const slots = Math.max(this.pending.size, this.model.queueDepth.value * this.vdisks.length, 1);
+    return Math.min(100, Math.max(1, Math.round((100 * stuck) / slots)));
+  }
+
+  /**
    * The VM's IO path as ordered hops (`ioChain`, JSON): VM → AHV redirector (Frodo) → serving
    * CVM → Stargate (SPDK NVMe/TCP initiator, queue-depth selection) → storage NIC → array port.
    * Stargate sits inside the CVM; the redirector's host links are the iSCSI leg to it.
@@ -528,7 +552,7 @@ export class Vm implements Device<Profile> {
       vm: this.id,
       host: this.hostId,
       cvm: this.hostId === null ? null : cvm,
-      stalled: this.state === 'io-stalled' || this.pendingS.all > 2,
+      stalled: this.state === 'io-stalled' || this.pendingS.all > STUCK_AGE,
       storageNics: this.shownStorageNics,
       arrayPorts: ports,
       hostNics: this.shownUplinks.filter((u) => !nics.has(u)),

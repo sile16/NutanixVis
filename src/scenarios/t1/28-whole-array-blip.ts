@@ -27,10 +27,10 @@ const FLAP_S = 3;
 
 /**
  * A short whole-array outage (SPEC §6.2 "Hades service volumes", §6.4 "T1 full array loss"). The
- * outcome depends on how the paths end and on the multipath fast-IO-fail time, not on the outage
+ * outcome depends on how the paths end and on the kernel IO timeout on the service volumes, not on the outage
  * length against a Hades timer.
  * - `short`: the array goes silent (no TCP resets) and is back before every path has been gone
- *   `MOUNT_FAIL`. Multipath queues the service-volume IO, the mounts stay healthy: a plain stall,
+ *   `MOUNT_FAIL`. The kernel queues the service-volume IO, the mounts stay healthy: a plain stall,
  *   a little longer than the outage while paths reconnect, and the VMs survive.
  * - `past-threshold`: the same silent loss, back just after `MOUNT_FAIL` (before Hades acts). The
  *   IO has failed, the mounts stay bad, so every node enters maintenance, every Stargate restarts
@@ -75,9 +75,9 @@ function variant(mode: Mode): ScenarioDef {
       ];
   const title =
     mode === 'short'
-      ? 'a silent whole-array blip shorter than the fast-IO-fail time'
+      ? 'a silent whole-array blip shorter than the kernel IO timeout'
       : mode === 'past-threshold'
-        ? 'a silent whole-array blip just past the fast-IO-fail time'
+        ? 'a silent whole-array blip just past the kernel IO timeout'
         : `every array data port flaps for ${FLAP_S} s`;
   return defineScenario({
     id: `t1-28-whole-array-blip-${mode}`,
@@ -125,9 +125,9 @@ function variant(mode: Mode): ScenarioDef {
     ],
     narrative:
       mode === 'short'
-        ? 'The array goes silent for a few seconds, less than the multipath fast-IO-fail time. Multipath queues the service-volume IO instead of failing it, so the mounts never go bad and Hades does nothing. VM IO stalls a little longer than the outage while the paths reconnect, then resumes in place: no maintenance, no crash.'
+        ? 'The array goes silent and comes back before the kernel IO timeout on the service volumes runs out. The CVM kernel queues the service-volume IO instead of failing it, so the mounts never go bad and Hades does nothing. VM IO stalls a little longer than the outage while the paths reconnect, then resumes in place: no maintenance, no crash.'
         : mode === 'past-threshold'
-          ? 'The array goes silent and comes back just after the multipath fast-IO-fail time, before Hades has acted. The service-volume IO has already failed, so the mounts stay bad and every node enters Hades maintenance at its next volume check, even though the array is back. Every Stargate restarts, which takes longer than the initiator session timeout, so every VM crashes and AHV powers it back on once the Stargates serve again.'
+          ? 'The array goes silent and comes back just after the kernel IO timeout on the service volumes, before Hades has acted. The service-volume IO has already failed, so the mounts stay bad and every node enters Hades maintenance at its next volume check, even though the array is back. Every Stargate restarts, which takes longer than the initiator session timeout, so every VM crashes and AHV powers it back on once the Stargates serve again.'
           : `Every array data port on both fabrics loses link for ${FLAP_S} s. When the ports return, the array resets every connection, so the service-volume IO errors at once instead of queueing and the mounts go bad on every node, however short the flap. Every node enters Hades maintenance, every Stargate restarts for longer than the initiator session timeout, and every VM crashes and is powered back on.`,
     cite: ['ntnx-ncp-everpure-deploy-7.6', 'everpure-linux-dm-multipath', 'ntnx-cmdref-aos-7.6'],
     status: 'active',

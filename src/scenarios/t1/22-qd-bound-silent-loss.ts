@@ -20,7 +20,7 @@ import {
   wasEver,
 } from '../helpers';
 import { linkId, SW_A, T1 } from '../ids';
-import { CQT, KATO, P, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
+import { KATO, P, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
 
 /** The array port whose VLAN 10 is pruned: every CVM's path to this one IP goes silent. */
 const FA_PORT = 'fa.ct0.eth10';
@@ -32,7 +32,7 @@ const END = by(PATH_LOSS_WORST) + 20;
  * new IO still goes to it: a dead IO queue at depth 0 ties with the live ones, so each of the dead
  * path's `ioQueuesPerPath` queues takes a command of the guest before it looks busier than the
  * live queues. A guest with no more queue slots than that has every slot stuck: it stalls
- * completely until the stuck commands are abandoned (k × KATO + CQT after the last exchange) and
+ * completely until the stuck commands are abandoned (k × KATO after the last exchange) and
  * retried on the surviving paths, with no guest error. A deeper queue keeps running (partial).
  */
 function variant(qd: 4 | 32): ScenarioDef {
@@ -80,7 +80,7 @@ function variant(qd: 4 | 32): ScenarioDef {
               allVms(s, isRunning),
             ),
             atCtx(by(PATH_LOSS_WORST), 'the stuck commands are latency outliers', (_s, ctx) =>
-              wasEver(ctx, (s) => vms(s).some((v) => v.ioPendingS > KATO + CQT), T0),
+              wasEver(ctx, (s) => vms(s).some((v) => v.ioPendingS > KATO), T0),
             ),
           ]),
       neverSeen(END, 'vm.io.guest-timeout'),
@@ -88,8 +88,8 @@ function variant(qd: 4 | 32): ScenarioDef {
       ...baseInvariants(),
     ],
     narrative: bound
-      ? `VLAN 10 is pruned from the switch port of array port ${FA_PORT}, so every CVM's path to that IP goes silent and is declared lost only when keep-alive goes unanswered. Until then new IO still goes to it: each of its IO queues looks idle and takes one of the guest's commands, and with a queue depth of ${qd} that is every slot, so the guest stalls completely even under the queue-depth selector. The stuck commands are abandoned about 45 s after the last keep-alive (${PATH_LOSS_RULE}) and retried on the surviving paths, with no error reaching the guest.`
-      : `The same silent path loss with a guest that keeps ${qd} IOs outstanding. The dead path's IO queues each take one command before they look busier than the live ones, which leaves the guest most of its slots, so it keeps running with a few commands stuck until they are abandoned about 45 s later. That is the partial stall a deep queue sees.`,
+      ? `VLAN 10 is pruned from the switch port of array port ${FA_PORT}, so every CVM's path to that IP goes silent and is declared lost only when keep-alive goes unanswered. Until then new IO still goes to it: each of its IO queues looks idle and takes one of the guest's commands, and with a queue depth of ${qd} that is every slot, so the guest stalls completely even under the queue-depth selector. The stuck commands are abandoned ${PATH_LOSS_RULE} after the last keep-alive and retried on the surviving paths, with no error reaching the guest.`
+      : `The same silent path loss with a guest that keeps ${qd} IOs outstanding. The dead path's IO queues each take one command before they look busier than the live ones, which leaves the guest most of its slots, so it keeps running with a few commands stuck until they are abandoned when the hold ends. That is the partial stall a deep queue sees.`,
     cite: ['nvme-base-spec-2.1', 'spdk-bdev-nvme-src', 'everpure-linux-dm-multipath'],
     status: 'active',
   });

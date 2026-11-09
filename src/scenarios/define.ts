@@ -23,6 +23,28 @@ export interface ScenarioStep {
   readonly note?: string;
 }
 
+/**
+ * One thing the guided tour tells the user to watch for after a timeline group is applied. The
+ * panel ticks it off live when the VM's steps show `stage`; `guideChecks` (scenarios/steps.ts)
+ * verifies every field against the scenario's own run, so the text cannot drift from the model.
+ */
+export interface GuideObservation {
+  /** Steps-view stage that marks it (`src/domain/steps` STAGES); omit for a plain note. */
+  readonly stage?: string;
+  /** Step it lands on. Only for the first group: later groups depend on when they are applied. */
+  readonly step?: number;
+  /** How much of the VM's IO stalls: none, part of it (some commands stuck), or all of it. */
+  readonly io?: 'none' | 'partial' | 'all';
+  readonly text: string;
+}
+
+/** The guided tour: the VM whose steps it follows, and observations per timeline group. */
+export interface ScenarioGuide {
+  readonly vm: string;
+  /** One list per timeline group (entries grouped by `at`), in order. */
+  readonly groups: readonly (readonly GuideObservation[])[];
+}
+
 export type Expectation =
   | { readonly label: string; readonly at: SimTime; readonly that: Predicate }
   | { readonly label: string; readonly always: true; readonly that: Predicate };
@@ -41,6 +63,8 @@ export interface ScenarioDef {
   readonly timeline: readonly ScenarioStep[];
   readonly expect: readonly Expectation[];
   readonly narrative: string;
+  /** Guided tour (UI scenario tab): what to expect after each timeline group, step by step. */
+  readonly guide?: ScenarioGuide;
   readonly cite: readonly CitationId[];
   /**
    * `todo`: written test-first; the runner registers it as `it.todo` until the domain lands.

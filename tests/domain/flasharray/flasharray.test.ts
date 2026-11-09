@@ -12,8 +12,8 @@ const ES = current.externalStorage;
 const KATO = ES.keepAliveTimeoutS.value;
 const CQT = ES.commandQuiesceTimeS.value;
 const RECONNECT = ES.reconnectDelayS.value;
-/** In-flight IO on a silently lost path retries k × KATO + CQT after its last exchange (§6.4c). */
-const HOLD = ES.lostPathHoldKatoMultiplier.value * KATO + CQT;
+/** In-flight IO on a silently lost path retries k × KATO after its last exchange (§6.4c). */
+const HOLD = ES.lostPathHoldKatoMultiplier.value * KATO;
 const T0 = 10;
 const T1 = 't1-ahv-flasharray';
 const CVMS = [1, 2, 3, 4].map((n) => `node-${n}.cvm`);
@@ -228,10 +228,9 @@ describe('controller HA', () => {
     expect(gb).toBeLessThanOrEqual(r1 + reboot + RECONNECT);
     expect(r.events('nvme.all-paths.lost')).toHaveLength(0);
     expect(w.maxPause).toBe(FA.plannedFailoverPauseS.value);
-    // In-flight IO on a closed connection waits CQT only (NVMe 2.1 §9.6.2 step 2c), not the
-    // k × KATO + CQT of a silent loss; new IO moved to the peer's paths at once.
+    // In-flight IO on a closed connection waits CQT only (NVMe 2.1 §9.6.2 step 2c); new IO moved
+    // to the peer's paths at once.
     expect(w.maxPending).toBeLessThanOrEqual(Math.max(FA.plannedFailoverPauseS.value, CQT + 1));
-    expect(w.maxPending).toBeLessThan(HOLD);
     expect(ctrl(r, 'fa.ct1')).toMatchObject({ role: 'primary', state: 'up' });
     expect(ctrl(r, 'fa.ct0')).toMatchObject({ role: 'secondary', state: 'up' });
     expect(allLive(r)).toBe(true);

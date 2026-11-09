@@ -42,7 +42,7 @@ export default defineScenario({
     ...baseInvariants(),
   ],
   narrative:
-    "The secondary controller CT1 crashes. There is no array-wide pause: CT0 keeps the drives and keeps serving. CT1's paths go silent and are declared lost one keep-alive timeout later; new IO then uses CT0's paths, and commands caught on CT1's paths are retried 3 × KATO + CQT (about 45 s) after the last keep-alive.",
+    "The secondary controller CT1 crashes. There is no array-wide pause: CT0 keeps the drives and keeps serving. CT1's paths go silent and are declared lost one keep-alive timeout later; new IO then uses CT0's paths, and commands caught on CT1's paths are retried two keep-alive timeouts after the last keep-alive.",
   cite: ['everpure-ha-secondary', 'everpure-ana-faq', 'nvme-base-spec'],
   status: 'active',
 });

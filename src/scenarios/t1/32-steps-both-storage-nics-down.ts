@@ -17,7 +17,7 @@ import {
   vms,
 } from '../helpers';
 import { cvmId, nodeId, T1, vmId } from '../ids';
-import { stepOfStage, stepsOf, tickOfStage } from '../steps';
+import { guideChecks, stepOfStage, stepsOf, tickOfStage } from '../steps';
 import { failbackDoneS, HADES_RECOVER, P } from '../timers';
 
 const VM = vmId(1, 1);
@@ -27,11 +27,57 @@ const END = by(HADES_RECOVER + failbackDoneS(4) + P.redirector.nopIntervalS, RES
 
 /**
  * Steps view of "both storage NICs down on one node" (AHV compute, external FlashArray over
- * NVMe/TCP; two storage vSwitches vs1 and vs2, no bond). Ordinal steps, not durations: the VM's IO stalls (step 1), Hades puts the node in
- * maintenance mode (2), the services stop and Stargate exits and the AHV redirector sends the
- * vDisks to remote CVMs (3), IO resumes on a remote CVM (4); after the NICs return the node
- * recovers and the sessions fail back much later, with no interruption.
+ * NVMe/TCP; two storage vSwitches vs1 and vs2, no bond). Ordinal steps, not durations: all of
+ * the VM's IO stalls and every array path is declared lost (step 1); nothing changes while the
+ * service-volume IO waits out its timeout (steps 2–3); then Hades puts the node in maintenance
+ * mode, the services stop, the AHV redirector sends the vDisks to remote CVMs and IO resumes
+ * there (step 4). After the NICs return the node recovers and the sessions fail back much later,
+ * with no interruption.
  */
+const GUIDE = {
+  vm: VM,
+  groups: [
+    [
+      {
+        stage: 'stall',
+        step: 1,
+        io: 'all',
+        text: "Both storage NICs are offline: all of the VM's IO stalls on its own CVM.",
+      },
+      {
+        stage: 'all-paths-lost',
+        step: 1,
+        text: "Keep-alive declares every array path lost. The CVM's service-volume IO is still queued, so Hades waits: the VM stays stalled through step 3.",
+      },
+      {
+        stage: 'maintenance',
+        step: 4,
+        text: 'The service-volume IO times out and Hades puts the node in maintenance mode.',
+      },
+      {
+        stage: 'redirected',
+        step: 4,
+        text: "The node's services stop and its Stargate exits, so the AHV redirector sends the VM's vDisks to another CVM.",
+      },
+      { stage: 'resumed', step: 4, text: 'IO has resumed through another CVM.' },
+    ],
+    [
+      {
+        stage: 'maintenance-exited',
+        text: 'The paths reconnect and the next volume check takes the node out of maintenance mode.',
+      },
+      {
+        stage: 'services-restarted',
+        text: "The node's services start again. The VM stays on the remote CVM, with no new stall.",
+      },
+      {
+        stage: 'failed-back',
+        text: 'Several steps later the sessions fail back to the local CVM, again without a stall.',
+      },
+    ],
+  ],
+} as const;
+
 export default defineScenario({
   id: 't1-32-steps-both-storage-nics-down',
   title:
@@ -133,10 +179,12 @@ export default defineScenario({
       return allPathsLive(cvm(s, 1)) && vm(s, VM).ownerCvm === CVM;
     }),
     neverSeen(END, 'ha.vm.restarted'),
+    ...guideChecks(GUIDE, END),
     ...baseInvariants(),
   ],
   narrative:
-    "Node 1 loses both storage NICs. The VM's IO stalls on its own CVM (step 1), Hades puts the node in maintenance mode (step 2), the node's services stop and its Stargate exits, so the AHV redirector sends each vDisk to a remote CVM (step 3), and IO resumes there (step 4). Once the NICs return the node leaves maintenance and its services restart; the VM stays on the remote CVM and fails back much later, without any interruption.",
+    "Node 1 loses both storage NICs. All of the VM's IO stalls on its own CVM (step 1) and stays stalled while the CVM's service-volume IO waits out its timeout. Then Hades puts the node in maintenance mode, the node's services stop and its Stargate exits, the AHV redirector sends each vDisk to a remote CVM, and IO resumes there (step 4). Once the NICs return the node leaves maintenance and its services restart; the VM stays on the remote CVM and fails back much later, without any interruption.",
+  guide: GUIDE,
   cite: ['ntnx-cmdref-aos-7.6', 'ntnx-bible-8c', 'ntnx-bible-5b', 'everpure-nutanix-nci-cfg'],
   status: 'active',
 });

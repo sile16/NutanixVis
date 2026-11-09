@@ -1,14 +1,16 @@
 /**
- * Per-VM impact by step (pure). For every workload and every step: `normal`, `stalled`,
- * `redirected` (served by another CVM) or `recovered`, each with a text, so the colour is never the
- * only signal. A VM that no step ever touched has no row: the strip says how many ran without an
+ * Per-VM impact by step (pure). For every workload and every step: `normal`, `partial` (some of
+ * its IO stuck, the rest completing), `stalled` (all IO), `redirected` (served by another CVM) or
+ * `recovered`, each with a text, so the colour is never the only signal. A VM that no step ever touched has no row: the strip says how many ran without an
  * interruption instead, and names a bond that moved traffic when that is why.
  */
+
+import { stuckPctOf } from '../../domain/steps';
 import type { Snapshot } from '../../engine/types';
 import { nicIsDown } from '../diagram/data-path';
 import type { StepSample, StepsView } from './step-tracker';
 
-export type CellKind = 'normal' | 'stalled' | 'redirected' | 'recovered';
+export type CellKind = 'normal' | 'partial' | 'stalled' | 'redirected' | 'recovered';
 
 export interface ImpactCell {
   readonly step: number;
@@ -109,17 +111,24 @@ export function buildImpact(
       for (const s of series) if (view.stepOfTick(s.t) <= step) at = s;
       let cell: ImpactCell;
       if (!at || step === 0) cell = { step, kind: 'normal', text: 'normal' };
-      else if (isStalled(at)) cell = { step, kind: 'stalled', text: 'stalled' };
-      else if (at.ownerCvm !== null && at.ownerCvm !== base) {
+      else if (isStalled(at)) {
+        const pct = stuckPctOf({ ...at, state: at.state === 'off' ? 'crashed' : at.state });
+        cell =
+          pct < 100
+            ? { step, kind: 'partial', text: `${pct}% of IO stalled` }
+            : { step, kind: 'stalled', text: 'all IO stalled' };
+      } else if (at.ownerCvm !== null && at.ownerCvm !== base) {
         cell = { step, kind: 'redirected', text: `via ${label(at.ownerCvm)}` };
       } else if (hadImpact) cell = { step, kind: 'recovered', text: 'recovered' };
       else cell = { step, kind: 'normal', text: 'normal' };
-      if (cell.kind === 'stalled' || cell.kind === 'redirected') hadImpact = true;
+      if (cell.kind !== 'normal' && cell.kind !== 'recovered') hadImpact = true;
       cells.push(cell);
     }
     const vs = view.vms.get(vm);
     const stalledSteps = vs?.stalledSteps ?? 0;
     const last = cells[cells.length - 1];
+    const peak = vs?.peakStuckPct ?? 100;
+    const what = peak > 0 && peak < 100 ? `up to ${peak}% of IO stalled` : 'stalled';
     rows.push({
       vm,
       label: label(vm),
@@ -129,8 +138,8 @@ export function buildImpact(
         stalledSteps === 0
           ? 'no interruption'
           : vs?.resumeStep === null
-            ? `stalled ${stalledSteps}+ step${stalledSteps === 1 ? '' : 's'}`
-            : `stalled ${stalledSteps} step${stalledSteps === 1 ? '' : 's'}${last?.kind === 'redirected' ? ', then redirected' : ''}`,
+            ? `${what} ${stalledSteps}+ step${stalledSteps === 1 ? '' : 's'}`
+            : `${what} ${stalledSteps} step${stalledSteps === 1 ? '' : 's'}${last?.kind === 'redirected' ? ', then redirected' : ''}`,
     });
   }
   rows.sort((a, b) => a.vm.localeCompare(b.vm));

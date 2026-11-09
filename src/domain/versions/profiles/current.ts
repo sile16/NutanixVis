@@ -236,10 +236,10 @@ export const current: Profile = {
       '--external_storage_volume_monitor_interval_secs: "Interval in seconds to monitor the health of the external storage volume mounts."',
     ),
     mountFailAfterS: c(
-      10,
+      30,
       'assumption',
-      ['everpure-linux-dm-multipath', 'everpure-nutanix-nci-cfg'],
-      'Not published for the service volumes. Linux multipath queues IO while paths are gone only up to its fast-IO-fail time (fast_io_fail_tmo 10 in the Linux multipath recommendations); after that the IO fails, the service-volume mounts go bad and stay bad until Hades remounts them, even if the array is back. A shorter loss of every path is a plain stall; a longer one puts the node in maintenance at the next volume check.',
+      ['linux-nvme-host', 'everpure-nutanix-nci-cfg'],
+      'Owner estimate (2026-11-08): when a node loses every array path, its VMs resume through another CVM about 53 s later, and a single NIC loss resumes in about 9–12 s. Not published for the service volumes. The model has the CVM kernel queue the service-volume IO while every path is gone and fail it at the kernel NVMe IO timeout (io_timeout 30 s); then the mounts go bad and stay bad until Hades remounts them, even if the array is back. A shorter loss of every path is a plain stall; a longer one puts the node in maintenance at the next volume check plus the error threshold.',
     ),
     externalStorageErrorThresholdS: c(
       5,
@@ -449,13 +449,13 @@ export const current: Profile = {
       30,
       'verified',
       ['everpure-nutanix-nci-cfg', 'everpure-nutanix-301-deck', 'nvme-base-spec-2.1'],
-      'NTNX CQT, set automatically by the integration. In-flight commands on a lost path wait CQT after the loss-detection wait before retry on another path (NVMe 2.1 §9.6.3).',
+      'NTNX CQT, set automatically by the integration. In-flight commands on a connection the target closed wait CQT before retry on another path (NVMe 2.1 §9.6.2 step 2c). A silently lost path does not wait it (lostPathHoldKatoMultiplier).',
     ),
     lostPathHoldKatoMultiplier: c(
-      3,
+      2,
       'assumption',
-      ['nvme-base-spec-2.1'],
-      'Conservative traffic-based-keep-alive case of NVMe 2.1 §9.6.2 (2 × KATT with command-based keep-alive); which mode the array uses is not published. Retry at 3 × KATO + CQT ≈ 45 s after the last exchange. The spec lets reads retry at detection; the model holds all in-flight IO (conservative default).',
+      ['spdk-nvme-multipath', 'spdk-bdev-nvme-src', 'nvme-base-spec-2.1'],
+      "Owner estimate (2026-11-08): after a storage NIC is lost, IO resumes on the surviving path in about 9–12 s. Stargate's SPDK initiator resets a controller whose keep-alive timed out and retries the aborted IO on another path; the model retries in-flight IO at 2 × KATO ≈ 10 s after the last exchange (detection at KATO, then the reset). The NVMe 2.1 §9.6 wait (k × KATT + CQT, about 45 s) would not fit that observation, so it is not applied.",
     ),
     reconnectDelayS: c(
       10,
@@ -473,7 +473,7 @@ export const current: Profile = {
       45,
       'inferred',
       ['nvme-base-spec-2.1', 'everpure-nutanix-nci-cfg'],
-      'Integration value not public. NVMe 2.1 §9.6 derivation 3 × KATO + CQT applied to the published timers: must be ≥ the lost-path hold, or IO could be retried while still in flight. An IO timeout resets the path (the host tears the association down and reconnects); lab L5.',
+      'Integration value not public. NVMe 2.1 §9.6 derivation 3 × KATO + CQT applied to the published timers (≥ the lost-path hold, so IO is never retried while still in flight). An IO timeout resets the path (the host tears the association down and reconnects); lab L5.',
     ),
     tcpRtoMaxS: c(
       32,

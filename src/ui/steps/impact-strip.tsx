@@ -1,16 +1,20 @@
 /**
- * Per-VM impact strip: for each workload and each step, one of normal, stalled, redirected via
- * CVM x, or recovered, as colour plus icon plus text. It reads the steps view only; time is steps,
+ * Per-VM impact strip: for each workload and each step, one of normal, partly stalled (x % of its
+ * IO), all IO stalled, redirected via CVM x, or recovered, as colour plus icon plus text. It reads the steps view only; time is steps,
  * never seconds. A VM that nothing touched has no row, so the strip stays compact.
  */
 import { clsx } from 'clsx';
-import { CircleCheck, CirclePause, type LucideIcon, Minus, Route } from 'lucide-react';
+import { CircleAlert, CircleCheck, CirclePause, type LucideIcon, Minus, Route } from 'lucide-react';
 import { useMemo } from 'react';
 import { useSnapshot, useSteps } from '../store/sim-context';
 import { buildImpact, type CellKind } from './impact';
 
 const KIND: Readonly<Record<CellKind, { Icon: LucideIcon; cls: string }>> = {
   normal: { Icon: Minus, cls: 'border-border bg-panel-2 text-ink-muted' },
+  partial: {
+    Icon: CircleAlert,
+    cls: 'border-status-stalled/60 bg-status-stalled/15 text-status-stalled',
+  },
   stalled: {
     Icon: CirclePause,
     cls: 'border-status-failed/60 bg-status-failed/15 text-status-failed',

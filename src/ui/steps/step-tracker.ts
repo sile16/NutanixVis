@@ -30,6 +30,8 @@ export interface StepSample {
   readonly ioPendingS: number;
   readonly host: string | null;
   readonly ownerCvm: string | null;
+  /** Share of the guest's IO stalled, % (the VM's `stuckIoPct`). */
+  readonly stuckPct?: number | undefined;
 }
 
 export interface StepsView {
@@ -75,6 +77,7 @@ export class StepTracker {
         ioPendingS: typeof f.ioPendingS === 'number' ? f.ioPendingS : 0,
         host: typeof f.host === 'string' ? f.host : null,
         ownerCvm: typeof f.ownerCvm === 'string' ? f.ownerCvm : null,
+        stuckPct: typeof f.stuckIoPct === 'number' ? f.stuckIoPct : undefined,
       };
       const list = this.samples.get(d.id) ?? [];
       const last = list[list.length - 1];

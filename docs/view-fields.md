@@ -28,6 +28,7 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `host` | string \| null | AHV host it runs on now; `null` when no process exists. |
 | `instances` | JSON string[] | Hosts with a live QEMU process for this VM. Normally 0 or 1. The "no VM runs twice" invariant checks that it has ≤ 1 entry. |
 | `ioPendingS` | number | Age of its oldest outstanding IO (0 when nothing is outstanding). This measures the worst-case wait of a single command. |
+| `stuckIoPct` | number | Share of the guest's IO slots (queue depth × vDisks) held by IO that is stuck rather than in flight, in % (0–100). Below 100 with `running`: a partial stall, as when a silent path loss under the queue-depth selector strands only the commands on the dead path's queues. 100 with `io-stalled`: all of its IO is stalled. |
 | `readPendingS` | number | The same, for reads only. |
 | `writePendingS` | number | The same, for writes only (for example, writes waiting on RF replication). |
 | `ownerCvm` | string \| null | CVM whose Stargate serves its vDisks: the local CVM normally, a remote one after a redirect, and always remote on CO nodes. |

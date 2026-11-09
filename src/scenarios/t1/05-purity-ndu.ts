@@ -55,7 +55,7 @@ export default defineScenario({
         s,
         (v) =>
           (isRunning(v) || isStalled(v)) &&
-          // A rebooting controller closes its connections: in-flight IO waits CQT, not 3 × KATO + CQT.
+          // A rebooting controller closes its connections: in-flight IO waits CQT, not the silent-loss hold.
           v.ioPendingS <= Math.max(PAUSE, CLOSED_PATH_WORST) + SLACK,
       ),
     ),

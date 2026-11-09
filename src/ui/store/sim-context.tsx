@@ -10,8 +10,8 @@ import {
   useMemo,
   useSyncExternalStore,
 } from 'react';
-import { nextStepTick } from '../../domain/steps';
 import type { ActionRequest, Simulation, Snapshot } from '../../engine/types';
+import { pressStep } from '../steps/step-press';
 import { STEP_IDLE_PRESS_TICKS, type StepsView, StepTracker } from '../steps/step-tracker';
 import { SnapshotHistory } from './snapshot-history';
 import { useUi } from './ui-store';
@@ -25,9 +25,9 @@ interface SimBundle {
 }
 
 /**
- * Safety caps for `stepForward` (ticks), not durations: it stops at the first new step. Later
- * steps are longer (the scale doubles), so an active press may run up to the next step boundary
- * (never more than STEP_CAP_MAX); the wall-clock budget keeps the page responsive.
+ * Safety caps for `stepForward` (ticks), not durations: a press runs through the next step
+ * (`steps/step-press.ts`). Later steps are longer (the scale doubles), so a press may run up to
+ * STEP_CAP_MAX; the wall-clock budget keeps the page responsive.
  */
 const STEP_CAP_ACTIVE = 900;
 const STEP_CAP_MAX = 20_000;
@@ -95,34 +95,12 @@ export function useSimControls() {
    * (nothing stalled or redirected) only move a few ticks, so the button never spins.
    */
   const stepForward = useCallback(() => {
-    const before = steps.view().current;
-    const active = () => {
-      const v = steps.view();
-      return [...v.samples.values()].some((list) => {
-        const last = list[list.length - 1];
-        // A powered-off VM (e.g. the spare) is not activity to wait out.
-        return (
-          last !== undefined &&
-          ((last.state !== 'running' && last.state !== 'off') || last.ioPendingS > 0)
-        );
-      });
-    };
-    // Ticks to the next step boundary of any open run, so a press on a long step still lands on it.
-    const now = sim.getSnapshot().simTime;
-    let toNext = 0;
-    for (const v of steps.view().vms.values()) {
-      const at = nextStepTick(v, now);
-      if (at !== null && v.endT === null)
-        toNext = toNext === 0 ? at - now : Math.min(toNext, at - now);
-    }
-    const cap = active()
-      ? Math.min(STEP_CAP_MAX, Math.max(STEP_CAP_ACTIVE, toNext + 1))
-      : STEP_CAP_QUIET;
-    const deadline = performance.now() + STEP_PRESS_BUDGET_MS;
-    for (let i = 0; i < cap; i++) {
-      sim.tick(1);
-      if (steps.view().current !== before || performance.now() > deadline) break;
-    }
+    pressStep(sim, steps, {
+      active: STEP_CAP_ACTIVE,
+      max: STEP_CAP_MAX,
+      quiet: STEP_CAP_QUIET,
+      budgetMs: STEP_PRESS_BUDGET_MS,
+    });
     noteTicked();
   }, [sim, steps, noteTicked]);
   const fastForward = useCallback(() => {

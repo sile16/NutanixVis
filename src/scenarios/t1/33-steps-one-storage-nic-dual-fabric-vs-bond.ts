@@ -16,7 +16,7 @@ import {
   vswitch,
 } from '../helpers';
 import { T1, vmId } from '../ids';
-import { stepOfStage, stepsOf, tickOfStage } from '../steps';
+import { guideChecks, stepOfStage, stepsOf, tickOfStage } from '../steps';
 import { PATH_LOSS_WORST } from '../timers';
 
 const VM = vmId(1, 1);
@@ -29,9 +29,52 @@ const timeline = [
   { at: RESTORE_AT, action: { kind: 'recover', target: T1.storageNicA(1) } },
 ] as const;
 
+const DUAL_GUIDE = {
+  vm: VM,
+  groups: [
+    [
+      {
+        stage: 'stall',
+        step: 1,
+        io: 'partial',
+        text: "eth2 is offline: only the commands queued on its paths are stuck (the VM shows the share); the rest of the VM's IO completes on eth3's paths.",
+      },
+      {
+        stage: 'path-rerouted',
+        step: 1,
+        text: "Keep-alive declares eth2's paths lost; new IO goes to eth3's paths only.",
+      },
+      {
+        stage: 'resumed',
+        step: 2,
+        text: "The stuck commands are retried on eth3's paths: all IO completes again. No service restart, no redirect.",
+      },
+    ],
+    [
+      {
+        stage: 'path-restored',
+        text: "eth2's paths reconnect and take IO again, without a new stall.",
+      },
+    ],
+  ],
+} as const;
+
+const BOND_GUIDE = {
+  vm: VM,
+  groups: [
+    [
+      {
+        io: 'none',
+        text: 'The bond moves the storage vNIC to eth3. No IO stalls: the step counter stays at 0.',
+      },
+    ],
+    [{ io: 'none', text: 'eth2 rejoins the bond; still no stall.' }],
+  ],
+} as const;
+
 /**
  * Two isolated fabrics, no bond (a lost NIC strands its fabric): multipath abandons the lost
- * paths and retries on the surviving fabric. A short interruption, 2 steps.
+ * paths and retries on the surviving fabric. A short, partial interruption.
  */
 function dualFabric(): ScenarioDef {
   return defineScenario({
@@ -96,10 +139,12 @@ function dualFabric(): ScenarioDef {
       ),
       neverSeen(END, 'hades.maintenance.enter'),
       neverSeen(END, 'redirector.redirect'),
+      ...guideChecks(DUAL_GUIDE, END),
       ...baseInvariants(),
     ],
     narrative:
-      'Two storage vSwitches (vs1 on eth2, vs2 on eth3, no bond): when one NIC fails, the commands queued on its paths wait (step 1) until the paths are declared lost and multipath retries them on the other fabric (step 2). Stargate stays up and nothing is redirected, so this is a short interruption. When the NIC returns its paths reconnect without a new stall.',
+      "Two storage vSwitches (vs1 on eth2, vs2 on eth3, no bond): when one NIC fails, only the commands queued on its paths stall, while the rest of the VM's IO completes on the other fabric (step 1). Once the paths are declared lost the stuck commands are retried on the other fabric and all IO completes again (step 2). Stargate stays up and nothing is redirected, so this is a short, partial interruption. When the NIC returns its paths reconnect without a new stall.",
+    guide: DUAL_GUIDE,
     cite: [
       'spdk-nvme-multipath',
       'nvme-base-spec-2.1',
@@ -144,8 +189,10 @@ function bond(): ScenarioDef {
         );
       }),
       neverSeen(END, 'nvme.path.lost'),
+      ...guideChecks(BOND_GUIDE, END),
       ...baseInvariants(),
     ],
+    guide: BOND_GUIDE,
     narrative:
       'With both storage NICs in one MAC-pinning bond, a NIC failure only moves the storage vNIC to the other NIC. The VM sees no interruption (0 steps) and Stargate keeps all its paths. Compare the unbonded dual-fabric layout, where the same failure costs a short stall.',
     cite: ['ntnx-ahv-admin-11.2', 'ovs-bonding', 'everpure-nutanix-net-bp'],

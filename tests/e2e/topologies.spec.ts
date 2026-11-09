@@ -106,10 +106,11 @@ test('real T1: Step keeps counting past step 4, and a restore shows later steps'
     await page.getByTestId('action-fail').click();
   }
   const clock = page.getByTestId('sim-clock');
-  for (let i = 0; i < 10; i++) await page.getByTestId('step').click();
-  const atTen = Number(await clock.getAttribute('data-step'));
-  expect(atTen).toBeGreaterThanOrEqual(5);
-  let prev = atTen;
+  // Each press runs through one step: six presses end step 6, with the VM redirected.
+  for (let i = 0; i < 6; i++) await page.getByTestId('step').click();
+  const atSix = Number(await clock.getAttribute('data-step'));
+  expect(atSix).toBeGreaterThanOrEqual(5);
+  let prev = atSix;
   for (const nic of ['node-1.eth2', 'node-1.eth3']) {
     await page.getByRole('tab', { name: 'Inspector' }).click();
     if ((await page.getByTestId('inspector-empty').count()) === 0) {
@@ -125,7 +126,7 @@ test('real T1: Step keeps counting past step 4, and a restore shows later steps'
     expect(now).toBeGreaterThanOrEqual(prev);
     prev = now;
   }
-  expect(prev).toBeGreaterThan(atTen);
+  expect(prev).toBeGreaterThan(atSix);
   await expect(row.locator('[data-kind="recovered"]').first()).toBeVisible();
 });
 
@@ -247,6 +248,32 @@ test('guided steps scenario loads its topology and injects the failure', async (
   await page.getByTestId('scenario-apply-0').click();
   await expect(page.getByTestId('scenario-group').first()).toHaveAttribute('data-state', 'applied');
   await expect(page.getByTestId('node-node-1.eth2')).toHaveAttribute('data-status', 'failed');
+});
+
+test('guided tour: Step in the flow ticks off each expected observation at its step', async ({
+  page,
+}) => {
+  await page.goto('./#topology=t1-ahv-flasharray');
+  await page.getByRole('tab', { name: 'Scenario' }).click();
+  await page.getByTestId('scenario-select').selectOption('t1-33-steps-one-nic-dual-fabric');
+  const obs = (stage: string) =>
+    page.locator(`[data-testid="scenario-observation"][data-stage="${stage}"]`);
+  await page.getByTestId('scenario-apply-0').click();
+  await expect(obs('stall')).toHaveAttribute('data-seen', 'no');
+  // Press 1: a partial stall, shown on the VM; the IO has not resumed yet.
+  await page.getByTestId('scenario-step-0').click();
+  await expect(page.getByTestId('scenario-step-now')).toHaveText('now at step 1');
+  await expect(obs('stall')).toHaveAttribute('data-seen', 'yes');
+  await expect(obs('resumed')).toHaveAttribute('data-seen', 'no');
+  await expect(page.getByTestId('vm-partial-node-1.vm-1')).toContainText('% of IO stalled');
+  // Press 2: the stuck commands ran on the other fabric.
+  await page.getByTestId('scenario-step-0').click();
+  await expect(page.getByTestId('scenario-step-now')).toHaveText('now at step 2');
+  await expect(obs('resumed')).toHaveAttribute('data-seen', 'yes');
+  await expect(page.getByTestId('vm-partial-node-1.vm-1')).toHaveCount(0);
+  if (process.env.SHOT) {
+    await page.screenshot({ path: process.env.SHOT });
+  }
 });
 
 test('the ISL edge shows its speeds each way, line-rate bars, and the share of storage IO', async ({

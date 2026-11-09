@@ -46,7 +46,7 @@ export default defineScenario({
     ...baseInvariants(),
   ],
   narrative:
-    'Switch A fails. With isolated A/B storage VLANs every path on VLAN 10 runs through Switch A, so each CVM loses those two paths one keep-alive timeout later; the CVM never sees the carrier loss itself. New IO then uses the VLAN-B paths, and commands stuck on VLAN A are retried 3 × KATO + CQT (about 45 s) after the last keep-alive. vs0 fails over to Switch B, so no host is lost and no HA event follows.',
+    'Switch A fails. With isolated A/B storage VLANs every path on VLAN 10 runs through Switch A, so each CVM loses those two paths one keep-alive timeout later; the CVM never sees the carrier loss itself. New IO then uses the VLAN-B paths, and commands stuck on VLAN A are retried two keep-alive timeouts after the last keep-alive. vs0 fails over to Switch B, so no host is lost and no HA event follows.',
   cite: [
     'everpure-nutanix-net-bp',
     'ntnx-ncp-everpure-deploy-7.6',

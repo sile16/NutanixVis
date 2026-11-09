@@ -3,6 +3,7 @@ export {
   nextStepTick,
   type StepMilestone,
   stepAt,
+  stuckPctOf,
   type VmSample,
   type VmSteps,
   vmSampleState,

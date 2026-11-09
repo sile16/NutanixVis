@@ -20,7 +20,7 @@ import {
   wasEver,
 } from '../helpers';
 import { linkId, SW_A, T1_LAB } from '../ids';
-import { CQT, KATO, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
+import { KATO, PATH_LOSS_RULE, PATH_LOSS_WORST } from '../timers';
 
 /** The array port whose VLAN 10 is pruned: every CVM's path to this one IP goes silent. */
 const FA_PORT = 'fa.ct0.eth10';
@@ -30,10 +30,10 @@ const END = by(PATH_LOSS_WORST) + 20;
 /**
  * Timing (SPEC §6.4c). The pruned VLAN drops frames silently, so each CVM declares its path to
  * `IP` lost KATO after the last keep-alive answer (≤ T0 + 1 + KATO), and commands stuck on it are
- * retried k × KATO + CQT after that answer, i.e. by T0 + 1 + PATH_LOSS_WORST. Until detection the
+ * retried k × KATO after that answer, i.e. by T0 + 1 + PATH_LOSS_WORST. Until detection the
  * path still gets new IO. What the guest sees depends only on the path selector:
  * - queue-depth: the dead path's stuck commands make it the busiest, so it stops getting new IO.
- *   The guest keeps running with a few ~45 s outliers (partial stall).
+ *   The guest keeps running with a few outliers that last the hold (partial stall).
  * - round-robin: a queue-depth-bound guest's slots all migrate onto the dead path, so it stalls
  *   completely from the first tick after the prune until the hold expires.
  */
@@ -82,15 +82,15 @@ function variant(selector: 'queue-depth' | 'round-robin'): ScenarioDef {
               allVms(s, isRunning),
             ),
             atCtx(by(PATH_LOSS_WORST), 'the stuck commands are latency outliers', (_s, ctx) =>
-              wasEver(ctx, (s) => vms(s).some((v) => v.ioPendingS > KATO + CQT), T0),
+              wasEver(ctx, (s) => vms(s).some((v) => v.ioPendingS > KATO), T0),
             ),
           ]),
       neverSeen(END, 'vm.io.guest-timeout'),
       ...baseInvariants(),
     ],
     narrative: rr
-      ? `VLAN 10 is pruned from the switch port of array port ${FA_PORT}. Nothing loses carrier, so each CVM only learns its path to that IP is dead when keep-alive goes unanswered for KATO. Until then round-robin keeps sending it every Nth new command, and a guest that keeps its queue full re-issues each completed IO at once, so within moments all of its queue slots sit on the dead path. One silent path out of eight stalls every VM completely until the stuck commands are retried, 3 × KATO + CQT (about 45 s) after the last keep-alive.`
-      : `VLAN 10 is pruned from the switch port of array port ${FA_PORT}. Nothing loses carrier, so each CVM only learns its path to that IP is dead when keep-alive goes unanswered for KATO. The queue-depth selector sends new IO to the path with the fewest outstanding commands, so the dead path, whose commands never complete, soon stops getting any. VMs keep running at a slightly lower effective queue depth; the few stuck commands are retried 3 × KATO + CQT (about 45 s) after the last keep-alive and show up as latency outliers.`,
+      ? `VLAN 10 is pruned from the switch port of array port ${FA_PORT}. Nothing loses carrier, so each CVM only learns its path to that IP is dead when keep-alive goes unanswered for KATO. Until then round-robin keeps sending it every Nth new command, and a guest that keeps its queue full re-issues each completed IO at once, so within moments all of its queue slots sit on the dead path. One silent path out of eight stalls every VM completely until the stuck commands are retried, ${PATH_LOSS_RULE} after the last keep-alive.`
+      : `VLAN 10 is pruned from the switch port of array port ${FA_PORT}. Nothing loses carrier, so each CVM only learns its path to that IP is dead when keep-alive goes unanswered for KATO. The queue-depth selector sends new IO to the path with the fewest outstanding commands, so the dead path, whose commands never complete, soon stops getting any. VMs keep running at a slightly lower effective queue depth; the few stuck commands are retried ${PATH_LOSS_RULE} after the last keep-alive and show up as latency outliers.`,
     cite: ['nvme-base-spec-2.1', 'spdk-bdev-nvme-src', 'everpure-linux-dm-multipath'],
     status: 'active',
   });

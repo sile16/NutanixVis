@@ -137,3 +137,17 @@ test('visual baseline: T1 steady state (animation off)', async ({ page }, testIn
   });
   await expect(page).toHaveScreenshot(name, { animations: 'disabled', maxDiffPixelRatio: 0.01 });
 });
+
+test('the traffic legend collapses to its title and remembers it across a reload', async ({
+  page,
+}) => {
+  await open(page);
+  await expect(page.getByTestId('traffic-preset-all')).toBeVisible();
+  await page.getByTestId('legend-toggle').click();
+  await expect(page.getByTestId('legend-toggle')).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByTestId('traffic-preset-all')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId('legend-toggle')).toHaveAttribute('aria-expanded', 'false');
+  await page.getByTestId('legend-toggle').click();
+  await expect(page.getByTestId('traffic-preset-all')).toBeVisible();
+});

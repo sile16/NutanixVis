@@ -2,7 +2,7 @@
 
 Living status page: where the project stands, what is left, which behavior still needs checking against a real lab, and lessons learned along the way. Update it at the end of each work session.
 
-**Last updated:** 2026-11-09 (planned controller reboot, hung LACP member, emergent Hades)
+**Last updated:** 2026-11-10 (readable names, view-field contract, Stop for long steps)
 
 ## Where things stand
 
@@ -32,6 +32,8 @@ Living status page: where the project stands, what is left, which behavior still
 - **Behavior data:** every timer and policy lives in `src/domain/versions/profiles/current.ts` as a cited field with a confidence label. Lab results become data changes, not code changes. `docs/research/profile-coverage.md` lists them all.
 
 ### Recent changes
+
+- **2026-11-10: readable names, view-field contract, Stop.** The UI names devices, cables and NVMe paths instead of printing ids: event texts, the cable inspector and hover card, the context menu, and inspector field values (a device id is a link, e.g. Owner CVM `CVM 1`). Numbers round to two decimals; the VM load form shows the current value when it is none of the choices. The step clock says `VM down` for a lost host. A Stop button ends a long Step press (late steps double in length). The view refits when a moved VM's host grows out of view, but keeps a view the user zoomed. A skip button takes keyboard users to the side panel. `docs/view-fields.md` now documents every field every topology emits (`tests/view-fields-doc.test.ts` fails on a new undocumented one); the hand-written assumptions table in `profile-coverage.md` is checked against the profile too. A UI fuzz run (random offered actions, four seeds, all five offered topologies) shows no page errors or console warnings.
 
 - **2026-11-09: CVM card shows the Cassandra ring.** A running CVM whose ring state is not normal gets a badge (`Cassandra down`, `Ring detached`, `Forwarding`), next to the Stargate row and the ZK seat badges. Also: the traffic legend collapses, the topology menu names a guided scenario's own build, moved VMs stay in view, a planned-off CVM's Stargate is drawn off rather than failed, and saturation events name the queue delay or the drops.
 

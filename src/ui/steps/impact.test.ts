@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { stepAt } from '../../domain/steps';
 import { loadSimulation } from '../../loader/simulation';
-import { buildImpact, ImpactCache, impactCacheFor } from './impact';
+import { bondMoves, buildImpact, ImpactCache, impactCacheFor } from './impact';
 import type { StepSample, StepsView } from './step-tracker';
 import { StepTracker } from './step-tracker';
 
@@ -70,8 +70,25 @@ describe('impact strip model', () => {
     const m = buildImpact(synthetic(samples, null), { devices: {}, links: [] } as never);
     const row = m.rows[0];
     expect(row?.cells.map((c) => c.kind)).toEqual(['normal', 'stalled', 'stalled', 'recovered']);
+    // A step whose stall ended before the step did says how it ended.
+    expect(row?.cells[1]?.text).toBe('all IO stalled, then resumed');
+    expect(row?.cells[2]?.text).toBe('all IO stalled, then resumed');
     expect(row?.now).toBeNull();
     expect(row?.stalledSteps).toBe(2);
+  });
+
+  it('a stall that ends on another CVM within the step names that CVM', () => {
+    const samples = Array.from({ length: 30 }, (_, t) =>
+      t >= 10 && t < 15
+        ? s(t, 'io-stalled', 3)
+        : t >= 15
+          ? s(t, 'running', 0, 'n1', 'n2.cvm')
+          : s(t, 'running'),
+    );
+    const devices = { 'n2.cvm': { id: 'n2.cvm', label: 'CVM 2' } };
+    const m = buildImpact(synthetic(samples, null), { devices, links: [] } as never);
+    expect(m.rows[0]?.cells[1]?.text).toBe('all IO stalled, then via CVM 2');
+    expect(m.rows[0]?.cells[2]?.text).toBe('via CVM 2');
   });
 
   it('a VM the user powered off is no interruption and has no row', () => {
@@ -143,5 +160,22 @@ describe('impact strip model', () => {
     }
     const v = x.steps.view();
     expect(impactCacheFor(v)).toBe(impactCacheFor(v));
+  });
+});
+
+describe('bond moves', () => {
+  it('a switch failure reads as one line per vSwitch, naming every node', () => {
+    const sim = loadSimulation({
+      topologyId: 't1-ahv-flasharray',
+      options: { 'node-count': 3, 'vs1-bond-mode': 'balance-tcp' },
+      seed: 1,
+    }).sim;
+    sim.tick(2);
+    sim.applyAction({ kind: 'fail', target: 'sw-a' });
+    const moves = bondMoves(sim.tick(1));
+    expect(moves).toEqual([
+      'Nodes 1, 2, 3 vs0: eth0 down, traffic moved to eth1',
+      'Nodes 1, 2, 3 vs1: eth2 down, traffic moved to eth3',
+    ]);
   });
 });

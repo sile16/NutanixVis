@@ -91,7 +91,11 @@ export function ImpactStrip() {
           className="mb-0.5 flex items-center gap-1 text-status-healthy"
           data-testid="impact-bond"
         >
-          <CircleCheck size={11} aria-hidden="true" /> 0 steps, no interruption. {m}
+          <CircleCheck size={11} aria-hidden="true" />{' '}
+          {/* With VMs affected, the stall came from elsewhere: the bond move itself cost nothing. */}
+          {impact.rows.length === 0
+            ? `0 steps, no interruption. ${m}`
+            : `Bond failover took 0 steps: ${m}`}
         </p>
       ))}
       {impact.rows.length > 0 ? (

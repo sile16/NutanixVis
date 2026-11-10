@@ -72,9 +72,19 @@ const parseList = (v: unknown): string[] => {
   }
 };
 
-/** Bonds that lost a member but still have one carrying traffic. */
+/** `Node 1`, `Node 2` → `Nodes 1, 2`; other host labels are listed as they are. */
+function hostList(hosts: readonly string[]): string {
+  if (hosts.length < 2) return hosts[0] ?? '';
+  const nums = hosts.map((h) => /^Node (\S+)$/.exec(h)?.[1]);
+  return nums.every((n) => n !== undefined) ? `Nodes ${nums.join(', ')}` : hosts.join(', ');
+}
+
+/**
+ * Bonds that lost a member but still have one carrying traffic. The same move on several hosts
+ * (a switch failure hits every node's bond alike) reads as one line naming the hosts.
+ */
 export function bondMoves(s: Pick<Snapshot, 'devices' | 'links'>): string[] {
-  const out: string[] = [];
+  const groups = new Map<string, string[]>();
   const { devices } = s;
   for (const d of Object.values(devices)) {
     if (d.kind !== 'bond' && d.kind !== 'vswitch') continue;
@@ -85,11 +95,10 @@ export function bondMoves(s: Pick<Snapshot, 'devices' | 'links'>): string[] {
     if (lost.length === 0 || alive.length === 0) continue;
     const host = d.parent ? (devices[d.parent]?.label ?? d.parent) : '';
     const name = (m: string) => devices[m]?.label ?? m;
-    out.push(
-      `${host} ${d.label}: ${lost.map(name).join(', ')} down, traffic moved to ${alive.map(name).join(', ')}`.trim(),
-    );
+    const move = `${d.label}: ${lost.map(name).join(', ')} down, traffic moved to ${alive.map(name).join(', ')}`;
+    groups.set(move, [...(groups.get(move) ?? []), host]);
   }
-  return out;
+  return [...groups].map(([move, hosts]) => `${hostList(hosts.filter(Boolean))} ${move}`.trim());
 }
 
 /** The worst state of one sample, ranked (higher is worse). */
@@ -140,6 +149,8 @@ interface VmCache {
   lastFolded: StepSample | undefined;
   /** Worst state per step, for steps up to the one the last folded sample is in. */
   worst: Worst[];
+  /** State at the last counted sample of each step (how the step ended). */
+  ended: Worst[];
   touched: boolean;
   /** Serving CVM on the current host while nothing is wrong (null: not seen yet). */
   base: string | null;
@@ -221,6 +232,7 @@ export function buildImpact(
         next,
         lastFolded: next > 0 ? all[next - 1] : undefined,
         worst: [],
+        ended: [],
         touched: false,
         base: null,
         host: null,
@@ -231,7 +243,7 @@ export function buildImpact(
     // The latest sample may be replaced at the same tick (an action queued then): only samples
     // of finished ticks are folded in for good; the latest one is classified each time.
     const end = all.length - 1;
-    const fold = (s: StepSample, into: Worst[], state: VmCache): void => {
+    const fold = (s: StepSample, into: Worst[], state: VmCache, ended: Worst[]): void => {
       // A spare VM that has not been powered on yet is not an affected VM; its time off before
       // the first start is not an outage either.
       if (!state.firstOnSeen) {
@@ -253,16 +265,18 @@ export function buildImpact(
       if (!countedAt(s.t)) return;
       const k = stepOf(s.t);
       into[k] = worse(into[k] ?? NORMAL, w);
+      ended[k] = w;
     };
     for (; c.next < end; c.next++) {
       c.lastFolded = all[c.next];
-      fold(c.lastFolded as StepSample, c.worst, c);
+      fold(c.lastFolded as StepSample, c.worst, c, c.ended);
     }
     // The latest sample, on a scratch copy.
     const worst = [...c.worst];
-    const scratch: VmCache = { ...c, worst };
+    const ended = [...c.ended];
+    const scratch: VmCache = { ...c, worst, ended };
     const latest = all[end];
-    if (latest !== undefined && latest.t >= from) fold(latest, worst, scratch);
+    if (latest !== undefined && latest.t >= from) fold(latest, worst, scratch, ended);
     if (!scratch.firstOnSeen) continue;
     if (!scratch.touched) {
       unaffected++;
@@ -272,10 +286,22 @@ export function buildImpact(
     let hadImpact = false;
     let carry: Worst = NORMAL;
     let interrupted = 0;
-    const cellOf = (step: number, w: Worst): ImpactCell => {
+    // A step whose IO stalled but ran again before it ended says so: "all IO stalled, then via
+    // CVM 2" (the cell keeps the stall's colour; the guided list ticks "resumed" at that step).
+    const endText = (end: Worst | undefined): string =>
+      end === undefined || end.rank >= 3
+        ? ''
+        : end.kind === 'redirected'
+          ? `, then via ${label(end.what)}`
+          : end.what === 'off'
+            ? ''
+            : ', then resumed';
+    const cellOf = (step: number, w: Worst, end?: Worst): ImpactCell => {
       if (w.kind === 'down') return { step, kind: 'down', text: w.what };
-      if (w.kind === 'partial') return { step, kind: 'partial', text: `${w.pct}% of IO stalled` };
-      if (w.kind === 'stalled') return { step, kind: 'stalled', text: 'all IO stalled' };
+      if (w.kind === 'partial')
+        return { step, kind: 'partial', text: `${w.pct}% of IO stalled${endText(end)}` };
+      if (w.kind === 'stalled')
+        return { step, kind: 'stalled', text: `all IO stalled${endText(end)}` };
       if (w.kind === 'redirected')
         return { step, kind: 'redirected', text: `via ${label(w.what)}` };
       if (hadImpact) return { step, kind: 'recovered', text: 'recovered' };
@@ -285,7 +311,10 @@ export function buildImpact(
       // A step with no counted sample of its own keeps the state before.
       const w = worst[step] ?? carry;
       carry = w;
-      const cell = step === 0 ? { step, kind: 'normal' as const, text: 'normal' } : cellOf(step, w);
+      const cell =
+        step === 0
+          ? { step, kind: 'normal' as const, text: 'normal' }
+          : cellOf(step, w, worst[step] === undefined ? undefined : ended[step]);
       if (cell.kind !== 'normal' && cell.kind !== 'recovered') hadImpact = true;
       if (cell.kind === 'down' || cell.kind === 'partial' || cell.kind === 'stalled') interrupted++;
       cells.push(cell);

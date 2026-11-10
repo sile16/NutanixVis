@@ -3,7 +3,7 @@
  * (queue several actions without time advancing) and Fast-forward to the next timer.
  */
 import { clsx } from 'clsx';
-import { FastForward, Hand, Pause, Play, StepForward } from 'lucide-react';
+import { FastForward, Hand, Pause, Play, Square, StepForward } from 'lucide-react';
 import { Button, HelpTip } from '../components/controls';
 import { useSimControls, useSnapshot, useStepBusy, useSteps } from '../store/sim-context';
 import { SPEEDS, useUi } from '../store/ui-store';
@@ -79,7 +79,7 @@ export function StepsHelp() {
 
 export function TimeControls() {
   const snapshot = useSnapshot();
-  const { stepForward, fastForward } = useSimControls();
+  const { stepForward, stopStep, fastForward } = useSimControls();
   const busy = useStepBusy();
   const playing = useUi((s) => s.playing);
   const setPlaying = useUi((s) => s.setPlaying);
@@ -103,6 +103,19 @@ export function TimeControls() {
         <StepForward size={15} aria-hidden="true" className={clsx(busy && 'animate-pulse')} />
         {busy ? 'Stepping…' : 'Step'}
       </Button>
+      {/* A late step can take a while to run: stop the press where it is. */}
+      {busy ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={stopStep}
+          data-testid="step-stop"
+          title="Stop this step here"
+        >
+          <Square size={12} aria-hidden="true" />
+          Stop
+        </Button>
+      ) : null}
       <Button
         variant={playing ? 'primary' : 'default'}
         aria-pressed={playing}

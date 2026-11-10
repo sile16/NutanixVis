@@ -145,5 +145,10 @@ export function useSimControls() {
     },
     [sim, steps, press, noteActionQueued, step],
   );
-  return { step, stepForward, fastForward, apply };
+  /** Stop a Step press that is still running (a late step can be long); the view shows where it got to. */
+  const stopStep = useCallback(() => {
+    press.cancel();
+    noteTicked();
+  }, [press, noteTicked]);
+  return { step, stepForward, stopStep, fastForward, apply };
 }

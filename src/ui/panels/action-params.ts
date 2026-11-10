@@ -52,14 +52,38 @@ export function currentChoice(
   return spec.params?.[key]?.choices.find((c) => String(c) === String(cur));
 }
 
-/** Initial form values: the current state where known, else the first choice. */
+/**
+ * Pruning a VLAN off a cable's switch port: start on a VLAN that switch carries (the engine offers
+ * every VLAN in the topology, including ones no switch port carries).
+ */
+function carriedVlan(
+  spec: ActionSpec,
+  key: string,
+  view: DeviceView | LinkView,
+  devices: Readonly<Record<string, DeviceView>> | undefined,
+): Choice | undefined {
+  if (spec.kind !== 'switch.port.prune-vlan' || key !== 'vlan' || !isLink(view) || !devices) {
+    return undefined;
+  }
+  const sw = [view.a.device, view.b.device]
+    .map((id) => devices[id])
+    .find((d) => d?.kind === 'switch');
+  const carried = String(sw?.fields.vlans ?? '')
+    .split(',')
+    .filter(Boolean);
+  return spec.params?.[key]?.choices.find((c) => carried.includes(String(c)));
+}
+
+/** Initial form values: the current state where known, else a sensible or the first choice. */
 export function initialParams(
   spec: ActionSpec,
   view: DeviceView | LinkView,
+  devices?: Readonly<Record<string, DeviceView>>,
 ): Record<string, Choice> {
   const out: Record<string, Choice> = {};
   for (const [key, p] of Object.entries(spec.params ?? {})) {
-    out[key] = currentChoice(spec, key, view) ?? p.choices[0] ?? '';
+    out[key] =
+      currentChoice(spec, key, view) ?? carriedVlan(spec, key, view, devices) ?? p.choices[0] ?? '';
   }
   return out;
 }

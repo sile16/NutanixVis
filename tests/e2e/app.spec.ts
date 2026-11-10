@@ -161,3 +161,14 @@ test('a skip link takes keyboard users past the diagram to the side panel', asyn
   // The URL keeps its topology.
   expect(page.url()).toContain('topology=');
 });
+
+test('the cable inspector names the cable and its ends readably', async ({ page }) => {
+  await page.goto('./#topology=t1-ahv-flasharray');
+  await expect(page.locator('.react-flow__node').first()).toBeVisible();
+  await page.locator('.react-flow__edge[data-id="l-node-1.eth2--sw-a"]').dispatchEvent('click');
+  await expect(page.getByTestId('inspector-title')).toHaveText('Node 1 eth2 ↔ Switch A');
+  await expect(page.getByTestId('inspector-link')).toContainText('cable · l-node-1.eth2--sw-a');
+  // Prune starts on a VLAN Switch A carries.
+  const prune = page.getByTestId('action-switch.port.prune-vlan').locator('xpath=ancestor::form');
+  await expect(prune.getByLabel('VLAN')).toHaveValue('10');
+});

@@ -25,6 +25,7 @@ import { placementText } from '../diagram/vm-placement';
 import { useSim, useSimControls, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import { currentChoice, initialParams, rejectionReason } from './action-params';
+import { deviceName, linkName } from './events-model';
 import { isOfferedAction } from './offered-actions';
 
 function Section({
@@ -46,7 +47,7 @@ function Section({
   );
 }
 
-function DeviceLink({ id }: { id: string }) {
+function DeviceLink({ id, qualified = false }: { id: string; qualified?: boolean }) {
   const snapshot = useSnapshot();
   const select = useUi((s) => s.select);
   const d = snapshot.devices[id];
@@ -56,7 +57,8 @@ function DeviceLink({ id }: { id: string }) {
       className="inline-flex items-center gap-0.5 rounded text-accent-ink underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-focus"
       onClick={() => select({ type: 'device', id })}
     >
-      {d?.label ?? id}
+      {/* Qualified: a NIC with its host ("Node 1 eth2"), an array interface with its controller. */}
+      {d ? (qualified ? deviceName(snapshot.devices, id) : d.label) : id}
       <ArrowUpRight size={11} aria-hidden="true" />
     </button>
   );
@@ -123,7 +125,7 @@ function ActionForm({
   const snapshot = useSnapshot();
   const manual = useUi((s) => s.manual);
   const params = Object.entries(spec.params ?? {});
-  const [values, setValues] = useState(() => initialParams(spec, current));
+  const [values, setValues] = useState(() => initialParams(spec, current, snapshot.devices));
   // Sim time at which this form last applied: show the reason if the engine rejected it.
   const [appliedAt, setAppliedAt] = useState<number | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the log grows per snapshot version
@@ -733,6 +735,7 @@ function LinkThroughput({ linkId }: { linkId: string }) {
 }
 
 function LinkInspector({ link }: { link: LinkView }) {
+  const snapshot = useSnapshot();
   // Utilization over the same activity window as the diagram glow.
   const activityTicks = useUi((s) => s.activityTicks);
   const win = useActivityWindow(activityTicks);
@@ -747,16 +750,17 @@ function LinkInspector({ link }: { link: LinkView }) {
     <div data-testid="inspector-link">
       <header className="px-3 py-2">
         <div className="flex items-center gap-2">
-          <h2 className="truncate font-mono text-base font-semibold" data-testid="inspector-title">
-            {link.id}
+          <h2 className="truncate text-base font-semibold" data-testid="inspector-title">
+            {linkName(snapshot.devices, snapshot.links, link.id) ?? link.id}
           </h2>
           <StatusPill status={link.status === 'up' ? 'healthy' : 'failed'} />
         </div>
+        <div className="font-mono text-[11px] text-ink-muted">cable · {link.id}</div>
         <div className="mt-1 flex flex-wrap items-center gap-1 text-xs">
-          <DeviceLink id={link.a.device} />{' '}
+          <DeviceLink id={link.a.device} qualified />{' '}
           <span className="font-mono text-ink-muted">{link.a.port}</span>
           <span aria-hidden="true">↔</span>
-          <DeviceLink id={link.b.device} />{' '}
+          <DeviceLink id={link.b.device} qualified />{' '}
           <span className="font-mono text-ink-muted">{link.b.port}</span>
         </div>
       </header>

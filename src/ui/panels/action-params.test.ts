@@ -27,6 +27,14 @@ const link: LinkView = {
 };
 
 describe('action params', () => {
+  it("prune VLAN starts on a VLAN the cable's switch carries, not the first in the topology", () => {
+    const prune = spec('switch.port.prune-vlan', 'vlan', [1, 10, 20, 100]);
+    const sw: DeviceView = { ...device({ vlans: '10,20,100' }), id: 'b', kind: 'switch' };
+    expect(initialParams(prune, link, { b: sw })).toEqual({ vlan: 10 });
+    // Without the snapshot's devices: the first choice, as before.
+    expect(initialParams(prune, link)).toEqual({ vlan: 1 });
+  });
+
   it('pre-selects the current state for each known parameter', () => {
     const mode = spec('vswitch.set-bond-mode', 'mode', ['active-backup', 'balance-slb']);
     expect(initialParams(mode, device({ bondMode: 'balance-slb' }))).toEqual({

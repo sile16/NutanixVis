@@ -53,6 +53,8 @@ export interface EndpointControl {
   setFenced(id: EndpointId, fenced: boolean, causeIds?: readonly string[]): void;
   /** Re-home an endpoint onto another NIC/bond/bridge; returns the `net.endpoint.moved` id. */
   move(id: EndpointId, attach: EndpointAttach, causeIds?: readonly string[]): string;
+  /** OVS on host `owner` restarted (host reboot): its bonds learn their placement again. */
+  restartBonds(owner: DeviceId): void;
 }
 
 export interface EngineTickContext<TProfile = unknown> extends TickContext<TProfile> {

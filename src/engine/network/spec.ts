@@ -79,6 +79,11 @@ export interface BondSpec {
    */
   readonly initialActive?: string;
   /**
+   * balance-slb: the member that links up first at boot, so unassigned buckets are learned
+   * round-robin from it (docs/research/ovs-bond-behavior.md rule 2, S8). Default: the first uplink.
+   */
+  readonly firstUp?: string;
+  /**
    * Bonds sharing a group (e.g. the virtual switch name `vs1` on every host) change mode and
    * LACP rate together: mixed bond modes on one virtual switch are not supported (SPEC §5.5).
    */

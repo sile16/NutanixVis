@@ -25,7 +25,7 @@
  *    the owner's estimate it matches). A connection the target closed fails over the same way
  *    (owner decision; CQT is not waited on top). A planned controller reboot drains first, so
  *    nothing is in flight when it closes. A command stuck on a live but
- *    broken queue (hung bond member, lossy link, no carrier loss) is aborted after `ioTimeoutS`,
+ *    broken queue (hung bond member, no carrier loss) is aborted after `ioTimeoutS`,
  *    retried on another path, and the path is reset (it reconnects after `reconnectDelayS`).
  *    After a silent loss the old connection is still probed; a TCP reset from the target (it tore
  *    the association down: its port lost link, or KATO passed in silence) releases the held
@@ -49,7 +49,9 @@
  *   are retried (the guest has no free slot to issue it from). A full stall, until the hold expires.
  *
  * TCP is abstracted: a frame the network dropped silently is retransmitted with a doubling timer
- * (RFC 6298 §5.5; 1, 1, 1, 2, 4, … s up to `tcpRtoMaxS`); keep-alives every second.
+ * (RFC 6298 §5.5; 1, 1, 1, 2, 4, … s up to `tcpRtoMaxS`); keep-alives every second. After a
+ * packet loss (a lossy link) only the lost segment is resent (SACK), as a one-packet frame; the
+ * array's completions are resent the same way.
  */
 import { asEngineContext, type EngineTickContext, type EngineTrace } from '../../engine/context';
 import type {
@@ -110,6 +112,11 @@ interface Wire {
   resend: boolean;
   /** Its delivery was already noted (the queue showed life when it arrived). */
   seen?: boolean;
+  /**
+   * A lossy link dropped one of its packets: TCP resends only the lost segment (one packet, RFC
+   * 6298 / SACK), not the whole frame, so the retransmission is a small frame.
+   */
+  segment?: boolean;
 }
 
 interface Path {
@@ -138,6 +145,8 @@ interface Path {
    * back (each queue is its own TCP connection, hashed onto a bond member on its own).
    */
   queueAliveAt: SimTime[];
+  /** Last time a completion came back on each IO queue (the blackhole check: `stuckIoAgeS`). */
+  queueBackAt: SimTime[];
   /** Latest observed IO completion latency on this path, ms (null: none yet). */
   rttMs: number | null;
   /** Queue-depth selector: share credit of a slower path (see `choose`). */
@@ -250,6 +259,8 @@ export class NvmeTcpInitiator implements StorageBackend {
    */
   private order: Path[] = [];
   private readonly cmds = new Map<string, Cmd>();
+  /** Blackholed connections (`<path>#<queue>`) → when the first command stuck on it went out. */
+  private readonly deadConns = new Map<string, SimTime>();
   private completions: IoCompletion[] = [];
   private readonly rr = new Map<string, number>();
   private readonly active = new Map<string, string>();
@@ -363,12 +374,26 @@ export class NvmeTcpInitiator implements StorageBackend {
    * knows and waits for a path).
    */
   stuckIoAgeS(now: SimTime): number {
-    let oldest = now;
+    // A connection is blackholed from its first stuck command until it shows life again. The
+    // clock is per connection: under packet loss one queue after another holds a command for a
+    // while and then completes, and those stretches do not add up (a lossy path is not dead).
     for (const c of this.cmds.values()) {
       if (c.state !== 'inflight' || !c.stuck || c.path === null) continue;
       const p = this.path(c.path);
       if (p?.state !== 'live' || (p.queueAliveAt[c.queue] ?? 0) >= c.startedAt) continue;
-      oldest = Math.min(oldest, c.startedAt);
+      const key = `${p.id}#${c.queue}`;
+      const since = this.deadConns.get(key);
+      if (since === undefined || c.startedAt < since) this.deadConns.set(key, c.startedAt);
+    }
+    let oldest = now;
+    for (const [key, since] of [...this.deadConns]) {
+      const at = key.lastIndexOf('#');
+      const p = this.path(key.slice(0, at));
+      const q = Number(key.slice(at + 1));
+      // Still dead while the path looks live and nothing of the queue came back since it went
+      // dead (a reply lost on the way back counts: TCP gets no ACK over a one-way blackhole).
+      if (p?.state !== 'live' || (p.queueBackAt[q] ?? 0) >= since) this.deadConns.delete(key);
+      else oldest = Math.min(oldest, since);
     }
     return now - oldest;
   }
@@ -551,6 +576,7 @@ export class NvmeTcpInitiator implements StorageBackend {
           if (p) {
             this.noteIoOk(p, pl, ctx.trace(msg.id), ctx);
             p.queueAliveAt[cmd.queue] = ctx.now;
+            p.queueBackAt[cmd.queue] = ctx.now;
           }
           this.complete(cmd, pl, ctx.trace(msg.id), ctx);
         } else if (cmd && cmd.state === 'held' && cmd.silentHeld && cmd.attempt === attempt) {
@@ -602,7 +628,11 @@ export class NvmeTcpInitiator implements StorageBackend {
       else if (fate === 'dropped') {
         // Dropped for size only (an MTU mismatch): the connection itself still works, since its
         // ACKs and small segments pass; only the large segment dies. Not a blackhole.
-        if (ctx.trace(cmd.wire.msgId)?.reason === 'mtu') p.queueAliveAt[cmd.queue] = ctx.now;
+        if (ctx.trace(cmd.wire.msgId)?.reason === 'mtu') {
+          p.queueAliveAt[cmd.queue] = ctx.now;
+          p.queueBackAt[cmd.queue] = ctx.now;
+        }
+        if (ctx.trace(cmd.wire.msgId)?.reason === 'loss') cmd.wire.segment = true;
         cmd.wire.resend = true;
         cmd.nextResendAt = ctx.now + this.rto(cmd.tries);
         cmd.tries++;
@@ -732,6 +762,7 @@ export class NvmeTcpInitiator implements StorageBackend {
         lastDropAt: undefined,
         lastIoOkAt: 0,
         queueAliveAt: [],
+        queueBackAt: [],
         rttMs: null,
         credit: 1,
         lostHow: null,
@@ -1017,7 +1048,15 @@ export class NvmeTcpInitiator implements StorageBackend {
   }
 
   private retransmit(w: Wire, ctx: EngineTickContext<Profile>): Wire {
-    return { msgId: ctx.send(w.draft), sentAt: ctx.now, draft: w.draft, resend: false };
+    // After a packet loss only the lost segment goes again (and again, if it is lost again).
+    const draft: MessageDraft = w.segment ? { ...w.draft, size: 'small' } : w.draft;
+    return {
+      msgId: ctx.send(draft),
+      sentAt: ctx.now,
+      draft,
+      resend: false,
+      ...(w.segment ? { segment: true } : {}),
+    };
   }
 
   /**

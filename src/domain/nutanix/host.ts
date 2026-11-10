@@ -138,6 +138,8 @@ export class AhvHost implements Device<Profile> {
     const ends = this.ownEndpoints();
     const ectx = asEngineContext(ctx);
     for (const e of ends) ectx.endpoints.setUp(e, false);
+    // OVS restarts with the host: MAC pinning is learned again at boot, home or swapped.
+    ectx.endpoints.restartBonds(this.id);
     ctx.timers.set(
       `${this.id} reboot`,
       A.value,

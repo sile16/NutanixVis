@@ -149,6 +149,10 @@ export class BondRuntime {
   /** Buckets pinned by `forcePin` (vswitch.rebalance). */
   private forced = new Map<number, string>();
   private rr = 0;
+  /** balance-slb: the member that links up first at boot (learning starts there). */
+  private readonly firstUpValue: string | undefined;
+  /** Times the bond lost every member and got them back (host or OVS restart). */
+  private restarts = 0;
   private lastRebalance: SimTime;
   private initialized = false;
 
@@ -165,6 +169,7 @@ export class BondRuntime {
     this.cabledValue = [...(spec.members ?? spec.uplinks)];
     this.rate = spec.lacpRate ?? 'fast';
     this.initialActiveValue = spec.initialActive;
+    this.firstUpValue = spec.firstUp;
     this.lastRebalance = env.now();
   }
 
@@ -267,6 +272,44 @@ export class BondRuntime {
     this.rr = 0;
   }
 
+  /**
+   * balance-slb learning order (docs/research/ovs-bond-behavior.md rule 2, S8). Unassigned buckets
+   * are learned round-robin in the order the interfaces first transmit, starting from the member
+   * that links up first; the CVM's first storage interface transmits first. At boot that member is
+   * `firstUp` (default the first uplink). After the bond has lost every member and got them back
+   * (host reboot, OVS restart), which NIC links up first is not fixed, so the placement comes back
+   * home or swapped whatever it was before (S8). The model picks it deterministically from the bond
+   * id and the restart count (`assumption`: the real order is a race).
+   */
+  private startLearning(eligible: readonly string[]): void {
+    if (!this.initialized) {
+      const at = this.firstUpValue !== undefined ? eligible.indexOf(this.firstUpValue) : -1;
+      this.rr = Math.max(0, at);
+    } else {
+      this.rr = this.restartOrder(eligible.length);
+    }
+  }
+
+  /** Start of the round-robin after a restart: which NIC links up first is a race (S8). */
+  private restartOrder(members: number): number {
+    this.restarts++;
+    return members > 0 ? fnv1a(`${this.id}#${this.restarts}`) % members : 0;
+  }
+
+  /**
+   * OVS restarted with its host (reboot): the learned placement is gone, so every vNIC is
+   * learned again on its first transmit (balance-slb; docs/research/ovs-bond-behavior.md S8,
+   * "home or worst, independent of the previous state"). Other modes keep their state (active-
+   * backup re-picks its active member the usual way; balance-tcp rehashes per connection).
+   */
+  restart(): void {
+    if (this.modeValue !== 'balance-slb') return;
+    this.buckets = new Array<string | null>(BOND_BUCKETS).fill(null);
+    this.bucketLoad = new Array<number>(BOND_BUCKETS).fill(0);
+    this.forced = new Map();
+    this.rr = this.restartOrder(this.eligibleList.length);
+  }
+
   private cancelLacpTimer(nic: string): void {
     const h = this.lacpTimers.get(nic);
     if (h) this.env.timers.cancel(h);
@@ -334,6 +377,9 @@ export class BondRuntime {
     const prevActive = this.active;
     this.eligibleList = eligible;
     this.detachedSet = detached;
+    if (this.modeValue === 'balance-slb' && prevEligible.size === 0 && eligible.length > 0) {
+      this.startLearning(eligible);
+    }
     // A forced pin lasts until its member leaves service; failover then re-pins normally.
     for (const [b, m] of [...this.forced]) if (!eligible.includes(m)) this.forced.delete(b);
 

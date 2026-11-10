@@ -554,6 +554,11 @@ export class NetworkRuntime implements NetworkQuery {
     this.reconcile();
   }
 
+  /** A host's OVS restarted (reboot): its bonds forget their learned placement. */
+  restartBonds(owner: string): void {
+    for (const b of this.bonds.values()) if (b.owner === owner) b.restart();
+  }
+
   setEndpointUp(id: EndpointId, up: boolean): void {
     this.requireEndpoint(id).adminUp = up;
   }

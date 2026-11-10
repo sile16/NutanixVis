@@ -171,6 +171,16 @@ export const t1Options = {
     ['access', 'trunked'],
     'access',
   ),
+  // MAC pinning (balance-slb vs1) placement at boot: the two CVM storage interfaces are learned
+  // round-robin starting from the NIC that links up first, so a node can come up "swapped", each
+  // interface on the switch away from its VLAN's array ports (docs/research/ovs-bond-behavior.md
+  // S8). `node-2-swapped`: node 2's eth3 linked up first. The engine reads it from the options.
+  slbBootPlacement: option(
+    'slb-boot-placement',
+    'MAC pinning placement at boot',
+    ['home', 'node-2-swapped'],
+    'home',
+  ),
 } as const;
 
 export type T1Params = ParamsOf<typeof t1Options>;

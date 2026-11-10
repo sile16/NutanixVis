@@ -511,6 +511,7 @@ class Sim<TProfile> implements EngineSimulation {
           });
           return ev;
         },
+        restartBonds: (owner) => this.net.restartBonds(owner),
       },
       flow: (src, dst, l4) => this.net.flow(src, dst, l4),
       trace: (msgId) => this.traceById.get(msgId),

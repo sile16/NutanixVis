@@ -84,7 +84,8 @@ export type SendReply = (d: Reply) => string;
 
 interface Unacked {
   readonly ctrl: DeviceId;
-  readonly draft: Reply;
+  /** Reset to a one-segment frame once a lossy link lost a packet of it. */
+  draft: Reply;
   readonly firstSentAt: SimTime;
   msgId: string;
   sentAt: SimTime;
@@ -775,7 +776,7 @@ export class FlashArrayModel {
    * association lives (the target tears it down after KATO without traffic).
    */
   inspectResponses(
-    fate: (msgId: string, sentAt: SimTime) => 'delivered' | 'dropped' | 'pending',
+    fate: (msgId: string, sentAt: SimTime) => 'delivered' | 'dropped' | 'lost-segment' | 'pending',
   ): void {
     const kato = this.profile.externalStorage.keepAliveTimeoutS.value;
     const keep: Unacked[] = [];
@@ -784,8 +785,10 @@ export class FlashArrayModel {
       if (!c || (c.state !== 'up' && c.state !== 'stalled' && c.state !== 'draining')) continue;
       const f = fate(u.msgId, u.sentAt);
       if (f === 'delivered') continue;
-      if (f === 'dropped') {
+      if (f === 'dropped' || f === 'lost-segment') {
         if (this.now - u.firstSentAt >= kato) continue;
+        // A lossy link lost one of its packets: TCP resends only that segment (RFC 6298, SACK).
+        if (f === 'lost-segment') u.draft = { ...u.draft, size: 'small' };
         u.resend = true;
       }
       keep.push(u);

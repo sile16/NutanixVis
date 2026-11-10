@@ -7,8 +7,6 @@ import {
   at,
   atCtx,
   baseInvariants,
-  eventSeen,
-  eventsMatching,
   isRunning,
   neverSeen,
   pathShare,
@@ -33,11 +31,12 @@ const lossyPath = (n: number) => `${T1.segA(n)}~${IP}`;
 /**
  * Grey failure (SPEC §6.4c "Lossy link"). The cable of one FA port drops a share of its packets
  * (`link.set-loss`); carrier and forwarding stay up. Keep-alives are one small packet and almost
- * always get through, so no path is declared lost by KATO. IO frames are many packets each: they
- * are often lost, TCP resends them with a doubling timer (RFC 6298), and IO on that path sees
- * multi-second latency outliers. Eventually a command's frame (or its completion) is lost often
- * enough to hit the NVMe IO timeout: the host aborts it, retries it on another path and resets
- * the path, which reconnects. When the loss is removed the path carries its share of IO again.
+ * always get through, so no path is declared lost by KATO. IO frames are many packets each, so
+ * one of their packets is often lost; TCP then resends only that segment after its
+ * retransmission timer (RFC 6298, SACK), which is lost again only as rarely as any one packet.
+ * IO on that path therefore shows latency outliers of a retransmission or two, but every command
+ * completes: none reaches the NVMe IO timeout and no path is reset. When the loss is removed the
+ * path carries its share of IO as before.
  */
 export default defineScenario({
   id: 't1-24-lossy-fa-port-cable',
@@ -58,21 +57,11 @@ export default defineScenario({
   ],
   expect: [
     ...t1Steady(),
-    atCtx(CLEAR_AT, 'IO on the lossy path sees multi-second latency outliers', (_s, ctx) =>
-      wasEver(ctx, (s) => vms(s).some((v) => v.ioPendingS >= 3), T0),
+    atCtx(CLEAR_AT, 'IO on the lossy path sees retransmission latency outliers', (_s, ctx) =>
+      wasEver(ctx, (s) => vms(s).some((v) => v.ioPendingS >= 2), T0),
     ),
-    atCtx(
-      CLEAR_AT,
-      'eventually an IO times out: the host retries it elsewhere and resets the path',
-      (_s, ctx) =>
-        eventSeen(ctx, 'nvme.io.timeout', { from: T0 }) &&
-        eventsMatching(ctx, 'nvme.path.lost', { from: T0 }).some((e) =>
-          e.text.includes('IO timeout'),
-        ),
-    ),
-    atCtx(END, 'no path is ever declared lost by keep-alive', (_s, ctx) =>
-      eventsMatching(ctx, 'nvme.path.lost').every((e) => !e.text.includes('keep-alive')),
-    ),
+    neverSeen(END, 'nvme.io.timeout'),
+    neverSeen(END, 'nvme.path.lost'),
     alwaysFrom(T0, 'guests keep running throughout', (s) => allVms(s, isRunning)),
     at(END, 'after the loss is removed every path is live', (s) => allCvms(s, allPathsLive)),
     at(END, 'and the formerly lossy path carries IO again', (s) =>
@@ -82,7 +71,7 @@ export default defineScenario({
     neverSeen(END, 'vm.io.guest-timeout'),
     ...baseInvariants(),
   ],
-  narrative: `The cable of array port ${FA_PORT} starts losing ${LOSS_PCT} % of its packets while carrier and forwarding stay up, so no path is declared failed: keep-alives are single small packets and get through. IO on that path is many packets per command, so it is often resent with a doubling TCP timer and shows multi-second latency outliers, until a command waits past the NVMe IO timeout and the host retries it elsewhere and resets the path. Once the cable is replaced the path is used again like the others.`,
+  narrative: `The cable of array port ${FA_PORT} starts losing ${LOSS_PCT} % of its packets while carrier and forwarding stay up, so no path is declared failed: keep-alives are single small packets and get through. IO on that path is many packets per command, so a packet of it is often lost and TCP resends that segment after its retransmission timer, which shows as latency outliers. Every command still completes, so nothing times out and no path is reset; once the cable is replaced the outliers stop.`,
   cite: ['rfc-6298', 'nvme-base-spec-2.1', 'linux-nvme-host'],
   status: 'active',
 });

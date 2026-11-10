@@ -484,7 +484,7 @@ export const current: Profile = {
       32,
       'assumption',
       ['rfc-6298', 'linux-nvme-host'],
-      'TCP doubles its retransmission timer on each retransmission of the same segment (RFC 6298 §5.5). With 1 s ticks the sub-second first retries fold into 1, 1, 1 s, then 2, 4, 8, 16, 32 s. A frame lost repeatedly on a lossy link therefore waits longer and longer, until the NVMe IO timeout aborts it.',
+      'TCP doubles its retransmission timer on each retransmission of the same segment (RFC 6298 §5.5). With 1 s ticks the sub-second first retries fold into 1, 1, 1 s, then 2, 4, 8, 16, 32 s. After a packet loss TCP resends only the lost segment (SACK), so on a lossy link a retransmission is lost again only as rarely as any packet; a frame dropped whole (a hung or blackholing link) waits longer and longer, until the NVMe IO timeout aborts it.',
     ),
     targetResetRetryS: c(
       0,

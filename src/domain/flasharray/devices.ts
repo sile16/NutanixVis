@@ -114,7 +114,8 @@ export class FaArrayDevice implements EngineDevice<Profile> {
     this.model.inspectResponses((msgId, sentAt) => {
       const t = ctx.trace(msgId);
       if (!t) return ctx.now - sentAt > 1 ? 'dropped' : 'pending';
-      return t.result === 'delivered' ? 'delivered' : 'dropped';
+      if (t.result === 'delivered') return 'delivered';
+      return t.reason === 'loss' ? 'lost-segment' : 'dropped';
     });
     const f = this.model.facts;
     // A data port that loses link drops its NVMe/TCP connections (`assumption`): frames of the

@@ -59,6 +59,25 @@ export function macFor(id: string): string {
   return b.map((x) => x.toString(16).padStart(2, '0')).join(':');
 }
 
+/**
+ * MAC pinning boot placement (T1 option `slb-boot-placement`): `node-N-swapped` makes node N's
+ * second storage uplink link up first, so its vs1 bond learns the CVM storage interfaces swapped.
+ * Returns vswitch id → member that links up first.
+ */
+function slbFirstUp(t: Topology): Map<string, string> {
+  const out = new Map<string, string>();
+  const opt = t.options.find((o) => o.id === 'slb-boot-placement');
+  const m = /^node-(\d+)-swapped$/.exec(String(opt?.value ?? opt?.default ?? ''));
+  if (!m) return out;
+  const vs = t.devices.find(
+    (d) => d.kind === 'vswitch' && d.parent === `node-${m[1]}` && d.name === 'vs1',
+  );
+  if (vs?.kind === 'vswitch' && vs.bondMode === 'balance-slb' && vs.uplinks[1]) {
+    out.set(vs.id, vs.uplinks[1]);
+  }
+  return out;
+}
+
 export function topologyToNetwork(t: Topology, timing: BondTiming): NetworkSpec {
   const byId = new Map(t.devices.map((d) => [d.id, d]));
   const of = <K extends DeviceSpec['kind']>(kind: K): Of<K>[] =>
@@ -91,6 +110,7 @@ export function topologyToNetwork(t: Topology, timing: BondTiming): NetworkSpec 
 
   // A vswitch is a bond; `group` = vswitch name so mode/LACP changes apply cluster-wide (SPEC §5.5).
   const vswitches = of('vswitch');
+  const firstUp = slbFirstUp(t);
   const bonds: BondSpec[] = vswitches.map((v) => ({
     id: v.id,
     ...(v.parent ? { owner: v.parent } : {}),
@@ -100,6 +120,7 @@ export function topologyToNetwork(t: Topology, timing: BondTiming): NetworkSpec 
     members: v.members ?? v.uplinks,
     ...(v.lacpRate ? { lacpRate: v.lacpRate } : {}),
     ...(v.initialActive ? { initialActive: v.initialActive } : {}),
+    ...(firstUp.has(v.id) ? { firstUp: firstUp.get(v.id) as string } : {}),
     group: v.name,
   }));
   const vswitchMtu = new Map(vswitches.map((v) => [v.id, v.mtu]));

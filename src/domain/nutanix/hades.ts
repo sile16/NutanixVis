@@ -69,9 +69,10 @@ export class Hades {
   /** First tick every path was gone (null while some path is live). */
   private lostSince: number | null = null;
   /**
-   * Since when IO has been blackholed without a break (some command stuck in flight on a path
-   * that still looks live). The kernel's own connections over that link died when it did, so the
-   * clock runs from the start, not from whichever stuck command is the oldest now.
+   * Since when IO has been blackholed without a break: some connection dead for at least a
+   * keep-alive timeout (a command stuck in flight on a path that still looks live, nothing of
+   * that queue back since). The kernel's own connections over that link died when it did, so the
+   * clock runs from the first, not from whichever dead connection is the oldest now.
    */
   private blackholeSince: number | null = null;
   /** The mounts failed (paths gone past `mountFailAfterS`); they stay bad until a remount. */
@@ -109,8 +110,13 @@ export class Hades {
       // link miss their keep-alive (KATO), then the queued service-volume IO fails as above.
       const blackholeLimit = ctx.profile.externalStorage.keepAliveTimeoutS.value + limit;
       const stuckAge = this.backend.stuckIoAgeS?.(now) ?? 0;
-      if (stuckAge > 0) this.blackholeSince = Math.min(this.blackholeSince ?? now, now - stuckAge);
-      else this.blackholeSince = null;
+      // A connection counts once it has been dead for a keep-alive timeout: a lossy one recovers
+      // its lost segment within a few retransmissions and never does. The clock then runs from
+      // the first dead connection for as long as one dead connection follows another.
+      const kato = ctx.profile.externalStorage.keepAliveTimeoutS.value;
+      if (stuckAge >= kato) {
+        this.blackholeSince = Math.min(this.blackholeSince ?? now - stuckAge, now - stuckAge);
+      } else if (stuckAge === 0) this.blackholeSince = null;
       if (this.blackholeSince !== null && now - this.blackholeSince >= blackholeLimit) {
         this.mountsBad = true;
       }

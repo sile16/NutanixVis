@@ -25,7 +25,7 @@ import { placementText } from '../diagram/vm-placement';
 import { useSim, useSimControls, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import { currentChoice, initialParams, rejectionReason } from './action-params';
-import { deviceName, linkName } from './events-model';
+import { deviceName, linkName, readableText } from './events-model';
 import { isOfferedAction } from './offered-actions';
 
 function Section({
@@ -84,6 +84,13 @@ const FIELD_LABEL: Readonly<Record<string, string>> = {
 };
 
 function Fields({ fields }: { fields: Readonly<Record<string, ViewField>> }) {
+  const snapshot = useSnapshot();
+  // A value naming one device links to it by name; ids inside lists and records read as names.
+  const value = (k: string, v: ViewField): ReactNode => {
+    if (k === 'bondMode' && typeof v === 'string') return BOND_MODE_LABEL[v] ?? v;
+    if (typeof v === 'string' && snapshot.devices[v]) return <DeviceLink id={v} qualified />;
+    return readableText(formatField(v), snapshot.devices, snapshot.links);
+  };
   const entries = Object.entries(fields).filter(
     ([k, v]) =>
       !isTimeField(k, v) &&
@@ -103,7 +110,7 @@ function Fields({ fields }: { fields: Readonly<Record<string, ViewField>> }) {
             {FIELD_LABEL[k] ?? humanizeKey(k)}
           </dt>
           <dd className="truncate font-mono" title={formatField(v)}>
-            {k === 'bondMode' && typeof v === 'string' ? (BOND_MODE_LABEL[v] ?? v) : formatField(v)}
+            {value(k, v)}
           </dd>
         </div>
       ))}

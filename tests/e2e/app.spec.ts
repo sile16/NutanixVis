@@ -174,3 +174,16 @@ test('the cable inspector names the cable and its ends readably', async ({ page 
   const prune = page.getByTestId('action-switch.port.prune-vlan').locator('xpath=ancestor::form');
   await expect(prune.getByLabel('VLAN')).toHaveValue('10');
 });
+
+test('inspector fields name devices instead of printing their ids', async ({ page }) => {
+  await page.goto('./#topology=t1-ahv-flasharray');
+  await expect(page.getByTestId('inspector-empty')).toBeVisible();
+  // Cluster: the ZK leader is a link to CVM 1, not "node-1.cvm".
+  const fields = page.getByTestId('inspector-fields');
+  await expect(fields).toContainText('CVM 1');
+  await expect(fields).not.toContainText('node-1.cvm');
+  await page.getByTestId('device-picker').selectOption('node-1.vm-1');
+  await expect(page.getByTestId('inspector-fields')).toContainText('Node 1 eth2, Node 1 eth3');
+  await page.getByTestId('inspector-fields').getByRole('button', { name: 'CVM 1' }).first().click();
+  await expect(page.getByTestId('inspector-title')).toHaveText('CVM 1');
+});

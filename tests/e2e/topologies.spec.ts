@@ -284,7 +284,7 @@ test('guided tour: Step in the flow ticks off each expected observation at its s
   await expect(page.getByTestId('scenario-step-now')).toHaveText('now at step 1');
   await expect(obs('stall')).toHaveAttribute('data-seen', 'yes');
   await expect(obs('resumed')).toHaveAttribute('data-seen', 'no');
-  await expect(page.getByTestId('vm-partial-node-1.vm-1')).toContainText('% of IO stalled');
+  await expect(page.getByTestId('vm-partial-node-1.vm-1')).toContainText('% stalled');
   // Press 2: the stuck commands ran on the other fabric.
   await page.getByTestId('scenario-step-0').click();
   await expect(page.getByTestId('scenario-step-now')).toHaveText('now at step 2');

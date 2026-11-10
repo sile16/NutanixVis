@@ -78,6 +78,19 @@ function Header({ entry }: { entry: CatalogEntry }) {
   const setLayoutEdit = useUi((s) => s.setLayoutEdit);
   return (
     <header className="flex flex-wrap items-end gap-x-4 gap-y-2 border-b border-border bg-panel px-4 py-2">
+      {/* Keyboard users would otherwise tab through every cable before reaching the panel. */}
+      <a
+        href="#side-panel"
+        className="sr-only rounded bg-accent px-2 py-1 text-xs text-white focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50"
+        data-testid="skip-to-panel"
+        onClick={(e) => {
+          // Focus the panel without touching the URL hash (it carries the topology).
+          e.preventDefault();
+          document.getElementById('side-panel')?.focus();
+        }}
+      >
+        Skip to side panel
+      </a>
       <div className="mr-2 self-center">
         <h1 className="text-lg font-bold leading-tight tracking-tight">
           NutanixVis{' '}
@@ -194,7 +207,12 @@ export function App() {
             </div>
             {entry.hasFlashArray ? <ImpactStrip /> : null}
           </section>
-          <aside aria-label="Details" className="min-h-0 border-l border-border bg-panel">
+          <aside
+            id="side-panel"
+            tabIndex={-1}
+            aria-label="Details"
+            className="min-h-0 border-l border-border bg-panel focus:outline-none"
+          >
             <RightRail />
           </aside>
         </main>

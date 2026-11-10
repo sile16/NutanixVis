@@ -138,7 +138,7 @@ export function VmNode({ data, selected }: P) {
             data-testid={`vm-partial-${data.device.id}`}
             title={`${partial}% of this VM's queued IO is stuck; the rest completes`}
           >
-            {partial}% of IO stalled
+            {partial}% stalled
           </span>
         ) : null}
         {data.movedFrom ? (

@@ -151,3 +151,13 @@ test('the traffic legend collapses to its title and remembers it across a reload
   await page.getByTestId('legend-toggle').click();
   await expect(page.getByTestId('traffic-preset-all')).toBeVisible();
 });
+
+test('a skip link takes keyboard users past the diagram to the side panel', async ({ page }) => {
+  await open(page);
+  await page.keyboard.press('Tab');
+  await expect(page.getByTestId('skip-to-panel')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#side-panel')).toBeFocused();
+  // The URL keeps its topology.
+  expect(page.url()).toContain('topology=');
+});

@@ -295,6 +295,20 @@ test('guided tour: Step in the flow ticks off each expected observation at its s
   }
 });
 
+test('guided bond tour: the "no IO stalls" note ticks once a step runs without a stall', async ({
+  page,
+}) => {
+  await page.goto('./#topology=t1-ahv-flasharray');
+  await page.getByRole('tab', { name: 'Scenario' }).click();
+  await page.getByTestId('scenario-select').selectOption('t1-33-steps-one-nic-bond');
+  const note = page.getByTestId('scenario-observation').first();
+  await expect(note).toHaveAttribute('data-seen', 'no');
+  await page.getByTestId('scenario-apply-0').click();
+  await page.getByTestId('scenario-step-0').click();
+  await expect(page.getByTestId('scenario-step-now')).toHaveText('now at step 0');
+  await expect(note).toHaveAttribute('data-seen', 'yes');
+});
+
 test('the ISL edge shows its speeds each way, line-rate bars, and the share of storage IO', async ({
   page,
 }) => {

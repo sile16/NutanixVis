@@ -12,7 +12,7 @@ import { deriveArrayOpSteps, deriveVmSteps } from '../../domain/steps';
 import { scenarios } from '../../scenarios';
 import type { GuideObservation, ScenarioDef } from '../../scenarios/define';
 import { Button, Select } from '../components/controls';
-import { useSim, useSimControls, useSteps } from '../store/sim-context';
+import { useSim, useSimControls, useSnapshot, useSteps } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 
 /** The scenario name without its "T1" / "T1 steps:" prefix, first letter capitalised. */
@@ -73,32 +73,49 @@ export function ScenarioPanel() {
   );
 }
 
+interface Observed {
+  readonly stages: ReadonlySet<string>;
+  /** When each stall or VM-down began (a "no new stall" note is judged from its group on). */
+  readonly troubleAt: readonly number[];
+}
+
+const NOTHING: Observed = { stages: new Set(), troubleAt: [] };
+
 /** Stages the guided VM has reached since the scenario's first group was applied. */
-function useObservedStages(vm: string | null, from: number | null): ReadonlySet<string> {
+function useObservedStages(vm: string | null, from: number | null): Observed {
   const steps = useSteps();
   const sim = useSim();
   return useMemo(() => {
-    if (vm === null || from === null) return new Set<string>();
+    if (vm === null || from === null) return NOTHING;
     const samples = (steps.samples.get(vm) ?? []).filter((x) => x.t >= from);
     const events = sim.eventLog();
     const r = deriveVmSteps(vm, events, samples);
     // A planned array operation (controller reboot, NDU) has stages of its own.
     const op = deriveArrayOpSteps(events, from);
-    return new Set([...r.milestones, ...op.milestones].map((m) => m.stage));
+    const all = [...r.milestones, ...op.milestones];
+    return {
+      stages: new Set(all.map((m) => m.stage)),
+      troubleAt: all.filter((m) => m.stage === 'stall' || m.stage === 'vm-down').map((m) => m.t),
+    };
   }, [steps, sim, vm, from]);
 }
 
 function Observations({
   items,
   observed,
+  quiet,
 }: {
   items: readonly GuideObservation[];
   observed: ReadonlySet<string>;
+  /** Time has run since the group was applied and the guided VM never stalled. */
+  quiet: boolean;
 }) {
   return (
     <ul className="mt-1.5 flex flex-col gap-1" aria-label="Expected observations">
       {items.map((o) => {
-        const seen = o.stage !== undefined && observed.has(o.stage);
+        // A "no IO stalls" note (no stage of its own) is borne out once time has run without one.
+        const tracked = o.stage !== undefined || o.io === 'none';
+        const seen = o.stage !== undefined ? observed.has(o.stage) : o.io === 'none' && quiet;
         return (
           <li
             key={o.text}
@@ -107,7 +124,7 @@ function Observations({
             data-seen={seen ? 'yes' : 'no'}
             {...(o.stage ? { 'data-stage': o.stage } : {})}
           >
-            {o.stage === undefined ? (
+            {!tracked ? (
               <Info size={12} aria-hidden="true" className="mt-px shrink-0" />
             ) : seen ? (
               <CircleCheck
@@ -137,10 +154,18 @@ function ActiveScenario({ def }: { def: ScenarioDef }) {
   const current = useSteps().current;
   const simEpoch = useUi((s) => s.simEpoch);
   const groups = useMemo(() => timelineGroups(def), [def]);
-  const [applied, setApplied] = useState<{ epoch: number; n: number; from: number | null }>({
+  const now = useSnapshot().simTime;
+  const [applied, setApplied] = useState<{
+    epoch: number;
+    n: number;
+    from: number | null;
+    /** Sim time each group was applied at. */
+    times: readonly number[];
+  }>({
     epoch: simEpoch,
     n: 0,
     from: null,
+    times: [],
   });
   // A rebuilt simulation (reset) starts the timeline again.
   const fresh = applied.epoch === simEpoch;
@@ -178,8 +203,14 @@ function ActiveScenario({ def }: { def: ScenarioDef }) {
                     // Observations are read from the first group on (the scenario's own run).
                     const from =
                       fresh && applied.from !== null ? applied.from : sim.getSnapshot().simTime;
+                    const at = sim.getSnapshot().simTime;
                     for (const s of g) apply(s.action);
-                    setApplied({ epoch: simEpoch, n: i + 1, from });
+                    setApplied({
+                      epoch: simEpoch,
+                      n: i + 1,
+                      from,
+                      times: [...(fresh ? applied.times : []), at],
+                    });
                   }}
                 >
                   {state === 'applied' ? 'Applied' : i === 0 ? 'Inject' : 'Apply'}
@@ -192,7 +223,12 @@ function ActiveScenario({ def }: { def: ScenarioDef }) {
                   </p>
                   <Observations
                     items={items}
-                    observed={state === 'applied' ? observed : new Set()}
+                    observed={state === 'applied' ? observed.stages : new Set()}
+                    quiet={
+                      state === 'applied' &&
+                      now > (applied.times[i] ?? Number.POSITIVE_INFINITY) &&
+                      !observed.troubleAt.some((t) => t >= (applied.times[i] ?? 0))
+                    }
                   />
                 </>
               ) : null}

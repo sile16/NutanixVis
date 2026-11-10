@@ -13,6 +13,7 @@ import {
   Crown,
   FlaskConical,
   Hourglass,
+  Layers,
   Lightbulb,
   type LucideIcon,
   PowerOff,
@@ -81,6 +82,18 @@ const BADGES: Readonly<Record<string, { label: string; short: string; Icon: Luci
   'fa-primary': { label: 'Primary controller', short: 'Primary', Icon: Star },
   'fa-promoting': { label: 'Promoting to primary', short: 'Promoting', Icon: Hourglass },
   'io-paused': { label: 'Array IO paused', short: 'IO paused', Icon: CirclePause },
+  // Cassandra ring membership of a running CVM, when not normal (docs/view-fields.md `ringState`).
+  'ring-down': { label: 'Cassandra down on this CVM', short: 'Cassandra down', Icon: Layers },
+  'ring-detached': {
+    label: 'Removed from the Cassandra ring (detached)',
+    short: 'Ring detached',
+    Icon: Layers,
+  },
+  'ring-forwarding': {
+    label: 'Metadata store disabled: forwarding (Degraded Node Detection)',
+    short: 'Forwarding',
+    Icon: Layers,
+  },
 };
 
 export const badgeLabel = (b: string): string => BADGES[b]?.label ?? b;

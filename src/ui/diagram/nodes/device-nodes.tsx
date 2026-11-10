@@ -91,8 +91,17 @@ export function HostNode({ data, selected }: P) {
 /** Cards narrower than this show role badges as icons only (label in the tooltip). */
 const NARROW = 140;
 
-export function CvmNode({ data, selected, width }: P) {
+/** A running CVM whose Cassandra ring state is not normal gets a badge for it. */
+function withRingBadge(data: P['data']): P['data'] {
+  const ring = data.device.fields.ringState;
+  const running = data.device.status !== 'failed' && data.device.status !== 'offline';
+  if (!running || (ring !== 'down' && ring !== 'detached' && ring !== 'forwarding')) return data;
+  return { ...data, device: { ...data.device, badges: [...data.device.badges, `ring-${ring}`] } };
+}
+
+export function CvmNode({ data: raw, selected, width }: P) {
   const narrow = (width ?? 0) < NARROW;
+  const data = withRingBadge(raw);
   if (data.isGroup) {
     return (
       <GroupFrame

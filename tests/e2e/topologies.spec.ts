@@ -309,6 +309,17 @@ test('guided bond tour: the "no IO stalls" note ticks once a step runs without a
   await expect(note).toHaveAttribute('data-seen', 'yes');
 });
 
+test('a CVM in Hades maintenance shows Cassandra down on its card', async ({ page }) => {
+  await page.goto('./#topology=t1-ahv-flasharray');
+  await page.getByRole('tab', { name: 'Scenario' }).click();
+  await page.getByTestId('scenario-select').selectOption('t1-32-steps-both-storage-nics-down');
+  await expect(page.getByTestId('node-node-1.cvm')).not.toContainText('Cassandra down');
+  await page.getByTestId('scenario-apply-0').click();
+  for (let i = 0; i < 4; i++) await page.getByTestId('scenario-step-0').click();
+  await expect(page.getByTestId('scenario-step-now')).toHaveText('now at step 4');
+  await expect(page.getByTestId('node-node-1.cvm')).toContainText('Cassandra down');
+});
+
 test('the ISL edge shows its speeds each way, line-rate bars, and the share of storage IO', async ({
   page,
 }) => {

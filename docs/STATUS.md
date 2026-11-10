@@ -33,6 +33,8 @@ Living status page: where the project stands, what is left, which behavior still
 
 ### Recent changes
 
+- **2026-11-09: CVM card shows the Cassandra ring.** A running CVM whose ring state is not normal gets a badge (`Cassandra down`, `Ring detached`, `Forwarding`), next to the Stargate row and the ZK seat badges. Also: the traffic legend collapses, the topology menu names a guided scenario's own build, moved VMs stay in view, a planned-off CVM's Stargate is drawn off rather than failed, and saturation events name the queue delay or the drops.
+
 - **2026-11-09: impact strip wording.** The same bond move on several nodes (a switch failure) is one line naming the nodes (`Nodes 1, 2, 3 vs1: eth2 down, traffic moved to eth3`), so the VM table stays in view; with VMs affected by something else it reads "Bond failover took 0 steps" rather than "no interruption". A step whose stall ended inside it says how: `all IO stalled, then via CVM 2` or `…, then resumed`, matching the guided list's "IO resumed" at that step.
 
 - **2026-11-09: dead-path selection and the Hades blackhole clock.** The queue-depth selector weighted paths by their last latency, and a silently dead path keeps its last good value, so it read as the fastest and drew new IO ahead of the live paths: in the default view a Switch A failure fully stalled one VM for a step while the other stalled 34 %, depending on the tick the fault landed. A path that has completed nothing since its stuck commands went out now takes no weighted turn (the sink rule still fills one command per dead queue); both VMs now stall 25 % in step 1 and recover in step 2 whenever the fault lands. Hades' blackhole clock now runs from when IO first blackholed, not from the oldest stuck command now, so T1-36 keeps the T1-32 timeline (maintenance T+51, takeover T+54) and in T1-18 all four nodes enter maintenance together at T+51.
@@ -89,7 +91,6 @@ Living status page: where the project stands, what is left, which behavior still
 - **T3 layout:** seven hosts in one row get small at the default zoom. Wrap them into two rows.
 - **FlashArray interfaces:** the FA interface boxes are a bit narrow.
 - **`action.rejected`:** carry the action kind and target as structured fields, not only in the message.
-- **CVM service chips:** Stargate (child row) and ZK seats (badges) are on the CVM card; add the Cassandra ring state.
 
 ### Waiting on a real lab
 

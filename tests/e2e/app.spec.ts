@@ -187,3 +187,14 @@ test('inspector fields name devices instead of printing their ids', async ({ pag
   await page.getByTestId('inspector-fields').getByRole('button', { name: 'CVM 1' }).first().click();
   await expect(page.getByTestId('inspector-title')).toHaveText('CVM 1');
 });
+
+test('the step clock says a VM is down when its host is lost, not that its IO is interrupted', async ({
+  page,
+}) => {
+  await page.goto('./#topology=t1-ahv-flasharray');
+  await expect(page.getByTestId('device-picker')).toBeVisible();
+  await page.getByTestId('device-picker').selectOption('node-1');
+  await page.getByTestId('action-power-off').click();
+  await page.getByTestId('step').click();
+  await expect(page.getByTestId('sim-clock')).toContainText('VM down');
+});

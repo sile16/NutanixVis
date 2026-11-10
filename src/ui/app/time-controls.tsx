@@ -15,19 +15,21 @@ import { SPEEDS, useUi } from '../store/ui-store';
  */
 export function SimClock() {
   const steps = useSteps();
-  const interrupted = [...steps.vms.values()].some(
-    (v) => v.startT !== null && v.resumeStep === null,
-  );
+  const open = [...steps.vms.values()].filter((v) => v.startT !== null && v.resumeStep === null);
+  // A VM whose process stopped (host loss, crash) is down, not merely waiting on its IO.
+  const down = open.some((v) => v.milestones.some((m) => m.stage === 'vm-down'));
   const note =
     steps.current === 0 && steps.settled
       ? 'steady'
       : steps.waiting
         ? 'waiting for recovery'
-        : interrupted
-          ? 'VM I/O interrupted'
-          : steps.settled
-            ? 'settled'
-            : 'recovering';
+        : down
+          ? 'VM down'
+          : open.length > 0
+            ? 'VM I/O interrupted'
+            : steps.settled
+              ? 'settled'
+              : 'recovering';
   return (
     <div className="flex items-center gap-1">
       <output

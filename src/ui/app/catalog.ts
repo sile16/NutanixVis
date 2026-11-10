@@ -173,6 +173,33 @@ export const catalog: readonly CatalogEntry[] = [
   ...bondedEntries,
 ];
 
+const BOND_TITLE: Readonly<Record<string, string>> = {
+  'balance-slb': 'MAC pinning',
+  'balance-tcp': 'Active-Active LACP',
+  'active-backup': 'Active-Backup',
+};
+
+/**
+ * The storage network a guided scenario builds, in the words of the topology menu (its options
+ * need not match a menu entry, e.g. a single storage VLAN): T1 options only, else null.
+ */
+export function scenarioTopologyTitle(def: ScenarioDef): string | null {
+  if (def.topology !== 't1-ahv-flasharray') return null;
+  const o = def.options ?? {};
+  const vlans = o['storage-vlans'] === 'single' ? ' · one storage VLAN' : '';
+  if (o['storage-vswitch-layout'] === 'per-fabric') {
+    return `Two storage vSwitches (vs1, vs2), no bond${vlans}`;
+  }
+  const mode = String(o['vs1-bond-mode'] ?? 'balance-slb');
+  const ports =
+    o['array-port-vlans'] === 'trunked'
+      ? ` · ${ARRAY_8}`
+      : o['array-port-vlans'] === 'access'
+        ? ` · ${ARRAY_4}`
+        : '';
+  return `One storage vSwitch (vs1), ${BOND_TITLE[mode] ?? mode}${ports}${vlans}`;
+}
+
 /** A guided scenario as a catalog entry: its topology built with the scenario's own options. */
 export function scenarioEntry(def: ScenarioDef): CatalogEntry {
   const id = def.topology as TopologyId;

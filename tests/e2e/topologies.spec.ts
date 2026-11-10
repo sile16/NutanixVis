@@ -260,6 +260,10 @@ test('guided steps scenario loads its topology and injects the failure', async (
   await page.getByRole('tab', { name: 'Scenario' }).click();
   await page.getByTestId('scenario-select').selectOption('t1-34-steps-bond-does-not-fail-back');
   await expect(page.getByTestId('scenario-active')).toContainText('MAC-pinning bond');
+  // The topology menu names the scenario's own build, not the menu entry it shares an id with.
+  await expect(page.getByTestId('topology-select').locator('option:checked')).toHaveText(
+    'Scenario: One storage vSwitch (vs1), MAC pinning · one storage VLAN',
+  );
   await page.getByTestId('scenario-apply-0').click();
   await expect(page.getByTestId('scenario-group').first()).toHaveAttribute('data-state', 'applied');
   await expect(page.getByTestId('node-node-1.eth2')).toHaveAttribute('data-status', 'failed');

@@ -18,7 +18,7 @@ import { ImpactStrip } from '../steps/impact-strip';
 import { SimProvider } from '../store/sim-context';
 import { topologyFromHash, useUi } from '../store/ui-store';
 import { usePlayback } from '../store/use-playback';
-import { catalog, fullCatalog, scenarioEntry } from './catalog';
+import { catalog, fullCatalog, scenarioEntry, scenarioTopologyTitle } from './catalog';
 import { useDarkTheme } from './theme';
 import { SimClock, TimeControls } from './time-controls';
 import { VersionSelector } from './version-selector';
@@ -62,8 +62,15 @@ function PlaybackDriver() {
   return null;
 }
 
+/** Topology menu value while a guided scenario's own build is loaded. */
+const SCENARIO_VALUE = '__scenario__';
+
 function Header({ entry }: { entry: CatalogEntry }) {
   const setTopology = useUi((s) => s.setTopology);
+  const scenarioId = useUi((s) => s.scenarioId);
+  const scenarioTitle = scenarioId
+    ? (scenarioTopologyTitle(getScenario(scenarioId)) ?? entry.title)
+    : null;
   const resetSim = useUi((s) => s.resetSim);
   const activityTicks = useUi((s) => s.activityTicks);
   const setActivityTicks = useUi((s) => s.setActivityTicks);
@@ -91,10 +98,16 @@ function Header({ entry }: { entry: CatalogEntry }) {
       </div>
       <Select
         label="Topology"
-        value={entry.id}
-        onChange={(e) => setTopology(e.target.value)}
+        value={scenarioTitle === null ? entry.id : SCENARIO_VALUE}
+        onChange={(e) => {
+          if (e.target.value !== SCENARIO_VALUE) setTopology(e.target.value);
+        }}
         data-testid="topology-select"
       >
+        {/* A guided scenario builds its own options: name them, not the menu entry it shares an id with. */}
+        {scenarioTitle !== null ? (
+          <option value={SCENARIO_VALUE}>Scenario: {scenarioTitle}</option>
+        ) : null}
         {(catalog.some((t) => t.id === entry.id) ? catalog : [...catalog, entry]).map((t) => (
           <option key={t.id} value={t.id}>
             {t.title}

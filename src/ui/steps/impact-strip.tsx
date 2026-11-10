@@ -81,7 +81,9 @@ export function ImpactStrip() {
         </h2>
         <span className="text-ink-muted" data-testid="impact-summary">
           {impact.rows.length === 0
-            ? `no VM interrupted · ${impact.unaffected} running normally · 0 steps`
+            ? // "0 steps" next to a running step counter (a planned array operation counts steps too)
+              // would read as a contradiction: say what the zero is.
+              `no VM interrupted (0 steps of stalled IO) · ${impact.unaffected} running normally`
             : `${impact.rows.length} VM${impact.rows.length === 1 ? '' : 's'} affected · ${impact.unaffected} running normally`}
         </span>
       </div>

@@ -106,6 +106,18 @@ function RefitWhenOutside({ structure }: { structure: string }) {
   return null;
 }
 
+/**
+ * React Flow error 008 ("Couldn't create edge for source handle id"): our edges are built only
+ * when both ends have anchors in the same layout, and each node carries its handles explicitly,
+ * so the handle always exists in our data. The error can fire for one render while React Flow
+ * syncs new nodes and edges into its store separately (an IO hop to a VM that just moved); it is
+ * not logged. Every other React Flow error still is.
+ */
+function onFlowError(code: string, message: string): void {
+  if (code === '008') return;
+  console.warn(`[React Flow]: ${message}`);
+}
+
 export function Diagram({
   baseLayout,
   colorMode,
@@ -394,6 +406,7 @@ export function Diagram({
         multiSelectionKeyCode={null}
         selectionKeyCode={null}
         deleteKeyCode={null}
+        onError={onFlowError}
         fitView
         fitViewOptions={FIT_VIEW}
         minZoom={0.2}

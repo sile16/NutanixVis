@@ -7,7 +7,14 @@ import { isDescendant } from '../diagram/path-usage';
 import { StepTag } from '../steps/step-tag';
 import { useSim, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
-import { eventId, filterEvents, indexEvents, SEVERITIES } from './events-model';
+import {
+  eventId,
+  filterEvents,
+  indexEvents,
+  linkName,
+  readableText,
+  SEVERITIES,
+} from './events-model';
 import { SEVERITY_META, SeverityTag } from './severity';
 
 const MAX_ROWS = 300;
@@ -85,13 +92,20 @@ export function EventsPanel() {
                     <button
                       type="button"
                       className="truncate text-accent-ink hover:underline focus-visible:outline-2 focus-visible:outline-focus"
-                      onClick={() => select({ type: 'device', id: e.deviceId ?? '' })}
+                      onClick={() => {
+                        const id = e.deviceId ?? '';
+                        select(snapshot.links[id] ? { type: 'link', id } : { type: 'device', id });
+                      }}
                     >
-                      {snapshot.devices[e.deviceId]?.label ?? e.deviceId}
+                      {snapshot.devices[e.deviceId]?.label ??
+                        linkName(snapshot.devices, snapshot.links, e.deviceId) ??
+                        e.deviceId}
                     </button>
                   ) : null}
                 </div>
-                <p className="mt-0.5">{e.text}</p>
+                <p className="mt-0.5" title={e.text}>
+                  {readableText(e.text, snapshot.devices, snapshot.links)}
+                </p>
                 {e.log && e.log.lines.length > 0 ? (
                   <pre
                     className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-all rounded bg-hover px-1.5 py-0.5 font-mono text-[10px] leading-snug text-ink"

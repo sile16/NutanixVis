@@ -5,7 +5,7 @@
  * events use as a `causeId`. Until the contract gains `SimEvent.id`, the UI assumes the id is
  * `e<seq>` (the mock simulation's convention). See the stream B report.
  */
-import type { Severity, SimEvent } from '../../engine/types';
+import type { Severity, SimEvent, Snapshot } from '../../engine/types';
 
 export const SEVERITIES: readonly Severity[] = ['debug', 'info', 'warn', 'error', 'critical'];
 
@@ -53,4 +53,52 @@ export function causalChain(event: SimEvent, index: ReadonlyMap<string, SimEvent
     cur = cause;
   }
   return chain;
+}
+
+type Devices = Snapshot['devices'];
+type Links = Snapshot['links'];
+
+/**
+ * A device id as a name a reader can place: a NIC with its host (`Node 1 eth2`), a CVM interface
+ * with its CVM (`CVM 1 CVM-IP A`), a FlashArray interface with its controller and port
+ * (`CT0 eth10 (VLAN 10)`); anything else by its label.
+ */
+export function deviceName(devices: Devices, id: string): string {
+  const d = devices[id];
+  if (!d) return id;
+  const parent = d.parent ? devices[d.parent] : undefined;
+  if (d.kind === 'fa-interface' && parent) {
+    const ct = parent.parent ? devices[parent.parent] : undefined;
+    return `${ct ? `${ct.label} ` : ''}${parent.label} (${d.label})`;
+  }
+  if ((d.kind === 'nic' || d.kind === 'cvm-interface') && parent)
+    return `${parent.label} ${d.label}`;
+  return d.label;
+}
+
+/** A cable id as `A ↔ B` (its two end devices), or null if it is not a known cable. */
+export function linkName(devices: Devices, links: Links, id: string): string | null {
+  const l = links[id];
+  return l ? `${deviceName(devices, l.a.device)} ↔ ${deviceName(devices, l.b.device)}` : null;
+}
+
+/** An NVMe path id (`<cvm-interface>~<fa-interface>`) as `CVM-IP A → CT0 eth10 (VLAN 10)`. */
+export function pathName(devices: Devices, id: string): string | null {
+  const [local, remote, extra] = id.split('~');
+  if (!local || !remote || extra !== undefined || !devices[local] || !devices[remote]) return null;
+  return `${devices[local]?.label ?? local} → ${deviceName(devices, remote)}`;
+}
+
+const ID_TOKEN = /[A-Za-z0-9][A-Za-z0-9._~-]*[A-Za-z0-9]/g;
+
+/**
+ * Event text with the simulator's ids (devices, cables, NVMe paths) replaced by readable names.
+ * Ids the snapshot does not know (vDisk ids, codes) are left as they are.
+ */
+export function readableText(text: string, devices: Devices, links: Links): string {
+  return text.replace(ID_TOKEN, (tok) => {
+    if (tok.includes('~')) return pathName(devices, tok) ?? tok;
+    if (devices[tok] && (tok.includes('.') || tok.includes('-'))) return deviceName(devices, tok);
+    return linkName(devices, links, tok) ?? tok;
+  });
 }

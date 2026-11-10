@@ -336,6 +336,7 @@ export class FlowsDevice implements Device<Profile> {
     }
   }
 
+  /** Whether the saturation event fires: queueing delay above a couple of µs, or drops. */
   private isSaturated(k: DirKey, sol: FlowSolution): boolean {
     const d = sol.dirs.get(k);
     if (!d) return false;
@@ -358,7 +359,7 @@ export class FlowsDevice implements Device<Profile> {
           severity: 'warn',
           deviceId: info.link,
           code: 'net.link.saturated',
-          text: `${dir} is at line rate (${Math.round(d.capacityBps / G)} Gb/s): its queue adds about ${Math.round(d.delayS * 1e6)} µs, and IO through it slows`,
+          text: `${dir} is at line rate (${Math.round(d.capacityBps / G)} Gb/s): ${saturationEffect(d)}`,
           causeIds: [],
           cite: [],
           confidence: 'assumption',
@@ -455,3 +456,14 @@ function combine(
 }
 
 const round1 = (x: number): number => Math.round(x * 10) / 10;
+
+/**
+ * What a saturated direction does to the IO through it: the queueing delay it adds, or (when its
+ * buffer is full and the delay rounds to nothing) the frames it drops, which the senders retry.
+ */
+function saturationEffect(d: { readonly delayS: number; readonly dropBps: number }): string {
+  const us = Math.round(d.delayS * 1e6);
+  if (us >= 1) return `its queue adds about ${us} µs, and IO through it slows`;
+  if (d.dropBps > 0) return 'it drops the excess frames, and the senders slow down to fit';
+  return 'IO through it is capped at the line rate';
+}

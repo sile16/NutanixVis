@@ -28,7 +28,7 @@ const devices = {
 };
 const layout = {
   'node-1.vm-1': { x: 10, y: 40, w: 88, h: 36 },
-  'node-1.eth0': { x: 150, y: 200, w: 56, h: 28 },
+  'node-1.eth0': { x: 250, y: 200, w: 56, h: 28 },
   'node-2.vm-1': { x: 390, y: 40, w: 88, h: 36 },
   'node-2.vm-2': { x: 482, y: 40, w: 88, h: 36 },
 };
@@ -37,8 +37,9 @@ describe('relocateVms', () => {
   it('re-parents restarted VMs to their current host, in a row above its own VMs', () => {
     const p = relocateVms(devices, layout);
     expect(p.devices['node-2.vm-1']?.parent).toBe('node-1');
-    expect(p.layout['node-2.vm-1']).toEqual({ x: 10, y: 40 - 36 - 8, w: 88, h: 36 });
-    expect(p.layout['node-2.vm-2']?.x).toBe(10 + 88 + 8);
+    // Moved VMs are at least 108 wide (room for the "from Node N" marker).
+    expect(p.layout['node-2.vm-1']).toEqual({ x: 10, y: 40 - 36 - 8, w: 108, h: 36 });
+    expect(p.layout['node-2.vm-2']?.x).toBe(10 + 108 + 8);
     expect(p.moved.get('node-2.vm-2')).toBe('node-1');
   });
 
@@ -51,9 +52,9 @@ describe('relocateVms', () => {
   it('wraps onto a new row instead of growing the host sideways', () => {
     const narrow = { ...layout, 'node-1.eth0': { x: 10, y: 200, w: 56, h: 28 } };
     const p = relocateVms(devices, narrow);
-    // Only one 88-wide VM fits across node-1's contents: the second one stacks above the first.
-    expect(p.layout['node-2.vm-1']).toEqual({ x: 10, y: 40 - 44, w: 88, h: 36 });
-    expect(p.layout['node-2.vm-2']).toEqual({ x: 10, y: 40 - 88, w: 88, h: 36 });
+    // Only one moved VM fits across node-1's contents: the second one stacks above the first.
+    expect(p.layout['node-2.vm-1']).toEqual({ x: 10, y: 40 - 44, w: 108, h: 36 });
+    expect(p.layout['node-2.vm-2']).toEqual({ x: 10, y: 40 - 88, w: 108, h: 36 });
   });
 
   it('anchors on the host itself when it has no VMs of its own', () => {
@@ -70,7 +71,7 @@ describe('relocateVms', () => {
       },
     );
     // Inside node-1 (above its NIC), not at its old x in node-2.
-    expect(p.layout['node-2.vm-1']).toEqual({ x: 20, y: 300 - 44, w: 88, h: 36 });
+    expect(p.layout['node-2.vm-1']).toEqual({ x: 20, y: 300 - 44, w: 108, h: 36 });
   });
 
   it('leaves VMs on their topology host untouched', () => {

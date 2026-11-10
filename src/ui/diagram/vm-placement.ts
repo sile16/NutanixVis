@@ -50,6 +50,7 @@ export function movedAria(by: MovedBy, from: string): string {
   return `${placementText(by === 'other' ? null : by)} ${from}`;
 }
 const DEFAULT_BOX = { w: 88, h: 36 };
+const MOVED_MIN_W = 108;
 
 export interface PlacedView {
   readonly devices: Readonly<Record<string, DeviceView>>;
@@ -102,7 +103,9 @@ export function relocateVms(
     const hostLeaves = boxes((d) => isUnder(devices, d.id, host));
     const anchor = ownVms.length > 0 ? ownVms : hostLeaves;
     const prev = layout[vmId];
-    const w = prev?.w ?? DEFAULT_BOX.w;
+    // Wide enough for the "from Node N" marker beside the status icon (topology VM boxes are
+    // sized for the label alone).
+    const w = Math.max(prev?.w ?? 0, MOVED_MIN_W);
     const h = prev?.h ?? DEFAULT_BOX.h;
     const slot = slotsUsed.get(host) ?? 0;
     slotsUsed.set(host, slot + 1);

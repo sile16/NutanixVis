@@ -13,8 +13,10 @@ import {
   type NodeChange,
   Panel,
   ReactFlow,
+  useReactFlow,
+  useStore,
 } from '@xyflow/react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DeviceView, Snapshot } from '../../engine/types';
 import { useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
@@ -69,6 +71,36 @@ function structureKey(
 const FIT_VIEW: FitViewOptions = {
   padding: { top: '16px', right: '16px', left: '16px', bottom: '150px' },
 };
+
+/**
+ * When the diagram's structure changes (a VM moved to another host, whose card grows upward), fit
+ * the view again only if something now lies outside it, so a host header is never left off-screen
+ * while a view the user zoomed into is otherwise kept.
+ */
+function RefitWhenOutside({ structure }: { structure: string }) {
+  const { getNodes, getNodesBounds, getViewport, fitView } = useReactFlow();
+  const width = useStore((s) => s.width);
+  const height = useStore((s) => s.height);
+  const last = useRef(structure);
+  useEffect(() => {
+    if (last.current === structure) return;
+    last.current = structure;
+    // After React Flow has measured the new nodes.
+    const id = requestAnimationFrame(() => {
+      const b = getNodesBounds(getNodes());
+      const { x, y, zoom } = getViewport();
+      const left = b.x * zoom + x;
+      const top = b.y * zoom + y;
+      const right = (b.x + b.width) * zoom + x;
+      const bottom = (b.y + b.height) * zoom + y;
+      if (left < 0 || top < 0 || right > width || bottom > height) {
+        void fitView({ ...FIT_VIEW, duration: 300 });
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [structure, getNodes, getNodesBounds, getViewport, fitView, width, height]);
+  return null;
+}
 
 export function Diagram({
   baseLayout,
@@ -364,6 +396,7 @@ export function Diagram({
         maxZoom={3}
       >
         <Background gap={24} size={1} />
+        <RefitWhenOutside structure={key} />
         <Controls showInteractive={false} position="bottom-right" fitViewOptions={FIT_VIEW} />
         {animate ? (
           <PacketOverlay

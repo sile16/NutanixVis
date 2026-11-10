@@ -98,6 +98,8 @@ test('right-click quick menu fails a device; manual mode queues actions', async 
   await page.getByTestId('node-sw-b').click({ button: 'right' });
   const menu = page.getByTestId('context-menu');
   await expect(menu).toBeVisible();
+  // Named by its label, not its id.
+  await expect(menu).toHaveAttribute('aria-label', 'Quick actions for Switch B');
   await menu.getByRole('menuitem', { name: 'Fail' }).click();
   // Auto mode: the action applies on an immediate tick.
   await expect(page.getByTestId('node-sw-b')).toHaveAttribute('data-status', 'failed');

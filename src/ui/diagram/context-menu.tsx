@@ -6,6 +6,7 @@
 import { PanelRight } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useRef } from 'react';
 import { useClampedPosition } from '../components/clamp';
+import { deviceName, linkName } from '../panels/events-model';
 import { useSim, useSimControls, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 
@@ -17,7 +18,7 @@ export function ContextMenu() {
   const select = useUi((s) => s.select);
   const setTab = useUi((s) => s.setTab);
   const sim = useSim();
-  useSnapshot(); // re-render when applicability changes
+  const snapshot = useSnapshot(); // also re-renders when applicability changes
   const { apply } = useSimControls();
   const ref = useRef<HTMLDivElement>(null);
   const pos = useClampedPosition(ref, menu ? { x: menu.x, y: menu.y } : null);
@@ -34,6 +35,10 @@ export function ContextMenu() {
 
   if (!menu) return null;
   const actions = sim.availableActions(menu.target.id).filter((a) => QUICK.has(a.kind));
+  const name =
+    menu.target.type === 'link'
+      ? (linkName(snapshot.devices, snapshot.links, menu.target.id) ?? menu.target.id)
+      : deviceName(snapshot.devices, menu.target.id);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const items = [
@@ -54,15 +59,15 @@ export function ContextMenu() {
     <div
       ref={ref}
       role="menu"
-      aria-label={`Quick actions for ${menu.target.id}`}
+      aria-label={`Quick actions for ${name}`}
       tabIndex={-1}
       onKeyDown={onKeyDown}
       className="fixed z-50 min-w-44 rounded-md border border-border bg-panel p-1 text-sm shadow-lg"
       style={{ left: pos?.x ?? menu.x, top: pos?.y ?? menu.y }}
       data-testid="context-menu"
     >
-      <div className="truncate px-2 py-1 font-mono text-[11px] text-ink-muted">
-        {menu.target.id}
+      <div className="truncate px-2 py-1 text-[11px] text-ink-muted" title={menu.target.id}>
+        {name}
       </div>
       {actions.map((a) => (
         <button

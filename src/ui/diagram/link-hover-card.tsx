@@ -1,6 +1,7 @@
 import { CircleCheck, CircleX } from 'lucide-react';
 import { useRef } from 'react';
 import { useClampedPosition } from '../components/clamp';
+import { deviceName, linkName } from '../panels/events-model';
 import { StepTag } from '../steps/step-tag';
 import { useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
@@ -30,7 +31,10 @@ export function LinkHoverCard({
   const rows = history.flatMap((h) =>
     h.traces.filter((t) => t.links.includes(hovered.id)).map((t) => ({ t, at: h.simTime })),
   );
-  const label = (id: string) => snapshot.devices[id]?.label ?? id;
+  const label = (id: string) => deviceName(snapshot.devices, id);
+  // "NVMe/TCP IO", "NVMe/TCP IO reply": the traffic it is, not the simulator's message kind.
+  const what = (kind: string, category: string) =>
+    `${trafficStyle(category).label}${kind.endsWith('-resp') ? ' reply' : ''}`;
   return (
     <div
       ref={ref}
@@ -40,7 +44,9 @@ export function LinkHoverCard({
       data-testid="link-hover-card"
     >
       <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="font-mono font-semibold">{link.id}</span>
+        <span className="truncate font-semibold" title={link.id}>
+          {linkName(snapshot.devices, snapshot.links, link.id) ?? link.id}
+        </span>
         <span className={link.status === 'up' ? 'text-status-healthy' : 'text-status-failed'}>
           {link.status === 'up' ? 'up' : 'down'} · MTU {link.mtu}
         </span>
@@ -60,7 +66,9 @@ export function LinkHoverCard({
                 style={{ background: trafficStyle(t.category).color }}
                 aria-hidden="true"
               />
-              <span className="truncate">{t.kind}</span>
+              <span className="truncate" title={t.kind}>
+                {what(t.kind, t.category)}
+              </span>
               {t.result === 'delivered' ? (
                 <span className="ml-auto inline-flex items-center gap-0.5 text-status-healthy">
                   <CircleCheck size={11} aria-hidden="true" /> delivered

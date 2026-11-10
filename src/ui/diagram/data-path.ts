@@ -99,11 +99,14 @@ export function nicLink(s: Input, nic: string): LinkView | undefined {
   return Object.values(s.links).find((l) => l.a.device === nic || l.b.device === nic);
 }
 
-/** A NIC is down when it, its cable or an ancestor failed. */
+/**
+ * A NIC is down when it, its cable or an ancestor failed. (Its `link` view field is the cable id,
+ * not a carrier state: carrier is the cable's status.)
+ */
 export function nicIsDown(s: Input, nic: string): boolean {
   const d = s.devices[nic];
   if (!d) return true;
-  if (DOWN_STATUS.has(d.status) || d.fields.link === 'down' || d.fields.down === true) return true;
+  if (DOWN_STATUS.has(d.status) || d.fields.down === true) return true;
   return nicLink(s, nic)?.status === 'down';
 }
 

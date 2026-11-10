@@ -1,6 +1,6 @@
 /**
  * Every view field the T1 configurations emit is documented in docs/view-fields.md (the UI's
- * contract). HCI and T3 topologies are not checked yet (docs/STATUS.md lists their fields to document).
+ * contract), across the T1 configurations the UI offers and the HCI and T3 topologies.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -32,11 +32,18 @@ const T1_CONFIGS = [
 ] as const;
 
 describe('view-field contract doc', () => {
-  it('documents every field the T1 configurations emit', () => {
+  it('documents every field the topologies emit', () => {
     const doc = documented();
     const missing = new Set<string>();
-    for (const options of T1_CONFIGS) {
-      const sim = loadSimulation({ topologyId: 't1-ahv-flasharray', options, seed: 1 }).sim;
+    const builds = [
+      ...T1_CONFIGS.map((options) => ({ topologyId: 't1-ahv-flasharray' as const, options })),
+      ...(['t1-lab', 't2-hci-ahv', 't3-co-so', 't3-co-hci'] as const).map((topologyId) => ({
+        topologyId,
+        options: {},
+      })),
+    ];
+    for (const { topologyId, options } of builds) {
+      const sim = loadSimulation({ topologyId, options: options as never, seed: 1 }).sim;
       const s = sim.tick(5);
       for (const d of Object.values(s.devices)) {
         for (const k of Object.keys(d.fields)) {

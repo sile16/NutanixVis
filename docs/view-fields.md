@@ -77,6 +77,10 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `nvmePathSelector` | `queue-depth` \| `round-robin` | T1: the selector among optimized paths (`externalStorage.pathSelector`). |
 | `nvmeIoInflight`, `nvmeIoHeld`, `nvmeIoQueued` | number | T1: initiator commands by state: sent on a path, held after a path loss (until the retry), or waiting for a live path. |
 | `nvmeReservations` | JSON string[] | T1: vDisks whose NVMe reservation this CVM holds. |
+| `hci.replicas` | number | HCI: healthy extent-group replicas stored on this CVM's disks. |
+| `hci.ioPending` | number | HCI: IOs its Stargate has in progress (waiting on a local disk or on replica acks). |
+| `hci.vdisksOwned` | number | HCI: vDisks its Stargate owns. |
+| `hci.readOnly` | boolean | HCI: the cluster is read-only (physical usage at `hci.readOnlyCapacityPct`); also in `Snapshot.derived`. |
 
 ### `cvm-interface` (schema fields, echoed into the view)
 
@@ -199,6 +203,10 @@ A logical device (not drawn). `links`: JSON `{linkId: [{from, to, gbps, capacity
 |---|---|---|
 | `state` | `online` \| `offline` \| `smart-check` \| `failed` | `failed`: kept offline, for example after 3 offline events in an hour. |
 | `offlineEventsLastHour` | number | Times the disk went offline within Hades's recent window (`hci.diskOfflineWindowS`); at the profile's limit Hades keeps it offline. The inspector labels it "Recent offline events". |
+| `media` | `nvme` \| `ssd` \| `hdd` | Schema value. |
+| `capacityTiB` | number | Schema value. |
+| `cvm` | string | The CVM whose Stargate uses this disk. |
+| `replicas` | number | Healthy extent-group replicas stored on it. |
 
 ## `Snapshot.derived` (cluster-level)
 
@@ -224,6 +232,15 @@ All of these are scalars.
 | `degradedNodes` | JSON string[] | CVMs Degraded Node Detection currently marks Degraded. |
 | `zkMembers` | JSON string[] | CVMs holding a Zookeeper ensemble seat. |
 | `engine.queuedActions` | number | Actions applied but not yet run: every action takes effect at the start of the next tick, and in manual mode several can wait (the inspector shows "Queued actions"). |
+| `hci.rf` | number | HCI: the replication factor (2 or 3). |
+| `hci.extentGroups` | number | HCI: extent groups the model tracks (a sample of the data, not the real count). |
+| `hci.unavailableExtentGroups` | number | HCI: extent groups with no reachable replica (their IO hangs). |
+| `hci.rebuildRemainingGiB` | number | HCI: GiB Curator still has to copy to restore RF. |
+| `hci.dataNodeFailureTolerance` | number | HCI: node failures the data survives now: the fewest live replicas of any extent group, minus one, capped at the FT level. |
+| `hci.capacityPct` | number | HCI: physical usage as % of the raw capacity of the disks in service. |
+| `hci.resilientCapacityPct` | number | HCI: usage as % of resilient capacity (raw minus FT × the largest node, Bible 4i); Prism warns above `hci.capacityWarnPct`. |
+| `hci.garbageReplicas` | number | HCI: stale replicas (extra copies after a node returned) the next Curator scan removes. |
+| `hci.curatorLeader` | string | HCI: the CVM running the Curator leader (the first live one). |
 
 ## Event codes
 

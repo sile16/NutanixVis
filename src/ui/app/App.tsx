@@ -81,7 +81,7 @@ function Header({ entry }: { entry: CatalogEntry }) {
       {/* Keyboard users would otherwise tab through every cable before reaching the panel. */}
       <button
         type="button"
-        className="sr-only rounded bg-accent px-2 py-1 text-xs text-white focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50"
+        className="sr-only rounded bg-accent px-2 py-1 text-xs text-on-accent focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50"
         data-testid="skip-to-panel"
         onClick={() => document.getElementById('side-panel')?.focus()}
       >

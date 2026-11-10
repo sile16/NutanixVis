@@ -110,6 +110,7 @@ export class FlowsDevice implements Device<Profile> {
       readPct: typeof read === 'number' ? read : 70,
     };
     reg.defaultReadPct = this.defaultLoad.readPct;
+    reg.defaultGbps = this.defaultLoad.gbps;
   }
 
   postTick(ctx: Ctx): void {

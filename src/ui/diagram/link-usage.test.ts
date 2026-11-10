@@ -78,3 +78,27 @@ describe('speed labels and throughput meters', () => {
     }
   });
 });
+
+describe('workload.set-read-pct', () => {
+  it('sets every VM to that read share and keeps its offered load', () => {
+    const sim = run();
+    sim.tick(3);
+    sim.applyAction({ kind: 'workload.set-iops', target: 'cluster', params: { iops: 5000 } });
+    sim.applyAction({ kind: 'workload.set-read-pct', target: 'cluster', params: { pct: 100 } });
+    const s = sim.tick(5);
+    for (const vm of ['node-1.vm-1', 'node-2.vm-1']) {
+      expect(s.devices[vm]?.fields.readPct).toBe(100);
+      expect(s.devices[vm]?.fields.offeredIops).toBe(5000);
+      expect(Number(s.devices[vm]?.fields.writeGbps ?? 0)).toBe(0);
+    }
+  });
+
+  it('keeps line rate when nothing set a load', () => {
+    const sim = run();
+    sim.tick(3);
+    sim.applyAction({ kind: 'workload.set-read-pct', target: 'cluster', params: { pct: 0 } });
+    const s = sim.tick(5);
+    expect(s.devices['node-1.vm-1']?.fields.offeredIops).toBe('line-rate');
+    expect(s.devices['node-1.vm-1']?.fields.readPct).toBe(0);
+  });
+});

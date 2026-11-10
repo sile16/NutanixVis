@@ -2,6 +2,8 @@
  * Throughput-model controls in the header (T1 only, docs/research/link-congestion.md):
  * - an IOPS-per-VM slider that sets every VM's offered load (`workload.set-iops`; IO size from
  *   the model, so the Gb/s it means is shown next to it). The right end is line rate (no cap).
+ * - a read-share slider that sets every VM's mix of reads and writes (`workload.set-read-pct`),
+ *   keeping its offered load: write data rides the command, read data the completion.
  * - a toggle for the ↓/↑ Gb/s labels on cables (the line-rate and distribution bars stay).
  */
 import { Gauge } from 'lucide-react';
@@ -33,7 +35,17 @@ export function WorkloadControls() {
       : nearest(Number(current));
   const [index, setIndex] = useState(fromSim);
   useEffect(() => setIndex(fromSim), [fromSim]);
+  const readNow = Object.values(snapshot.devices).find(
+    (d) => d.kind === 'vm' && typeof d.fields.readPct === 'number',
+  )?.fields.readPct;
+  const readFromSim = typeof readNow === 'number' ? readNow : 70;
+  const [readPct, setReadPct] = useState(readFromSim);
+  useEffect(() => setReadPct(readFromSim), [readFromSim]);
   if (!hasModel) return null;
+  const commitRead = () => {
+    if (readPct === readFromSim) return;
+    apply({ kind: 'workload.set-read-pct', target: 'cluster', params: { pct: readPct } });
+  };
   const iops = IOPS_STOPS[index] ?? 0;
   const commit = () => {
     if (index === fromSim) return;
@@ -65,6 +77,29 @@ export function WorkloadControls() {
           aria-label="IOPS per VM"
           title={`Every VM offers this many ${THROUGHPUT.ioSizeKiB.value} KiB IOs per second (illustrative workload); the right end is line rate`}
           data-testid="iops-slider"
+        />
+      </label>
+      <label className="flex flex-col text-[11px] leading-tight text-ink-muted">
+        <span>
+          Mix:{' '}
+          <span className="font-mono text-ink" data-testid="read-pct-value">
+            {readPct} % read · {100 - readPct} % write
+          </span>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={10}
+          value={readPct}
+          onChange={(e) => setReadPct(Number(e.target.value))}
+          onPointerUp={commitRead}
+          onKeyUp={commitRead}
+          onBlur={commitRead}
+          className="w-32 accent-accent"
+          aria-label="Read share of every VM's IO"
+          title="Share of every VM's IOs that are reads; the rest are writes. Write data goes host → array, read data comes back array → host."
+          data-testid="read-pct-slider"
         />
       </label>
       <Button

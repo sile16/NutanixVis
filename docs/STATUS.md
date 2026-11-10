@@ -33,6 +33,7 @@ Living status page: where the project stands, what is left, which behavior still
 
 ### Recent changes
 
+- **2026-11-10: read/write mix slider.** Next to IOPS per VM, a slider sets every VM's read share (0–100 %, `workload.set-read-pct`), keeping its offered load: write data rides host → array, read data array → host, so e.g. 100 % reads shows LACP's local return path sparing reads under ISL loss.
 - **2026-11-10: Compare chart.** A Compare button in the header opens the five topologies side by side: setup, which NIC a path uses, ISL share, placement drift, nine failures, configuration risk and what alerts you. The loaded topology's column is highlighted, and each failure cell opens the guided scenario that shows it on that topology (`src/ui/compare/comparison.ts`; a test checks every link).
 - **2026-11-10: guided scenarios per topology.** The Scenario menu lists ten guided scenarios (eight on two vSwitches) written for the loaded topology and running on its exact options, so the topology menu no longer changes. MAC pinning now boots node 2 swapped (`slb-boot-placement`) and a host reboot learns the placement again (it can come back swapped); a switch return heals a swap. Packet loss: the initiator and the array resend only the lost segment, so 5 % loss gives retransmission latency outliers rather than IO timeouts (T1-24 rewritten); Hades counts a connection as blackholed only once it has been dead for KATO, so loss on every path no longer puts a node in maintenance (T1-36 keeps its lab timeline; in T1-18 nodes 2 and 4 now enter maintenance one check later). The only fault where two vSwitches do worse than a bond is a storage NIC failure (a short partial stall instead of none).
 - **2026-11-10: readable names, view-field contract, Stop.** The UI names devices, cables and NVMe paths instead of printing ids: event texts, the cable inspector and hover card, the context menu, and inspector field values (a device id is a link, e.g. Owner CVM `CVM 1`). Numbers round to two decimals; the VM load form shows the current value when it is none of the choices. The step clock says `VM down` for a lost host. A Stop button ends a long Step press (late steps double in length). The view refits when a moved VM's host grows out of view, but keeps a view the user zoomed. A skip button takes keyboard users to the side panel. `docs/view-fields.md` now documents every field every topology emits (`tests/view-fields-doc.test.ts` fails on a new undocumented one); the hand-written assumptions table in `profile-coverage.md` is checked against the profile too. A UI fuzz run (random offered actions, four seeds, all five offered topologies) shows no page errors or console warnings.
@@ -89,6 +90,10 @@ Living status page: where the project stands, what is left, which behavior still
   - MLAG pairing and action applicability fixes.
 
 ## To do
+
+### Model bug (found by the random-fault property test)
+
+- **T3 CO+SO: a fenced storage-only node keeps serving.** `tests/invariants.test.ts` failed on CI (seed -37835292) with: ISL down, node 4's eth1 down, node 1 failed. Zookeeper counts node 5's CVM in the quorum partition (reached through other CVMs), while AHV HA judges node 5 by its own heartbeat and fences it; for about 30 ticks the CVM on fenced node 5 keeps serving node 3's VMs ("IO is never served by a fenced host"). Pre-existing (fails the same at 949e3e2); T3 is not offered in the UI. Fix: make the ZK partition and the HA heartbeat agree on reachability (direct reachability to the leader), then pin that counterexample as a regression test.
 
 ### Polish (small)
 

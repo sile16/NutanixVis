@@ -357,6 +357,28 @@ export function nutanixActions(reg: Registry): ActionDefinition[] {
     },
     {
       spec: {
+        kind: 'workload.set-read-pct',
+        label: 'Set the read share on every VM',
+        description:
+          "Throughput model: every VM's share of reads (the rest are writes), keeping its offered load. Write data rides the command, read data the completion, so the mix decides which direction of each link carries the bulk. Illustrative workload.",
+        appliesTo: (t) => isKind(t, 'nutanix-cluster') && reg.facts.externalStorage,
+        params: { pct: { label: 'Read share (%)', choices: [] } },
+      },
+      apply: (req) => {
+        const pct = Number(req.params?.pct);
+        if (!(pct >= 0 && pct <= 100))
+          throw new ActionError(`bad read share ${String(req.params?.pct)}`);
+        reg.defaultReadPct = pct;
+        for (const v of reg.vms.values()) {
+          const gbps = reg.vmLoad.has(v.id)
+            ? (reg.vmLoad.get(v.id)?.gbps ?? null)
+            : reg.defaultGbps;
+          reg.vmLoad.set(v.id, { gbps, readPct: pct });
+        }
+      },
+    },
+    {
+      spec: {
         kind: 'vm.set-load',
         label: 'Set offered load',
         description:

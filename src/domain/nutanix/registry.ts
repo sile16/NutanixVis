@@ -67,6 +67,8 @@ export class Registry implements NutanixClusterView, VmEnv {
   iopsPerVm: number | null = null;
   /** Read share a VM uses until `vm.set-load` changes it (topology option `read-pct`). */
   defaultReadPct = 70;
+  /** The topology's default offered load per VM, Gb/s (null = line rate); set by the flows model. */
+  defaultGbps: number | null = null;
   /** Throughput model results of the last tick, per VM (flows device). */
   readonly vmFlow = new Map<string, VmFlowView>();
   /** vDisk → owning CVM. */

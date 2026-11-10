@@ -281,3 +281,25 @@ for (const id of [
     await expect(page.getByTestId('packet-overlay')).not.toHaveAttribute('data-flows', '0');
   });
 }
+
+test('the CVM inspector lists its NVMe paths by name, and a failed controller marks two lost', async ({
+  page,
+}) => {
+  await open(page, 't1-ahv-flasharray');
+  await selectDevice(page, 'node-1.cvm');
+  const paths = page.getByTestId('cvm-path');
+  await expect(paths).toHaveCount(4);
+  await expect(page.getByTestId('cvm-paths')).toContainText('CVM-IP A → CT0 eth10 (VLAN 10)');
+  await expect(page.locator('[data-testid="cvm-path"][data-state="live"]')).toHaveCount(4);
+  // The raw per-path JSON is not repeated in the State list.
+  await expect(page.getByTestId('inspector-fields')).not.toContainText('~');
+
+  await selectDevice(page, 'fa.ct0');
+  await applyAction(page, 'fail');
+  await step(page, 2);
+  await selectDevice(page, 'node-1.cvm');
+  const lost = page.locator('[data-testid="cvm-path"][data-state="lost"]');
+  await expect(lost).toHaveCount(2);
+  // A lost path's last latency is stale, so it is not shown.
+  await expect(lost.first()).not.toContainText('ms');
+});

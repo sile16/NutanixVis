@@ -2,7 +2,7 @@
 
 Living status page: where the project stands, what is left, which behavior still needs checking against a real lab, and lessons learned along the way. Update it at the end of each work session.
 
-**Last updated:** 2026-10-29 (redirector/initiator detection, vDisk leadership, Stargate failure modes, initiator timeout)
+**Last updated:** 2026-11-09 (planned controller reboot, hung LACP member, emergent Hades)
 
 ## Where things stand
 
@@ -17,10 +17,10 @@ Living status page: where the project stands, what is left, which behavior still
   - T1-lab: the single-NIC mirror of the test drive.
   - T2: Nutanix HCI.
   - T3: compute-only plus storage-only, and compute-only plus HCI.
-- **Scenarios:** 93 run as automated tests against the real models. All are `active`, so a behavior change that breaks one fails CI.
+- **Scenarios:** 92 run as automated tests against the real models. All are `active`, so a behavior change that breaks one fails CI.
 - **Tests:**
-  - About 1,100 unit, contract, architecture and property tests (Vitest and fast-check).
-  - 33 browser tests (Playwright), including the T1 visual baseline.
+  - About 1,300 unit, contract, architecture and property tests (Vitest and fast-check).
+  - 52 browser tests (Playwright), including the T1 visual baseline.
   - All green.
 - **Models in place:**
   - Network: VLAN-aware L2, and the bond modes active-backup, balance-slb (MAC pinning) and balance-tcp (LACP), with MLAG and hung-switch detection.
@@ -32,6 +32,8 @@ Living status page: where the project stands, what is left, which behavior still
 - **Behavior data:** every timer and policy lives in `src/domain/versions/profiles/current.ts` as a cited field with a confidence label. Lab results become data changes, not code changes. `docs/research/profile-coverage.md` lists them all.
 
 ### Recent changes
+
+- **2026-11-09: inspector readability.** Field labels keep acronyms and units (HA, ZK, NVMe, IOPS, Gb/s, µs, %); JSON lists and records read as text (`none` when empty) instead of raw JSON; the VM's internal `ioChain` is hidden. CVMs get an NVMe paths section: one row per path by name (`CVM-IP A → CT0 eth10 (VLAN 10)`), its state (live, lost, removed, ANA inaccessible), share of IO and latency (hidden on a lost path, where it is stale). Checked: HA restarts land at T+121 whether or not the lost host was the Acropolis leader's.
 
 - **2026-11-09: emergent Hades, closed paths, hung LACP member, audit fixes.** Hades no longer marks the service volumes bad at once when the array closes every connection: they fail when every path has been gone for the kernel IO timeout, or when IO is blackholed on a path that still looks live (so a 3 s flap of every port is a plain stall, T1-28). A closed connection fails over like a lost NIC (2 × KATO, no CQT). A hang can keep LACPDUs flowing (`hang`, LACPDUs `keep flowing`); routing no longer avoids a hung link or NIC, so a flow dies if either direction hashes onto it, and the node fails on the same timeline as losing both NICs (owner lab, T1-36); with slow LACP a hung switch now takes every node into maintenance (T1-18). A planned CVM shutdown on HCI is a clean stop and keeps its service-volume seat. Step counter: HA restarts end their run, repeated interruptions, waiting for recovery, presses always finish. Views: no stale or wrong-state values, placement wording, ISL label, no seconds in action logs.
 
@@ -82,9 +84,8 @@ Living status page: where the project stands, what is left, which behavior still
 
 - **T3 layout:** seven hosts in one row get small at the default zoom. Wrap them into two rows.
 - **FlashArray interfaces:** the FA interface boxes are a bit narrow.
-- **HA restart timing:** VMs on the Acropolis leader's own host restart one tick later than VMs on other hosts (T+122 against T+121). Make it consistent.
 - **`action.rejected`:** carry the action kind and target as structured fields, not only in the message.
-- **CVM service chips:** show Stargate, Zookeeper and Cassandra status on the CVM card.
+- **CVM service chips:** Stargate (child row) and ZK seats (badges) are on the CVM card; add the Cassandra ring state.
 
 ### Waiting on a real lab
 

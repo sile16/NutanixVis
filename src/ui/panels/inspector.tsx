@@ -7,7 +7,7 @@ import { ArrowUpRight, Gauge, History, Route } from 'lucide-react';
 import { type ReactNode, useMemo, useState } from 'react';
 import { actionChoiceLabel } from '../../engine/sim';
 import type { ActionSpec, DeviceView, LinkView, Snapshot, ViewField } from '../../engine/types';
-import { humanizeKey } from '../app/format';
+import { formatField, humanizeKey } from '../app/format';
 import { Button, Select, ShareBar } from '../components/controls';
 import { RoleBadge, StatusPill } from '../components/status';
 import { type EffectiveDevice, effectiveDevices } from '../diagram/effective-status';
@@ -26,12 +26,6 @@ import { useSim, useSimControls, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
 import { currentChoice, initialParams, rejectionReason } from './action-params';
 import { isOfferedAction } from './offered-actions';
-
-function formatField(v: ViewField): string {
-  if (v === null) return '—';
-  if (typeof v === 'boolean') return v ? 'yes' : 'no';
-  return String(v);
-}
 
 function Section({
   title,
@@ -78,9 +72,9 @@ const isTimeField = (k: string, v: ViewField): boolean =>
 
 /**
  * Fields shown by their own section instead (`flowPaths`: Storage throughput; `placedBy`,
- * `placedFrom`: the placement line under the title).
+ * `placedFrom`: the placement line under the title; `ioChain`: the diagram's IO path).
  */
-const HIDDEN_FIELDS = new Set(['flowPaths', 'placedBy', 'placedFrom']);
+const HIDDEN_FIELDS = new Set(['flowPaths', 'placedBy', 'placedFrom', 'ioChain']);
 
 /** Display names where the key's wording would name a duration. */
 const FIELD_LABEL: Readonly<Record<string, string>> = {
@@ -254,6 +248,91 @@ function parseFlowPaths(v: ViewField | undefined): FlowPathView[] {
   }
 }
 
+/** An NVMe path id (`<cvm-interface>~<fa-interface>`) as `CVM-IP A → CT0 eth10 (VLAN 10)`. */
+function nvmePathName(snapshot: Snapshot, id: string): string {
+  const label = (x: string) => snapshot.devices[x]?.label ?? x;
+  const [local = '', remote = ''] = id.split('~');
+  const port = snapshot.devices[remote]?.parent;
+  const ct = port ? snapshot.devices[port]?.parent : undefined;
+  return `${label(local)} → ${ct ? `${label(ct)} ` : ''}${port ? label(port) : label(remote)} (${label(remote)})`;
+}
+
+const jsonRecord = (v: ViewField | undefined): Record<string, unknown> => {
+  if (typeof v !== 'string') return {};
+  try {
+    const x: unknown = JSON.parse(v);
+    return x !== null && typeof x === 'object' && !Array.isArray(x)
+      ? (x as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+};
+
+/** The CVM fields that `CvmPathsSection` shows as one row per path. */
+const CVM_PATH_FIELDS = new Set([
+  'nvmePaths',
+  'nvmePathLatencyMs',
+  'nvmePathIoShare',
+  'nvmePathsInaccessible',
+]);
+
+/**
+ * T1: one row per NVMe path of the CVM, with its state (`live`, `lost`, `removed`, or ANA
+ * Inaccessible while its controller drains), its share of the CVM's IO over the last 30 s and
+ * its latest IO latency (docs/view-fields.md `cvm`).
+ */
+function CvmPathsSection({ cvm }: { cvm: DeviceView }) {
+  const snapshot = useSnapshot();
+  const states = jsonRecord(cvm.fields.nvmePaths);
+  const ids = Object.keys(states);
+  if (ids.length === 0) return null;
+  const latency = jsonRecord(cvm.fields.nvmePathLatencyMs);
+  const share = jsonRecord(cvm.fields.nvmePathIoShare);
+  let inaccessible: unknown = [];
+  try {
+    inaccessible = JSON.parse(String(cvm.fields.nvmePathsInaccessible ?? '[]'));
+  } catch {
+    inaccessible = [];
+  }
+  const ana = new Set(Array.isArray(inaccessible) ? inaccessible.map(String) : []);
+  const tone = (st: string) =>
+    st === 'live'
+      ? 'text-status-healthy'
+      : st === 'inaccessible'
+        ? 'text-status-stalled'
+        : 'text-status-failed';
+  return (
+    <Section title="NVMe paths" testId="cvm-paths">
+      <ul className="space-y-0.5 text-[11px]">
+        {ids.map((id) => {
+          const st = states[id] === 'live' && ana.has(id) ? 'inaccessible' : String(states[id]);
+          const pct = share[id];
+          const ms = latency[id];
+          return (
+            <li key={id} className="flex gap-2" data-testid="cvm-path" data-state={st}>
+              <span className="truncate" title={id}>
+                {nvmePathName(snapshot, id)}
+              </span>
+              <span className="ml-auto shrink-0 font-mono">
+                <span className={tone(st)}>{st === 'inaccessible' ? 'ANA inaccessible' : st}</span>
+                {typeof pct === 'number' ? ` · ${pct}%` : ''}
+                {/* A lost path's last latency is stale: show it only while the path is up. */}
+                {typeof ms === 'number' && st !== 'lost' && st !== 'removed'
+                  ? ` · ${ms < 10 ? ms.toFixed(2) : Math.round(ms)} ms`
+                  : ''}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="mt-1 text-[10px] text-ink-muted">
+        state · share of this CVM's IO · latest IO latency
+      </div>
+    </Section>
+  );
+}
+
 /**
  * Throughput model (T1): the VM's rate, read/write split and latency, and per NVMe path how much
  * it carries, its latency and the links it crosses out and back (docs/research/link-congestion.md).
@@ -264,13 +343,7 @@ function ThroughputSection({ vm }: { vm: DeviceView }) {
   const f = vm.fields;
   if (typeof f.throughputGbps !== 'number') return null;
   const paths = parseFlowPaths(f.flowPaths);
-  const label = (id: string) => snapshot.devices[id]?.label ?? id;
-  const pathName = (id: string) => {
-    const [local = '', remote = ''] = id.split('~');
-    const port = snapshot.devices[remote]?.parent;
-    const ct = port ? snapshot.devices[port]?.parent : undefined;
-    return `${label(local)} → ${ct ? `${label(ct)} ` : ''}${port ? label(port) : label(remote)} (${label(remote)})`;
-  };
+  const pathName = (id: string) => nvmePathName(snapshot, id);
   const offered = f.offeredLoad === 'line-rate' ? 'line rate' : `${String(f.offeredLoad)} Gb/s`;
   return (
     <Section title="Storage throughput" testId="vm-throughput">
@@ -603,8 +676,17 @@ function DeviceInspector({ device: raw }: { device: DeviceView }) {
         ) : null}
       </header>
       <Section title="State">
-        <Fields fields={device.fields} />
+        <Fields
+          fields={
+            device.kind === 'cvm' && typeof device.fields.nvmePaths === 'string'
+              ? Object.fromEntries(
+                  Object.entries(device.fields).filter(([k]) => !CVM_PATH_FIELDS.has(k)),
+                )
+              : device.fields
+          }
+        />
       </Section>
+      {device.kind === 'cvm' ? <CvmPathsSection cvm={device} /> : null}
       {device.kind === 'vm' ? <ThroughputSection vm={device} /> : null}
       {device.kind === 'vm' ? <PathUsageSection vm={device} /> : null}
       {showBond && host ? <BondSection hostId={host.id} /> : null}

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { VersionMatrix } from '../../domain/versions/profile';
 import { fixtureVersionMatrix } from '../../fixtures/version-matrix';
 import { playbackSchedule } from '../store/playback';
-import { humanizeKey } from './format';
+import { formatField, humanizeKey } from './format';
 import {
   defaultVersions,
   resolveVersions,
@@ -86,8 +86,28 @@ describe('version selector', () => {
 
 describe('humanizeKey', () => {
   it('humanizes field keys', () => {
-    expect(humanizeKey('nvmePathsUp')).toBe('Nvme paths up');
+    expect(humanizeKey('nvmePathsUp')).toBe('NVMe paths up');
     expect(humanizeKey('bond-mode')).toBe('Bond mode');
+    expect(humanizeKey('haStatus')).toBe('HA status');
+    expect(humanizeKey('zkQuorum')).toBe('ZK quorum');
+    expect(humanizeKey('acropolisLeader')).toBe('Acropolis leader');
+    expect(humanizeKey('engine.queuedActions')).toBe('Queued actions');
+    expect(humanizeKey('throughputGbps')).toBe('Throughput Gb/s');
+    expect(humanizeKey('ioLatencyUs')).toBe('IO latency µs');
+    expect(humanizeKey('stuckIoPct')).toBe('Stuck IO %');
+    expect(humanizeKey('iops')).toBe('IOPS');
+  });
+});
+
+describe('formatField', () => {
+  it('reads JSON lists and records as text, not raw JSON', () => {
+    expect(formatField('["node-1.cvm","node-2.cvm"]')).toBe('node-1.cvm, node-2.cvm');
+    expect(formatField('[]')).toBe('none');
+    expect(formatField('{"ZOOKEEPER":1,"FREE_SPACE":2}')).toBe('Zookeeper 1, Free space 2');
+    expect(formatField('{"a~b":"live"}')).toBe('a~b live');
+    expect(formatField('10,20,100,200')).toBe('10,20,100,200');
+    expect(formatField(true)).toBe('yes');
+    expect(formatField(null)).toBe('—');
   });
 });
 

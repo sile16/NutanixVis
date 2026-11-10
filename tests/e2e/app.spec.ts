@@ -198,3 +198,13 @@ test('the step clock says a VM is down when its host is lost, not that its IO is
   await page.getByTestId('step').click();
   await expect(page.getByTestId('sim-clock')).toContainText('VM down');
 });
+
+test('a load set by the IOPS slider shows as "now" in the VM load form', async ({ page }) => {
+  await page.goto('./#topology=t1-ahv-flasharray');
+  await expect(page.getByTestId('iops-slider')).toBeVisible();
+  await page.getByTestId('iops-slider').focus();
+  await page.keyboard.press('Home'); // the lowest stop; keyup commits it
+  await page.getByTestId('device-picker').selectOption('node-1.vm-1');
+  const form = page.getByTestId('action-vm.set-load').locator('xpath=ancestor::form');
+  await expect(form).toContainText(/now \d/i);
+});

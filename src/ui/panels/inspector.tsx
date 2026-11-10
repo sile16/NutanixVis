@@ -24,7 +24,7 @@ import { GUI_HIDDEN_CATEGORIES, trafficStyle } from '../diagram/traffic';
 import { placementText } from '../diagram/vm-placement';
 import { useSim, useSimControls, useSnapshot } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
-import { currentChoice, initialParams, rejectionReason } from './action-params';
+import { currentChoice, currentParamValue, initialParams, rejectionReason } from './action-params';
 import { deviceName, linkName, readableText } from './events-model';
 import { isOfferedAction } from './offered-actions';
 
@@ -118,6 +118,24 @@ function Fields({ fields }: { fields: Readonly<Record<string, ViewField>> }) {
   );
 }
 
+/**
+ * A parameter's label, with the current value when it is none of the choices (for example an
+ * offered load the IOPS slider set: 21 Gb/s, between the form's 10 and 25), so the form's first
+ * choice is not mistaken for the current state.
+ */
+function offChoiceLabel(
+  spec: ActionSpec,
+  key: string,
+  label: string,
+  view: DeviceView | LinkView,
+): string {
+  const cur = currentParamValue(spec.kind, key, view);
+  if (cur === undefined || cur === null || currentChoice(spec, key, view) !== undefined) {
+    return label;
+  }
+  return `${label} · now ${typeof cur === 'number' ? formatNumber(cur) : String(cur)}`;
+}
+
 function ActionForm({
   spec,
   target,
@@ -180,7 +198,7 @@ function ActionForm({
           {params.map(([key, p]) => (
             <div key={key} className="min-w-[9rem] flex-1 [&_select]:w-full">
               <Select
-                label={p.label}
+                label={offChoiceLabel(spec, key, p.label, current)}
                 value={String(values[key] ?? '')}
                 onChange={(e) => {
                   const choice = p.choices.find((c) => String(c) === e.target.value);

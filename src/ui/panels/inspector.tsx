@@ -7,7 +7,7 @@ import { ArrowUpRight, Gauge, History, Route } from 'lucide-react';
 import { type ReactNode, useMemo, useState } from 'react';
 import { actionChoiceLabel } from '../../engine/sim';
 import type { ActionSpec, DeviceView, LinkView, Snapshot, ViewField } from '../../engine/types';
-import { formatField, humanizeKey } from '../app/format';
+import { formatField, formatNumber, humanizeKey } from '../app/format';
 import { Button, Select, ShareBar } from '../components/controls';
 import { RoleBadge, StatusPill } from '../components/status';
 import { type EffectiveDevice, effectiveDevices } from '../diagram/effective-status';
@@ -353,7 +353,10 @@ function ThroughputSection({ vm }: { vm: DeviceView }) {
   if (typeof f.throughputGbps !== 'number') return null;
   const paths = parseFlowPaths(f.flowPaths);
   const pathName = (id: string) => nvmePathName(snapshot, id);
-  const offered = f.offeredLoad === 'line-rate' ? 'line rate' : `${String(f.offeredLoad)} Gb/s`;
+  const offered =
+    f.offeredLoad === 'line-rate'
+      ? 'line rate'
+      : `${typeof f.offeredLoad === 'number' ? formatNumber(f.offeredLoad) : String(f.offeredLoad)} Gb/s`;
   return (
     <Section title="Storage throughput" testId="vm-throughput">
       <div className="text-xs" data-testid="vm-throughput-summary">

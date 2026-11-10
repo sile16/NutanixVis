@@ -54,9 +54,14 @@ export function humanizeKey(key: string): string {
 const recordKey = (k: string): string =>
   /^[A-Z][A-Z0-9_]+$/.test(k) ? humanizeKey(k.toLowerCase()) : k;
 
+/** Whole numbers as they are; fractions to at most two decimals (2.097152 → 2.1). */
+export const formatNumber = (v: number): string =>
+  Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100);
+
 const scalar = (v: unknown): string => {
   if (v === null || v === undefined) return '—';
   if (typeof v === 'boolean') return v ? 'yes' : 'no';
+  if (typeof v === 'number') return formatNumber(v);
   if (typeof v === 'object') return JSON.stringify(v);
   return String(v);
 };

@@ -108,6 +108,9 @@ describe('formatField', () => {
     expect(formatField('10,20,100,200')).toBe('10,20,100,200');
     expect(formatField(true)).toBe('yes');
     expect(formatField(null)).toBe('—');
+    expect(formatField(2.097152)).toBe('2.1');
+    expect(formatField(142.9)).toBe('142.9');
+    expect(formatField(68120)).toBe('68120');
   });
 });
 

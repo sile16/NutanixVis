@@ -300,15 +300,19 @@ export function buildDataPath(s: Input): DataPathModel {
       kind: 'stargate',
       label: 'Stargate',
       parent: cvm.id,
-      status: DOWN_STATUS.has(cvm.status)
-        ? 'failed'
-        : sg === 'up'
-          ? 'healthy'
-          : sg === 'hung'
-            ? 'stalled'
-            : sg === 'unhealthy'
-              ? 'degraded'
-              : 'failed',
+      // A powered-off CVM (hard stop or planned shutdown) has its Stargate off, not failed.
+      status:
+        cvm.status === 'offline'
+          ? 'offline'
+          : DOWN_STATUS.has(cvm.status)
+            ? 'failed'
+            : sg === 'up'
+              ? 'healthy'
+              : sg === 'hung'
+                ? 'stalled'
+                : sg === 'unhealthy'
+                  ? 'degraded'
+                  : 'failed',
       badges: [],
       fields: {
         state: sg,

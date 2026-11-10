@@ -255,18 +255,25 @@ test('MAC-pinning trunk variant: all four array ports connected, both NICs down'
   await expect(row.locator('[data-kind="redirected"]').first()).toContainText('via CVM 2');
 });
 
-test('guided steps scenario loads its topology and injects the failure', async ({ page }) => {
-  await page.goto('./#topology=t1-ahv-flasharray');
+test('the Scenario menu lists the guided scenarios written for the loaded topology', async ({
+  page,
+}) => {
+  await page.goto('./#topology=t1-bonded-slb');
   await page.getByRole('tab', { name: 'Scenario' }).click();
-  await page.getByTestId('scenario-select').selectOption('t1-34-steps-bond-does-not-fail-back');
+  const menu = page.getByTestId('scenario-select');
+  // Ten scenarios (plus free play) for MAC pinning; the two-vSwitch layout has no ISL ones.
+  await expect(menu.locator('option')).toHaveCount(11);
+  await menu.selectOption('guided-03-storage-nic--slb-4ip');
   await expect(page.getByTestId('scenario-active')).toContainText('MAC-pinning bond');
-  // The topology menu names the scenario's own build, not the menu entry it shares an id with.
-  await expect(page.getByTestId('topology-select').locator('option:checked')).toHaveText(
-    'Scenario: One storage vSwitch (vs1), MAC pinning · one storage VLAN',
-  );
+  // The scenario runs on the loaded topology: the menu keeps naming it.
+  await expect(page.getByTestId('topology-select')).toHaveValue('t1-bonded-slb');
   await page.getByTestId('scenario-apply-0').click();
   await expect(page.getByTestId('scenario-group').first()).toHaveAttribute('data-state', 'applied');
   await expect(page.getByTestId('node-node-1.eth2')).toHaveAttribute('data-status', 'failed');
+  // Another topology lists its own walkthroughs.
+  await page.getByTestId('topology-select').selectOption('t1-ahv-flasharray');
+  await expect(menu.locator('option')).toHaveCount(9);
+  await expect(menu.locator('option[value="guided-03-storage-nic--two-vswitches"]')).toHaveCount(1);
 });
 
 test('guided tour: Step in the flow ticks off each expected observation at its step', async ({
@@ -274,7 +281,7 @@ test('guided tour: Step in the flow ticks off each expected observation at its s
 }) => {
   await page.goto('./#topology=t1-ahv-flasharray');
   await page.getByRole('tab', { name: 'Scenario' }).click();
-  await page.getByTestId('scenario-select').selectOption('t1-33-steps-one-nic-dual-fabric');
+  await page.getByTestId('scenario-select').selectOption('guided-03-storage-nic--two-vswitches');
   const obs = (stage: string) =>
     page.locator(`[data-testid="scenario-observation"][data-stage="${stage}"]`);
   await page.getByTestId('scenario-apply-0').click();
@@ -298,9 +305,9 @@ test('guided tour: Step in the flow ticks off each expected observation at its s
 test('guided bond tour: the "no IO stalls" note ticks once a step runs without a stall', async ({
   page,
 }) => {
-  await page.goto('./#topology=t1-ahv-flasharray');
+  await page.goto('./#topology=t1-bonded-slb');
   await page.getByRole('tab', { name: 'Scenario' }).click();
-  await page.getByTestId('scenario-select').selectOption('t1-33-steps-one-nic-bond');
+  await page.getByTestId('scenario-select').selectOption('guided-03-storage-nic--slb-4ip');
   const note = page.getByTestId('scenario-observation').first();
   await expect(note).toHaveAttribute('data-seen', 'no');
   await page.getByTestId('scenario-apply-0').click();
@@ -310,13 +317,23 @@ test('guided bond tour: the "no IO stalls" note ticks once a step runs without a
 });
 
 test('a CVM in Hades maintenance shows Cassandra down on its card', async ({ page }) => {
+  test.slow();
   await page.goto('./#topology=t1-ahv-flasharray');
-  await page.getByRole('tab', { name: 'Scenario' }).click();
-  await page.getByTestId('scenario-select').selectOption('t1-32-steps-both-storage-nics-down');
   await expect(page.getByTestId('node-node-1.cvm')).not.toContainText('Cassandra down');
-  await page.getByTestId('scenario-apply-0').click();
-  for (let i = 0; i < 4; i++) await page.getByTestId('scenario-step-0').click();
-  await expect(page.getByTestId('scenario-step-now')).toHaveText('now at step 4');
+  for (const nic of ['node-1.eth2', 'node-1.eth3']) {
+    await page.getByRole('tab', { name: 'Inspector' }).click();
+    if ((await page.getByTestId('inspector-empty').count()) === 0) {
+      await page.locator('.react-flow__pane').click({ position: { x: 5, y: 5 } });
+    }
+    await page.getByTestId('device-picker').selectOption(nic);
+    await page.getByTestId('action-fail').click();
+  }
+  const clock = page.getByTestId('sim-clock');
+  for (let i = 0; i < 12; i++) {
+    await stepOnce(page);
+    if (Number(await clock.getAttribute('data-step')) >= 4) break;
+  }
+  await expect(clock).toHaveAttribute('data-step', '4');
   await expect(page.getByTestId('node-node-1.cvm')).toContainText('Cassandra down');
 });
 

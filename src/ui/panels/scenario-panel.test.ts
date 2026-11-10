@@ -1,11 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { scenarios } from '../../scenarios';
-import { isGuided, noStallInWindow, timelineGroups } from './scenario-panel';
+import { guidedFamilies, guidedFor, guidedScenarios } from '../../scenarios/guided';
+import { T1_CONFIGS } from '../../topologies/t1-configs';
+import { catalog } from '../app/catalog';
+import { noStallInWindow, timelineGroups } from './scenario-panel';
 
 describe('guided scenarios', () => {
-  const guided = scenarios.filter(isGuided);
-  it('offers the steps scenarios, and their text carries no durations', () => {
-    expect(guided.length).toBeGreaterThanOrEqual(3);
+  const guided = guidedScenarios;
+  it('offers at most ten per topology, each on exactly that topology', () => {
+    expect(guidedFamilies.length).toBeLessThanOrEqual(10);
+    for (const c of T1_CONFIGS) {
+      const offered = guidedFor(c.catalogId);
+      expect(offered.length, c.key).toBeGreaterThanOrEqual(8);
+      expect(offered.length, c.key).toBeLessThanOrEqual(10);
+      for (const g of offered) {
+        expect(g.def.options, g.def.id).toEqual(c.options);
+        expect(g.def.seed, g.def.id).toBeUndefined();
+      }
+    }
+    // Every topology the menu offers has its own list.
+    for (const e of catalog) expect(guidedFor(e.id).length, e.id).toBeGreaterThan(0);
+  });
+  it('their text carries no durations', () => {
     for (const s of guided) {
       const text = [s.title, s.narrative, ...s.timeline.map((t) => t.note ?? '')].join(' ');
       expect(text, s.id).not.toMatch(/\d\s?(s|sec|secs|seconds|min|minutes)\b/i);
@@ -50,5 +65,16 @@ describe('guided "no IO stalls" notes', () => {
     expect(noStallInWindow(50, undefined, 60, 55, [55])).toBe(false);
     // Nothing has run since the group was applied yet.
     expect(noStallInWindow(50, undefined, 50, null, [])).toBe(false);
+  });
+});
+
+describe('guided group labels', () => {
+  it('a group that only changes the setup is a "Change", not a "Failure"', async () => {
+    const { groupLabel } = await import('./scenario-panel');
+    const g = (kind: string) => [{ at: 0, action: { kind, target: 'x' } }];
+    expect(groupLabel(g('fail'))).toBe('Failure');
+    expect(groupLabel(g('link.set-loss'))).toBe('Failure');
+    expect(groupLabel(g('vswitch.rebalance'))).toBe('Change');
+    expect(groupLabel(g('host.enter-maintenance'))).toBe('Change');
   });
 });

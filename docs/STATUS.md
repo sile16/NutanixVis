@@ -2,7 +2,7 @@
 
 Living status page: where the project stands, what is left, which behavior still needs checking against a real lab, and lessons learned along the way. Update it at the end of each work session.
 
-**Last updated:** 2026-11-10 (readable names, view-field contract, Stop for long steps)
+**Last updated:** 2026-11-10 (ten guided scenarios per topology, MAC pinning boot placement, segment retransmission)
 
 ## Where things stand
 
@@ -17,10 +17,10 @@ Living status page: where the project stands, what is left, which behavior still
   - T1-lab: the single-NIC mirror of the test drive.
   - T2: Nutanix HCI.
   - T3: compute-only plus storage-only, and compute-only plus HCI.
-- **Scenarios:** 92 run as automated tests against the real models. All are `active`, so a behavior change that breaks one fails CI.
+- **Scenarios:** 138 run as automated tests against the real models: the 92 backlog scenarios plus 46 guided ones. All are `active`, so a behavior change that breaks one fails CI. The Scenario tab offers only the guided ones (`src/scenarios/guided`), ten failures picked for what they show a storage engineer, each written for the loaded topology: one array port, a controller crash then a planned reboot, a storage NIC failing and returning, why storage traffic crosses the ISL (bonded only), packet loss on the ISL, a host reboot flipping MAC pinning (MAC pinning only), a Stargate crash, a CVM failure, a switch failure, a storage NIC hanging with its link up.
 - **Tests:**
-  - About 1,300 unit, contract, architecture and property tests (Vitest and fast-check).
-  - 52 browser tests (Playwright), including the T1 visual baseline.
+  - About 1,540 unit, contract, architecture and property tests (Vitest and fast-check).
+  - 62 browser tests (Playwright), including the T1 visual baseline.
   - All green.
 - **Models in place:**
   - Network: VLAN-aware L2, and the bond modes active-backup, balance-slb (MAC pinning) and balance-tcp (LACP), with MLAG and hung-switch detection.
@@ -33,6 +33,7 @@ Living status page: where the project stands, what is left, which behavior still
 
 ### Recent changes
 
+- **2026-11-10: guided scenarios per topology.** The Scenario menu lists ten guided scenarios (eight on two vSwitches) written for the loaded topology and running on its exact options, so the topology menu no longer changes. MAC pinning now boots node 2 swapped (`slb-boot-placement`) and a host reboot learns the placement again (it can come back swapped); a switch return heals a swap. Packet loss: the initiator and the array resend only the lost segment, so 5 % loss gives retransmission latency outliers rather than IO timeouts (T1-24 rewritten); Hades counts a connection as blackholed only once it has been dead for KATO, so loss on every path no longer puts a node in maintenance (T1-36 keeps its lab timeline; in T1-18 nodes 2 and 4 now enter maintenance one check later). The only fault where two vSwitches do worse than a bond is a storage NIC failure (a short partial stall instead of none).
 - **2026-11-10: readable names, view-field contract, Stop.** The UI names devices, cables and NVMe paths instead of printing ids: event texts, the cable inspector and hover card, the context menu, and inspector field values (a device id is a link, e.g. Owner CVM `CVM 1`). Numbers round to two decimals; the VM load form shows the current value when it is none of the choices. The step clock says `VM down` for a lost host. A Stop button ends a long Step press (late steps double in length). The view refits when a moved VM's host grows out of view, but keeps a view the user zoomed. A skip button takes keyboard users to the side panel. `docs/view-fields.md` now documents every field every topology emits (`tests/view-fields-doc.test.ts` fails on a new undocumented one); the hand-written assumptions table in `profile-coverage.md` is checked against the profile too. A UI fuzz run (random offered actions, four seeds, all five offered topologies) shows no page errors or console warnings.
 
 - **2026-11-09: CVM card shows the Cassandra ring.** A running CVM whose ring state is not normal gets a badge (`Cassandra down`, `Ring detached`, `Forwarding`), next to the Stargate row and the ZK seat badges. Also: the traffic legend collapses, the topology menu names a guided scenario's own build, moved VMs stay in view, a planned-off CVM's Stargate is drawn off rather than failed, and saturation events name the queue delay or the drops.

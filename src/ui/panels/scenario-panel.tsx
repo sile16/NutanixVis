@@ -1,28 +1,20 @@
 /**
- * Scenario tab: guided scenarios from `src/scenarios` (SPEC §7). Picking one loads its topology and
- * options into the diagram; its timeline is applied by hand, one group at a time. After each group
- * the panel lists what to watch for (the scenario's `guide`, held to the run by its own test), with
- * a Step button in the flow; each observation is ticked off live when the VM's steps show it. Only
- * the steps-view scenarios are offered: their text speaks in steps, never in durations.
+ * Scenario tab: the guided scenarios (`src/scenarios/guided`, SPEC §7) written for the topology
+ * that is loaded. Each runs on exactly that topology's options, so picking one restarts the
+ * simulation without changing the topology menu; its timeline is applied by hand, one group at a
+ * time. After each group the panel lists what to watch for (the scenario's `guide`, held to the
+ * run by its own test), with a Step button in the flow; each observation is ticked off live when
+ * the VM's steps show it. Their text speaks in steps, never in durations.
  */
 import { clsx } from 'clsx';
 import { Circle, CircleCheck, Info, StepForward } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { deriveArrayOpSteps, deriveVmRuns } from '../../domain/steps';
-import { scenarios } from '../../scenarios';
 import type { GuideObservation, ScenarioDef } from '../../scenarios/define';
+import { guidedById, guidedFor } from '../../scenarios/guided';
 import { Button, Select } from '../components/controls';
 import { useSim, useSimControls, useSnapshot, useSteps } from '../store/sim-context';
 import { useUi } from '../store/ui-store';
-
-/** The scenario name without its "T1" / "T1 steps:" prefix, first letter capitalised. */
-export function displayTitle(title: string): string {
-  const t = title.replace(/^T1 (steps: )?/, '');
-  return t.charAt(0).toUpperCase() + t.slice(1);
-}
-
-export const isGuided = (s: ScenarioDef): boolean =>
-  s.status === 'active' && s.id.includes('-steps-');
 
 /** Timeline entries grouped by their (internal) time, in order. */
 export function timelineGroups(s: ScenarioDef): ScenarioDef['timeline'][number][][] {
@@ -36,28 +28,40 @@ export function timelineGroups(s: ScenarioDef): ScenarioDef['timeline'][number][
   return out;
 }
 
+/** Actions that change the setup rather than break something: labelled "Change", not "Failure". */
+const CHANGES = new Set([
+  'vswitch.rebalance',
+  'host.enter-maintenance',
+  'host.exit-maintenance',
+  'fa.controller.reboot',
+  'recover',
+  'unhang',
+  'power-on',
+]);
+
+/** "Failure" for a group that breaks something, else "Change". */
+export const groupLabel = (g: readonly ScenarioDef['timeline'][number][]): string =>
+  g.some((x) => !CHANGES.has(x.action.kind)) ? 'Failure' : 'Change';
+
 export function ScenarioPanel() {
   const scenarioId = useUi((s) => s.scenarioId);
   const loadScenario = useUi((s) => s.loadScenario);
   const topologyId = useUi((s) => s.topologyId);
-  const guided = useMemo(() => scenarios.filter(isGuided), []);
-  const active = guided.find((s) => s.id === scenarioId) ?? null;
+  const offered = useMemo(() => guidedFor(topologyId), [topologyId]);
+  const active = (scenarioId ? guidedById(scenarioId) : undefined)?.def ?? null;
 
   return (
     <div className="flex flex-col gap-3 px-3 py-2 text-sm" data-testid="scenario-panel">
       <Select
         label="Guided scenario"
         value={active?.id ?? ''}
-        onChange={(e) => {
-          const next = guided.find((s) => s.id === e.target.value);
-          loadScenario(next?.id ?? null, next?.topology ?? topologyId);
-        }}
+        onChange={(e) => loadScenario(e.target.value || null, topologyId)}
         data-testid="scenario-select"
       >
         <option value="">Free play (use the Inspector)</option>
-        {guided.map((s) => (
-          <option key={s.id} value={s.id}>
-            {displayTitle(s.title)}
+        {offered.map((g) => (
+          <option key={g.def.id} value={g.def.id}>
+            {g.family.n}. {g.family.title}
           </option>
         ))}
       </Select>
@@ -65,8 +69,9 @@ export function ScenarioPanel() {
         <ActiveScenario key={`${active.id}`} def={active} />
       ) : (
         <p className="text-xs text-ink-muted">
-          Pick a scenario to load its topology, then apply its failure and watch each step. Time is
-          shown as steps: an ordinal on a relative scale, not a duration.
+          {offered.length > 0
+            ? 'Pick a scenario: its walkthrough is written for the topology loaded above. Apply its failure and watch each step. Time is shown as steps: an ordinal on a relative scale, not a duration.'
+            : 'No guided scenarios for this topology.'}
         </p>
       )}
     </div>
@@ -217,7 +222,7 @@ function ActiveScenario({ def }: { def: ScenarioDef }) {
             >
               <div className="flex items-center gap-2">
                 <span className="flex-1">
-                  <span className="font-semibold">{i === 0 ? 'Failure' : 'Then'}</span>
+                  <span className="font-semibold">{i === 0 ? groupLabel(g) : 'Then'}</span>
                   {note ? `: ${note}` : `: ${g.length} change${g.length === 1 ? '' : 's'}`}
                 </span>
                 <Button
@@ -238,7 +243,11 @@ function ActiveScenario({ def }: { def: ScenarioDef }) {
                     });
                   }}
                 >
-                  {state === 'applied' ? 'Applied' : i === 0 ? 'Inject' : 'Apply'}
+                  {state === 'applied'
+                    ? 'Applied'
+                    : i === 0 && groupLabel(g) === 'Failure'
+                      ? 'Inject'
+                      : 'Apply'}
                 </Button>
               </div>
               {items.length > 0 ? (

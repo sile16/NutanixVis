@@ -9,7 +9,6 @@ import { Move, RotateCcw } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { matrix as versionMatrix } from '../../domain/versions';
 import type { CatalogEntry } from '../../fixtures/catalog';
-import { getScenario } from '../../scenarios';
 import { VendorLogo } from '../components/brand';
 import { Button, Select } from '../components/controls';
 import { Diagram } from '../diagram/diagram';
@@ -18,7 +17,7 @@ import { ImpactStrip } from '../steps/impact-strip';
 import { SimProvider } from '../store/sim-context';
 import { topologyFromHash, useUi } from '../store/ui-store';
 import { usePlayback } from '../store/use-playback';
-import { catalog, fullCatalog, scenarioEntry, scenarioTopologyTitle } from './catalog';
+import { catalog, fullCatalog } from './catalog';
 import { useDarkTheme } from './theme';
 import { SimClock, TimeControls } from './time-controls';
 import { VersionSelector } from './version-selector';
@@ -62,15 +61,8 @@ function PlaybackDriver() {
   return null;
 }
 
-/** Topology menu value while a guided scenario's own build is loaded. */
-const SCENARIO_VALUE = '__scenario__';
-
 function Header({ entry }: { entry: CatalogEntry }) {
   const setTopology = useUi((s) => s.setTopology);
-  const scenarioId = useUi((s) => s.scenarioId);
-  const scenarioTitle = scenarioId
-    ? (scenarioTopologyTitle(getScenario(scenarioId)) ?? entry.title)
-    : null;
   const resetSim = useUi((s) => s.resetSim);
   const activityTicks = useUi((s) => s.activityTicks);
   const setActivityTicks = useUi((s) => s.setActivityTicks);
@@ -107,16 +99,10 @@ function Header({ entry }: { entry: CatalogEntry }) {
       </div>
       <Select
         label="Topology"
-        value={scenarioTitle === null ? entry.id : SCENARIO_VALUE}
-        onChange={(e) => {
-          if (e.target.value !== SCENARIO_VALUE) setTopology(e.target.value);
-        }}
+        value={entry.id}
+        onChange={(e) => setTopology(e.target.value)}
         data-testid="topology-select"
       >
-        {/* A guided scenario builds its own options: name them, not the menu entry it shares an id with. */}
-        {scenarioTitle !== null ? (
-          <option value={SCENARIO_VALUE}>Scenario: {scenarioTitle}</option>
-        ) : null}
         {(catalog.some((t) => t.id === entry.id) ? catalog : [...catalog, entry]).map((t) => (
           <option key={t.id} value={t.id}>
             {t.title}
@@ -171,12 +157,11 @@ export function App() {
   useDarkTheme();
 
   const scenarioId = useUi((s) => s.scenarioId);
+  // A guided scenario runs on the topology it was picked for (same options and seed), so the
+  // topology menu keeps naming it.
   const entry = useMemo(
-    () =>
-      scenarioId
-        ? scenarioEntry(getScenario(scenarioId))
-        : (fullCatalog.find((t) => t.id === topologyId) ?? catalog[0]),
-    [scenarioId, topologyId],
+    () => fullCatalog.find((t) => t.id === topologyId) ?? catalog[0],
+    [topologyId],
   );
   if (!entry) throw new Error('fixture catalog is empty');
   useTopologyHash(entry.id);

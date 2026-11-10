@@ -14,6 +14,7 @@ import type {
 } from '../src/engine/types';
 import { evaluate, withCtx } from '../src/scenarios/context';
 import { defineScenario, type ScenarioDef } from '../src/scenarios/define';
+import type { GuidedFamily } from '../src/scenarios/guided/kit';
 import { always, at, atCtx, eventSeen, eventsInOrder, wasEver } from '../src/scenarios/helpers';
 import { backlogRef, type ScenarioFamily, scenarios } from '../src/scenarios/index';
 import {
@@ -23,11 +24,18 @@ import {
   scenarioDuration,
 } from '../src/scenarios/runner';
 import { buildTopology, isTopologyId } from '../src/topologies';
+import { T1_CONFIGS } from '../src/topologies/t1-configs';
 
 // ── Registry and static validation ───────────────────────────────────────────
 
 /** SPEC §7.2 backlog sizes. */
-const BACKLOG: Readonly<Record<ScenarioFamily, number>> = { t1: 36, t2: 13, t3: 7, t1lab: 4 };
+const BACKLOG: Readonly<Record<ScenarioFamily, number>> = {
+  t1: 36,
+  t2: 13,
+  t3: 7,
+  t1lab: 4,
+  guided: 10,
+};
 /** SPEC §7.2 items removed from the backlog (T1-16: isolated VLANs on a bond, not modeled). */
 const REMOVED: Readonly<Partial<Record<ScenarioFamily, readonly number[]>>> = { t1: [16] };
 
@@ -39,6 +47,7 @@ const ACTION_KINDS = new Set([
   'link-down',
   'link-up',
   'hang',
+  'unhang',
   'set-latency',
   'fa.controller.failover',
   'fa.controller.reboot',
@@ -82,6 +91,10 @@ const scenarioFiles = import.meta.glob<{ default: ScenarioDef | readonly Scenari
   '../src/scenarios/{t1,t2,t3,t1-lab}/[0-9]*.ts',
   { eager: true },
 );
+const guidedFiles = import.meta.glob<{ default: GuidedFamily }>(
+  '../src/scenarios/guided/[0-9]*.ts',
+  { eager: true },
+);
 
 function sentences(text: string): number {
   return text.split(/(?<=[.!?])\s+(?=[A-Z])/).filter((x) => x.trim().length > 0).length;
@@ -109,9 +122,14 @@ describe('scenario registry', () => {
   });
 
   it('registers every scenario file', () => {
-    const fromFiles = Object.values(scenarioFiles).flatMap((m) =>
-      Array.isArray(m.default) ? m.default : [m.default as ScenarioDef],
-    );
+    const fromFiles = [
+      ...Object.values(scenarioFiles).flatMap((m) =>
+        Array.isArray(m.default) ? m.default : [m.default as ScenarioDef],
+      ),
+      ...Object.values(guidedFiles).flatMap((m) =>
+        T1_CONFIGS.filter((c) => m.default.configs.includes(c.key)).map((c) => m.default.build(c)),
+      ),
+    ];
     expect(fromFiles.length).toBeGreaterThan(0);
     const registered = new Set(scenarios.map((s) => s.id));
     for (const def of fromFiles) expect(registered.has(def.id), def.id).toBe(true);

@@ -6,13 +6,12 @@
 
 import { type CatalogEntry, fixtureCatalog } from '../../fixtures/catalog';
 import { loadSimulation } from '../../loader/simulation';
-import type { ScenarioDef } from '../../scenarios/define';
 import { buildTopology, type TopologyId, topologies, topologyIds } from '../../topologies';
 import type { Choice } from '../../topologies/options';
 import type { Topology } from '../../topologies/schema';
+import { T1_CONFIGS } from '../../topologies/t1-configs';
 
-const TITLES: Readonly<Record<TopologyId, string>> = {
-  't1-ahv-flasharray': 'Two storage vSwitches (vs1, vs2), no bond · separate storage networks',
+const TITLES: Readonly<Record<Exclude<TopologyId, 't1-ahv-flasharray'>, string>> = {
   't1-lab': 'T1-lab · single-NIC test drive mirror',
   't2-hci-ahv': 'T2 · Nutanix HCI on AHV',
   't3-co-so': 'T3 · Compute-only + storage-only nodes',
@@ -42,68 +41,6 @@ export function absoluteLeafLayout(t: Topology): Topology['layout'] {
   return out;
 }
 
-/**
- * The simple view: 3 nodes, 2 test VMs (nodes 1 and 2) and a powered-off spare VM on node 3 to
- * power on for more load. Every VM offers line rate at 70 % read (throughput model,
- * docs/research/link-congestion.md).
- */
-const SIMPLE_OPTIONS = {
-  'node-count': 3,
-  'vm-layout': 'two-plus-spare',
-  'vm-load-gbps': 'line-rate',
-  'read-pct': 70,
-} as const;
-
-/**
- * Two storage vSwitches: vs1 (eth2, fabric A) and vs2 (eth3, fabric B), no bond, each with one
- * uplink NIC. The management vSwitch vs0 (eth0 + eth1) is separate and not counted in the "two".
- */
-const PER_FABRIC_OPTIONS = { ...SIMPLE_OPTIONS, 'storage-vswitch-layout': 'per-fabric' } as const;
-
-const realEntries: CatalogEntry[] = topologyIds.map((id) => {
-  const simple = id === 't1-ahv-flasharray';
-  const options = simple ? PER_FABRIC_OPTIONS : {};
-  return {
-    id,
-    title: TITLES[id],
-    hasFlashArray: topologies[id].devices.some((d) => d.kind === 'fa-array'),
-    layout: absoluteLeafLayout(simple ? buildTopology(id, options) : topologies[id]),
-    createSimulation: (versions) =>
-      loadSimulation({
-        topologyId: id,
-        options,
-        versions: {
-          nutanix: versions.nutanix,
-          ...(versions.flasharray ? { flasharray: versions.flasharray } : {}),
-        },
-      }).sim,
-  };
-});
-
-/**
- * T1 variants with ONE storage virtual switch (vs1 = eth2 + eth3 bonded) and two storage VLANs,
- * one CVM storage interface and IP per VLAN (DEPLOY-GUIDE "Creating an Internal Interface"; NET:
- * at least two storage VLANs). The node switch ports and the ISL trunk both storage VLANs (the
- * topology always does this for a bond), so either bond member reaches either VLAN. The array
- * ports are either access ports (VLAN A on eth10 / Switch A, VLAN B on eth11 / Switch B, 4 data
- * IPs) or trunks with one IP per VLAN on every port (8 data IPs). Same topology and models as T1,
- * built from its options (declarative data, no engine change).
- */
-const BONDED_OPTIONS = {
-  ...SIMPLE_OPTIONS,
-  'storage-vswitch-layout': 'single-bond',
-  'storage-vlans': 'two',
-} as const;
-
-/** Active-Active with MAC pinning (OVS balance-slb): each storage interface pinned to one NIC. */
-const SLB_OPTIONS = { ...BONDED_OPTIONS, 'vs1-bond-mode': 'balance-slb' } as const;
-
-/**
- * Active-Active (OVS balance-tcp with LACP, AHV Admin Guide 11.2 Table 9): flows hashed per
- * connection across both NICs. LACP across the two switches needs MLAG/vPC.
- */
-const LACP_OPTIONS = { ...BONDED_OPTIONS, 'vs1-bond-mode': 'balance-tcp', mlag: true } as const;
-
 function t1Variant(
   id: string,
   title: string,
@@ -126,29 +63,26 @@ function t1Variant(
   };
 }
 
-const ACCESS = { 'array-port-vlans': 'access' } as const;
-const TRUNKED = { 'array-port-vlans': 'trunked' } as const;
-const ARRAY_4 = 'array access ports, 4 data IPs';
-const ARRAY_8 = 'array trunked ports, 8 data IPs';
+/** The five storage-network configurations being compared (`src/topologies/t1-configs.ts`). */
+const t1Entries: CatalogEntry[] = T1_CONFIGS.map((c) => t1Variant(c.catalogId, c.title, c.options));
 
-const bondedEntries: CatalogEntry[] = [
-  t1Variant('t1-bonded-slb', `One storage vSwitch (vs1), MAC pinning · ${ARRAY_4}`, {
-    ...SLB_OPTIONS,
-    ...ACCESS,
-  }),
-  t1Variant('t1-bonded-slb-8ip', `One storage vSwitch (vs1), MAC pinning · ${ARRAY_8}`, {
-    ...SLB_OPTIONS,
-    ...TRUNKED,
-  }),
-  t1Variant('t1-bonded-lacp', `One storage vSwitch (vs1), Active-Active LACP · ${ARRAY_4}`, {
-    ...LACP_OPTIONS,
-    ...ACCESS,
-  }),
-  t1Variant('t1-bonded-lacp-8ip', `One storage vSwitch (vs1), Active-Active LACP · ${ARRAY_8}`, {
-    ...LACP_OPTIONS,
-    ...TRUNKED,
-  }),
-];
+/** The other topologies at their defaults (T1-lab, HCI, T3): buildable, not offered. */
+const realEntries: CatalogEntry[] = topologyIds
+  .filter((id): id is Exclude<TopologyId, 't1-ahv-flasharray'> => id !== 't1-ahv-flasharray')
+  .map((id) => ({
+    id,
+    title: TITLES[id],
+    hasFlashArray: topologies[id].devices.some((d) => d.kind === 'fa-array'),
+    layout: absoluteLeafLayout(topologies[id]),
+    createSimulation: (versions) =>
+      loadSimulation({
+        topologyId: id,
+        versions: {
+          nutanix: versions.nutanix,
+          ...(versions.flasharray ? { flasharray: versions.flasharray } : {}),
+        },
+      }).sim,
+  }));
 
 /** Fixture demos (scripted traffic); not offered in the UI. */
 export const demoEntries: CatalogEntry[] = fixtureCatalog.map((e) => ({
@@ -158,66 +92,10 @@ export const demoEntries: CatalogEntry[] = fixtureCatalog.map((e) => ({
 }));
 
 /** Every topology the loader can build, for tests and tooling. */
-export const fullCatalog: readonly CatalogEntry[] = [
-  ...realEntries,
-  ...bondedEntries,
-  ...demoEntries,
-];
+export const fullCatalog: readonly CatalogEntry[] = [...t1Entries, ...realEntries, ...demoEntries];
 
 /**
  * What the UI offers: the five storage-network configurations being compared. Other topologies
  * (T1-lab, HCI, T3) and the demo entries stay buildable through `fullCatalog`.
  */
-export const catalog: readonly CatalogEntry[] = [
-  ...realEntries.filter((e) => e.id === 't1-ahv-flasharray'),
-  ...bondedEntries,
-];
-
-const BOND_TITLE: Readonly<Record<string, string>> = {
-  'balance-slb': 'MAC pinning',
-  'balance-tcp': 'Active-Active LACP',
-  'active-backup': 'Active-Backup',
-};
-
-/**
- * The storage network a guided scenario builds, in the words of the topology menu (its options
- * need not match a menu entry, e.g. a single storage VLAN): T1 options only, else null.
- */
-export function scenarioTopologyTitle(def: ScenarioDef): string | null {
-  if (def.topology !== 't1-ahv-flasharray') return null;
-  const o = def.options ?? {};
-  const vlans = o['storage-vlans'] === 'single' ? ' · one storage VLAN' : '';
-  if (o['storage-vswitch-layout'] === 'per-fabric') {
-    return `Two storage vSwitches (vs1, vs2), no bond${vlans}`;
-  }
-  const mode = String(o['vs1-bond-mode'] ?? 'balance-slb');
-  const ports =
-    o['array-port-vlans'] === 'trunked'
-      ? ` · ${ARRAY_8}`
-      : o['array-port-vlans'] === 'access'
-        ? ` · ${ARRAY_4}`
-        : '';
-  return `One storage vSwitch (vs1), ${BOND_TITLE[mode] ?? mode}${ports}${vlans}`;
-}
-
-/** A guided scenario as a catalog entry: its topology built with the scenario's own options. */
-export function scenarioEntry(def: ScenarioDef): CatalogEntry {
-  const id = def.topology as TopologyId;
-  const options = def.options ?? {};
-  return {
-    id: def.topology,
-    title: def.title,
-    hasFlashArray: topologies[id]?.devices.some((d) => d.kind === 'fa-array') ?? false,
-    layout: absoluteLeafLayout(buildTopology(id, options)),
-    createSimulation: (versions) =>
-      loadSimulation({
-        topologyId: id,
-        options,
-        ...(def.seed !== undefined ? { seed: def.seed } : {}),
-        versions: {
-          nutanix: versions.nutanix,
-          ...(versions.flasharray ? { flasharray: versions.flasharray } : {}),
-        },
-      }).sim,
-  };
-}
+export const catalog: readonly CatalogEntry[] = t1Entries;

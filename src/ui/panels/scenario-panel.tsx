@@ -151,7 +151,12 @@ function Observations({
 function ActiveScenario({ def }: { def: ScenarioDef }) {
   const { apply, stepForward } = useSimControls();
   const sim = useSim();
-  const current = useSteps().current;
+  const stepsView = useSteps();
+  const current = stepsView.current;
+  // The guided VM is in a stall (or down) right now: no "no IO stalls" note is borne out.
+  const guidedRun = def.guide ? stepsView.vms.get(def.guide.vm) : undefined;
+  const stalledNow =
+    guidedRun !== undefined && guidedRun.startT !== null && guidedRun.resumeStep === null;
   const simEpoch = useUi((s) => s.simEpoch);
   const groups = useMemo(() => timelineGroups(def), [def]);
   const now = useSnapshot().simTime;
@@ -226,8 +231,14 @@ function ActiveScenario({ def }: { def: ScenarioDef }) {
                     observed={state === 'applied' ? observed.stages : new Set()}
                     quiet={
                       state === 'applied' &&
+                      !stalledNow &&
                       now > (applied.times[i] ?? Number.POSITIVE_INFINITY) &&
-                      !observed.troubleAt.some((t) => t >= (applied.times[i] ?? 0))
+                      // Only this group's window: a stall a later group causes is its own.
+                      !observed.troubleAt.some(
+                        (t) =>
+                          t >= (applied.times[i] ?? 0) &&
+                          t < (applied.times[i + 1] ?? Number.POSITIVE_INFINITY),
+                      )
                     }
                   />
                 </>

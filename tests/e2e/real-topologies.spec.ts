@@ -303,3 +303,33 @@ test('the CVM inspector lists its NVMe paths by name, and a failed controller ma
   // A lost path's last latency is stale, so it is not shown.
   await expect(lost.first()).not.toContainText('ms');
 });
+
+test('a VM moved by HA keeps its new host header in view, but a zoomed view is left alone', async ({
+  page,
+}) => {
+  const scale = async () =>
+    page
+      .locator('.react-flow__viewport')
+      .evaluate((el) => new DOMMatrixReadOnly(getComputedStyle(el).transform).a);
+  await open(page, 't1-ahv-flasharray');
+  const pane = await page.locator('.react-flow').boundingBox();
+  await selectDevice(page, 'node-1');
+  await applyAction(page, 'power-off');
+  await step(page, 6);
+  await expect(page.getByTestId('restart-marker-node-1.vm-1')).toBeVisible();
+  const header = await page.getByTestId('node-node-3').boundingBox();
+  expect(header && pane && header.y >= pane.y).toBe(true);
+
+  // Zoomed in by the user: a later structure change does not refit (fresh page).
+  await page.reload();
+  await expect(page.locator('.react-flow__node').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Zoom In' }).click();
+  await page.getByRole('button', { name: 'Zoom In' }).click();
+  await page.waitForTimeout(400);
+  const zoomed = await scale();
+  await selectDevice(page, 'node-1');
+  await applyAction(page, 'power-off');
+  await step(page, 6);
+  await page.waitForTimeout(600);
+  expect(await scale()).toBeCloseTo(zoomed, 3);
+});

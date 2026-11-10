@@ -128,12 +128,17 @@ function offChoiceLabel(
   key: string,
   label: string,
   view: DeviceView | LinkView,
+  snapshot: Snapshot,
 ): string {
   const cur = currentParamValue(spec.kind, key, view);
-  if (cur === undefined || cur === null || currentChoice(spec, key, view) !== undefined) {
-    return label;
-  }
-  return `${label} · now ${typeof cur === 'number' ? formatNumber(cur) : String(cur)}`;
+  const choices = spec.params?.[key]?.choices ?? [];
+  if (cur === undefined || cur === null || choices.length === 0) return label;
+  if (currentChoice(spec, key, view) !== undefined) return label;
+  const text =
+    typeof cur === 'number'
+      ? formatNumber(cur)
+      : readableText(String(cur), snapshot.devices, snapshot.links);
+  return `${label} · now ${text}`;
 }
 
 function ActionForm({
@@ -198,7 +203,7 @@ function ActionForm({
           {params.map(([key, p]) => (
             <div key={key} className="min-w-[9rem] flex-1 [&_select]:w-full">
               <Select
-                label={offChoiceLabel(spec, key, p.label, current)}
+                label={offChoiceLabel(spec, key, p.label, current, snapshot)}
                 value={String(values[key] ?? '')}
                 onChange={(e) => {
                   const choice = p.choices.find((c) => String(c) === e.target.value);
@@ -354,7 +359,7 @@ function CvmPathsSection({ cvm }: { cvm: DeviceView }) {
         })}
       </ul>
       <div className="mt-1 text-[10px] text-ink-muted">
-        state · share of this CVM's IO · latest IO latency
+        state · share of this CVM's IO · latency of its last completed IO
       </div>
     </Section>
   );

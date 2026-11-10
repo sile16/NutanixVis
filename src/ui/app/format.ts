@@ -4,12 +4,15 @@ import type { ViewField } from '../../engine/types';
 const WORDS: Readonly<Record<string, string>> = {
   ahv: 'AHV',
   ana: 'ANA',
+  api: 'API',
   cvm: 'CVM',
   cvms: 'CVMs',
   dnd: 'DND',
   fa: 'FA',
   ft: 'FT',
+  gib: 'GiB',
   gbps: 'Gb/s',
+  hci: 'HCI',
   ha: 'HA',
   io: 'IO',
   iops: 'IOPS',
@@ -21,18 +24,21 @@ const WORDS: Readonly<Record<string, string>> = {
   mgmt: 'mgmt',
   mlag: 'MLAG',
   mtu: 'MTU',
+  ndu: 'NDU',
   nic: 'NIC',
   nics: 'NICs',
   nvme: 'NVMe',
   ovs: 'OVS',
   pct: '%',
   rf: 'RF',
+  tib: 'TiB',
   us: 'µs',
   vdisk: 'vDisk',
   vdisks: 'vDisks',
   vlan: 'VLAN',
   vlans: 'VLANs',
   vm: 'VM',
+  vswitch: 'vSwitch',
   vms: 'VMs',
   zk: 'ZK',
 };
@@ -41,6 +47,8 @@ const WORDS: Readonly<Record<string, string>> = {
 export function humanizeKey(key: string): string {
   const words = key
     .replace(/^engine\./, '')
+    // Binary units stay whole: capacityTiB → capacity TiB, not "ti b".
+    .replace(/([GT])iB/g, (_m, p: string) => ` ${p.toLowerCase()}ib`)
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .split(/[\s._-]+/)
     .filter(Boolean)

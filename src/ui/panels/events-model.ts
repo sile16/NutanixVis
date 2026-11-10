@@ -63,11 +63,15 @@ type Links = Snapshot['links'];
  * with its CVM (`CVM 1 CVM-IP A`), a FlashArray interface with its controller and port
  * (`CT0 eth10 (VLAN 10)`); anything else by its label.
  */
+const own = <T>(o: Readonly<Record<string, T>>, k: string): T | undefined =>
+  Object.hasOwn(o, k) ? o[k] : undefined;
+
 export function deviceName(devices: Devices, id: string): string {
-  const d = devices[id];
+  const d = own(devices, id);
   if (!d) return id;
   const parent = d.parent ? devices[d.parent] : undefined;
-  if (d.kind === 'fa-interface' && parent) {
+  // An array interface on a port (under a controller); the floating VIP sits on the array itself.
+  if (d.kind === 'fa-interface' && parent?.kind === 'nic') {
     const ct = parent.parent ? devices[parent.parent] : undefined;
     return `${ct ? `${ct.label} ` : ''}${parent.label} (${d.label})`;
   }
@@ -78,15 +82,17 @@ export function deviceName(devices: Devices, id: string): string {
 
 /** A cable id as `A ↔ B` (its two end devices), or null if it is not a known cable. */
 export function linkName(devices: Devices, links: Links, id: string): string | null {
-  const l = links[id];
+  const l = own(links, id);
   return l ? `${deviceName(devices, l.a.device)} ↔ ${deviceName(devices, l.b.device)}` : null;
 }
 
 /** An NVMe path id (`<cvm-interface>~<fa-interface>`) as `CVM-IP A → CT0 eth10 (VLAN 10)`. */
 export function pathName(devices: Devices, id: string): string | null {
   const [local, remote, extra] = id.split('~');
-  if (!local || !remote || extra !== undefined || !devices[local] || !devices[remote]) return null;
-  return `${devices[local]?.label ?? local} → ${deviceName(devices, remote)}`;
+  if (!local || !remote || extra !== undefined || !own(devices, local) || !own(devices, remote)) {
+    return null;
+  }
+  return `${own(devices, local)?.label ?? local} → ${deviceName(devices, remote)}`;
 }
 
 const ID_TOKEN = /[A-Za-z0-9][A-Za-z0-9._~-]*[A-Za-z0-9]/g;
@@ -98,7 +104,8 @@ const ID_TOKEN = /[A-Za-z0-9][A-Za-z0-9._~-]*[A-Za-z0-9]/g;
 export function readableText(text: string, devices: Devices, links: Links): string {
   return text.replace(ID_TOKEN, (tok) => {
     if (tok.includes('~')) return pathName(devices, tok) ?? tok;
-    if (devices[tok] && (tok.includes('.') || tok.includes('-'))) return deviceName(devices, tok);
+    if (own(devices, tok) && (tok.includes('.') || tok.includes('-')))
+      return deviceName(devices, tok);
     return linkName(devices, links, tok) ?? tok;
   });
 }

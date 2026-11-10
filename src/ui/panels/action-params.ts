@@ -53,8 +53,31 @@ export function currentChoice(
 }
 
 /**
- * Pruning a VLAN off a cable's switch port: start on a VLAN that switch carries (the engine offers
- * every VLAN in the topology, including ones no switch port carries).
+ * The VLANs that ride a cable, from its non-switch end: an array port's interfaces, or the
+ * interfaces on the vSwitch a host NIC belongs to. Empty when that cannot be told.
+ */
+function cableVlans(view: LinkView, devices: Readonly<Record<string, DeviceView>>): Set<string> {
+  const out = new Set<string>();
+  for (const end of [view.a.device, view.b.device]) {
+    const nic = devices[end];
+    if (!nic || nic.kind === 'switch') continue;
+    const vswitch = nic.fields.bond;
+    for (const d of Object.values(devices)) {
+      const on =
+        (d.kind === 'fa-interface' && d.parent === nic.id) ||
+        ((d.kind === 'cvm-interface' || d.kind === 'host-interface') &&
+          typeof vswitch === 'string' &&
+          d.fields.vswitch === vswitch);
+      if (on && d.fields.vlan !== undefined && d.fields.vlan !== null)
+        out.add(String(d.fields.vlan));
+    }
+  }
+  return out;
+}
+
+/**
+ * Pruning a VLAN off a cable's switch port: start on a VLAN that rides that cable (else one its
+ * switch carries). The engine offers every VLAN in the topology, including ones no port carries.
  */
 function carriedVlan(
   spec: ActionSpec,
@@ -65,13 +88,17 @@ function carriedVlan(
   if (spec.kind !== 'switch.port.prune-vlan' || key !== 'vlan' || !isLink(view) || !devices) {
     return undefined;
   }
+  const choices = spec.params?.[key]?.choices ?? [];
+  const onCable = cableVlans(view, devices);
+  const fromCable = choices.find((c) => onCable.has(String(c)));
+  if (fromCable !== undefined) return fromCable;
   const sw = [view.a.device, view.b.device]
     .map((id) => devices[id])
     .find((d) => d?.kind === 'switch');
   const carried = String(sw?.fields.vlans ?? '')
     .split(',')
     .filter(Boolean);
-  return spec.params?.[key]?.choices.find((c) => carried.includes(String(c)));
+  return choices.find((c) => carried.includes(String(c)));
 }
 
 /** Initial form values: the current state where known, else a sensible or the first choice. */

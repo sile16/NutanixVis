@@ -96,6 +96,11 @@ describe('humanizeKey', () => {
     expect(humanizeKey('ioLatencyUs')).toBe('IO latency µs');
     expect(humanizeKey('stuckIoPct')).toBe('Stuck IO %');
     expect(humanizeKey('iops')).toBe('IOPS');
+    expect(humanizeKey('capacityTiB')).toBe('Capacity TiB');
+    expect(humanizeKey('hci.rebuildRemainingGiB')).toBe('HCI rebuild remaining GiB');
+    expect(humanizeKey('mgmtApi')).toBe('mgmt API');
+    expect(humanizeKey('ndu')).toBe('NDU');
+    expect(humanizeKey('vswitch')).toBe('vSwitch');
   });
 });
 

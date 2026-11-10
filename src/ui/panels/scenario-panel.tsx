@@ -8,7 +8,7 @@
 import { clsx } from 'clsx';
 import { Circle, CircleCheck, Info, StepForward } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { deriveArrayOpSteps, deriveVmSteps } from '../../domain/steps';
+import { deriveArrayOpSteps, deriveVmRuns } from '../../domain/steps';
 import { scenarios } from '../../scenarios';
 import type { GuideObservation, ScenarioDef } from '../../scenarios/define';
 import { Button, Select } from '../components/controls';
@@ -73,13 +73,34 @@ export function ScenarioPanel() {
   );
 }
 
-interface Observed {
-  readonly stages: ReadonlySet<string>;
-  /** When each stall or VM-down began (a "no new stall" note is judged from its group on). */
-  readonly troubleAt: readonly number[];
+/**
+ * A group's "no IO stalls" note is borne out once time has run since the group was applied and no
+ * stall or VM-down began in its window (from its apply time to the next group's), counting a stall
+ * still open now. A stall a later group causes is that group's, not this one's.
+ */
+export function noStallInWindow(
+  from: number | undefined,
+  until: number | undefined,
+  now: number,
+  openSince: number | null,
+  troubleAt: readonly number[],
+): boolean {
+  if (from === undefined || now <= from) return false;
+  const end = until ?? Number.POSITIVE_INFINITY;
+  const inWindow = (t: number) => t >= from && t < end;
+  if (openSince !== null && inWindow(openSince)) return false;
+  return !troubleAt.some(inWindow);
 }
 
-const NOTHING: Observed = { stages: new Set(), troubleAt: [] };
+interface Observed {
+  readonly stages: ReadonlySet<string>;
+  /** When each stall or VM-down began, in every run (a "no IO stalls" note is judged per group). */
+  readonly troubleAt: readonly number[];
+  /** Start of the guided VM's run that is still open (stalled or down now), or null. */
+  readonly openSince: number | null;
+}
+
+const NOTHING: Observed = { stages: new Set(), troubleAt: [], openSince: null };
 
 /** Stages the guided VM has reached since the scenario's first group was applied. */
 function useObservedStages(vm: string | null, from: number | null): Observed {
@@ -89,13 +110,16 @@ function useObservedStages(vm: string | null, from: number | null): Observed {
     if (vm === null || from === null) return NOTHING;
     const samples = (steps.samples.get(vm) ?? []).filter((x) => x.t >= from);
     const events = sim.eventLog();
-    const r = deriveVmSteps(vm, events, samples);
+    // Every run of the incident, not only the first: a later group can stall the VM again.
+    const runs = deriveVmRuns(vm, events, samples);
     // A planned array operation (controller reboot, NDU) has stages of its own.
     const op = deriveArrayOpSteps(events, from);
-    const all = [...r.milestones, ...op.milestones];
+    const all = [...runs.flatMap((r) => r.milestones), ...op.milestones];
+    const open = runs.find((r) => r.startT !== null && r.endT === null);
     return {
       stages: new Set(all.map((m) => m.stage)),
       troubleAt: all.filter((m) => m.stage === 'stall' || m.stage === 'vm-down').map((m) => m.t),
+      openSince: open?.startT ?? null,
     };
   }, [steps, sim, vm, from]);
 }
@@ -153,10 +177,6 @@ function ActiveScenario({ def }: { def: ScenarioDef }) {
   const sim = useSim();
   const stepsView = useSteps();
   const current = stepsView.current;
-  // The guided VM is in a stall (or down) right now: no "no IO stalls" note is borne out.
-  const guidedRun = def.guide ? stepsView.vms.get(def.guide.vm) : undefined;
-  const stalledNow =
-    guidedRun !== undefined && guidedRun.startT !== null && guidedRun.resumeStep === null;
   const simEpoch = useUi((s) => s.simEpoch);
   const groups = useMemo(() => timelineGroups(def), [def]);
   const now = useSnapshot().simTime;
@@ -231,13 +251,12 @@ function ActiveScenario({ def }: { def: ScenarioDef }) {
                     observed={state === 'applied' ? observed.stages : new Set()}
                     quiet={
                       state === 'applied' &&
-                      !stalledNow &&
-                      now > (applied.times[i] ?? Number.POSITIVE_INFINITY) &&
-                      // Only this group's window: a stall a later group causes is its own.
-                      !observed.troubleAt.some(
-                        (t) =>
-                          t >= (applied.times[i] ?? 0) &&
-                          t < (applied.times[i + 1] ?? Number.POSITIVE_INFINITY),
+                      noStallInWindow(
+                        applied.times[i],
+                        applied.times[i + 1],
+                        now,
+                        observed.openSince,
+                        observed.troubleAt,
                       )
                     }
                   />

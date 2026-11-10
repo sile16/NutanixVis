@@ -83,6 +83,8 @@ function RefitWhenOutside({ structure }: { structure: string }) {
   const width = useStore((s) => s.width);
   const height = useStore((s) => s.height);
   const last = useRef<{ structure: string; bounds: Rect } | null>(null);
+  // A refit animates for a moment: a change during it is judged as if the view were already fit.
+  const fittingUntil = useRef(0);
   useEffect(() => {
     // After React Flow has measured the new nodes. The structure is recorded only once the frame
     // runs, so a re-run that cancels it (a resize in the same update) schedules it again.
@@ -97,7 +99,14 @@ function RefitWhenOutside({ structure }: { structure: string }) {
       const prev = last.current;
       last.current = { structure, bounds };
       // Judged with the viewport as it is now: a zoom since then counts.
-      if (prev && prev.structure !== structure && inView(prev.bounds) && !inView(bounds)) {
+      const fitting = performance.now() < fittingUntil.current;
+      if (
+        prev &&
+        prev.structure !== structure &&
+        (fitting || inView(prev.bounds)) &&
+        !inView(bounds)
+      ) {
+        fittingUntil.current = performance.now() + 400;
         void fitView({ ...FIT_VIEW, duration: 300 });
       }
     });

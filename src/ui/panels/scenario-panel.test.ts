@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { scenarios } from '../../scenarios';
-import { isGuided, timelineGroups } from './scenario-panel';
+import { isGuided, noStallInWindow, timelineGroups } from './scenario-panel';
 
 describe('guided scenarios', () => {
   const guided = scenarios.filter(isGuided);
@@ -35,5 +35,20 @@ describe('guided scenarios', () => {
     const g = timelineGroups(guided[0] as (typeof guided)[number]);
     expect(g.length).toBeGreaterThanOrEqual(2);
     expect(g[0]?.[0]?.action.kind).toBe('fail');
+  });
+});
+
+describe('guided "no IO stalls" notes', () => {
+  it('judge each group on its own window, every stall counted', () => {
+    // Group 0 applied at 10, group 1 at 50; stalls began at 12 (resumed) and 55 (resumed).
+    const trouble = [12, 55];
+    expect(noStallInWindow(10, 50, 60, null, trouble)).toBe(false); // group 0 stalled
+    expect(noStallInWindow(50, undefined, 60, null, trouble)).toBe(false); // the second stall counts
+    expect(noStallInWindow(50, undefined, 60, null, [12])).toBe(true); // group 1 itself was quiet
+    // A stall open now that began in group 1 does not un-tick group 0.
+    expect(noStallInWindow(10, 50, 60, 55, [55])).toBe(true);
+    expect(noStallInWindow(50, undefined, 60, 55, [55])).toBe(false);
+    // Nothing has run since the group was applied yet.
+    expect(noStallInWindow(50, undefined, 50, null, [])).toBe(false);
   });
 });

@@ -16,8 +16,14 @@ import { SPEEDS, useUi } from '../store/ui-store';
 export function SimClock() {
   const steps = useSteps();
   const open = [...steps.vms.values()].filter((v) => v.startT !== null && v.resumeStep === null);
-  // A VM whose process stopped (host loss, crash) is down, not merely waiting on its IO.
-  const down = open.some((v) => v.milestones.some((m) => m.stage === 'vm-down'));
+  // A VM whose process stopped (host loss, crash) is down, not merely waiting on its IO: its latest
+  // vm-down comes after its latest restart or resume (an earlier run HA ended does not count).
+  const down = open.some((v) => {
+    const at = (stages: readonly string[]) =>
+      Math.max(-1, ...v.milestones.filter((m) => stages.includes(m.stage)).map((m) => m.t));
+    const downAt = at(['vm-down']);
+    return downAt >= 0 && downAt > at(['ha-restarted', 'resumed']);
+  });
   const note =
     steps.current === 0 && steps.settled
       ? 'steady'

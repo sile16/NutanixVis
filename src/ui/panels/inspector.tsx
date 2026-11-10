@@ -88,7 +88,9 @@ function Fields({ fields }: { fields: Readonly<Record<string, ViewField>> }) {
   // A value naming one device links to it by name; ids inside lists and records read as names.
   const value = (k: string, v: ViewField): ReactNode => {
     if (k === 'bondMode' && typeof v === 'string') return BOND_MODE_LABEL[v] ?? v;
-    if (typeof v === 'string' && snapshot.devices[v]) return <DeviceLink id={v} qualified />;
+    if (typeof v === 'string' && Object.hasOwn(snapshot.devices, v)) {
+      return <DeviceLink id={v} qualified />;
+    }
     return readableText(formatField(v), snapshot.devices, snapshot.links);
   };
   const entries = Object.entries(fields).filter(

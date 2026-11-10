@@ -143,7 +143,12 @@ export function GroupFrame({
         >
           {title}
         </span>
-        {subtitle ? <span className="truncate text-[10px] text-ink-muted">{subtitle}</span> : null}
+        {subtitle ? (
+          // Gives way first when badges crowd the header; the full text is on hover.
+          <span className="truncate text-[10px] text-ink-muted" title={subtitle}>
+            {subtitle}
+          </span>
+        ) : null}
         <StatusIcon status={device.status} size={frame.header > 24 ? 13 : 11} />
         <span className="ml-auto shrink-0">
           <Badges badges={device.badges} compact={frame.header < 28} iconOnly={iconBadges} />

@@ -58,3 +58,33 @@ describe('profile coverage doc', () => {
     );
   });
 });
+
+describe('profile coverage doc: hand-written assumptions table', () => {
+  it('quotes the values the profile holds now', () => {
+    const doc = readFileSync(DOC, 'utf8');
+    const section = doc.slice(doc.indexOf('## Assumptions and unverified values'));
+    const rows =
+      section
+        .split('\n## ')[0]
+        ?.split('\n')
+        .filter((l) => l.startsWith('| `')) ?? [];
+    expect(rows.length).toBeGreaterThan(0);
+    const byPath = new Map(leaves(current).map((l) => [l.path, l.cited.value]));
+    for (const row of rows) {
+      const [, fieldCell = '', valueCell = ''] = row.split('|').map((c) => c.trim());
+      // `group.a` / `b` (b in the same group) and `1 / 2 s`: one value per field, in order.
+      const names = [...fieldCell.matchAll(/`([^`]+)`/g)].map((m) => m[1] as string);
+      const group = names[0]?.split('.')[0] ?? '';
+      const values = valueCell
+        .replace(/\s*s$/, '')
+        .split('/')
+        .map((v) => v.trim());
+      names.forEach((n, i) => {
+        const path = n.includes('.') ? n : `${group}.${n}`;
+        expect(byPath.has(path), `${path} is not a profile field`).toBe(true);
+        const quoted = (values[i] ?? '').replace(/\s*s$/, '');
+        expect(quoted, `${path} in the assumptions table`).toBe(String(byPath.get(path)));
+      });
+    }
+  });
+});

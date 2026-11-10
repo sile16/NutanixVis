@@ -119,10 +119,10 @@ These are the values the lab plan (`lab-validation-plan.md`) should upgrade firs
 
 | Field | Value | Why this value | Lab |
 |---|---|---|---|
-| `redirector.redirectStallS` | 3 s | No AHV figure is published. A few ticks covers the initiator's (Frodo/QEMU) re-login to the remote Stargate after the redirect decision. | L3 |
-| `redirector.missesToUnhealthy` / `missWindowS` | 2 / 30 s | The hypervisor-agnostic Autopath rule (2014 Nutanix blog). The AHV redirector's count is not published. | L3 |
+| `redirector.redirectStallS` | 1 s | No AHV figure is published. About a second covers the initiator's (Frodo/QEMU) re-login to the Stargate the redirector chose, once that Stargate may serve the vDisk (the IO-freeze KB puts an orderly Stargate stop at "~1 second or potentially less"). | L3 |
+| `redirector.missesToUnhealthy` / `nopIntervalS` | 2 / 5 s | The hypervisor-agnostic Autopath rule ("fails to respond two or more times", 2014 Nutanix blog). The AHV redirector's count and NOP interval are not published. | L3 |
 | `externalStorage.multipathPolicy` | active-active | The policy Nutanix configures for Stargate is not public. SPDK supports active-passive and active-active. The selector (`pathSelector`, queue-depth, `inferred`) is a separate field. | L12 |
-| `externalStorage.lostPathHoldKatoMultiplier` | 3 | NVMe 2.1 §9.6.2: wait 2 × KATT (command-based keep-alive) or 3 × KATT (traffic-based) before CQT. The conservative traffic-based case; which mode the array uses is not published. All in-flight IO is held, although the spec lets reads retry at detection. | L5, L12 |
+| `externalStorage.lostPathHoldKatoMultiplier` | 2 | Owner estimate: after a storage NIC is lost, IO resumes on the surviving path in about 9–12 s. Stargate's SPDK initiator resets a controller whose keep-alive timed out and retries the aborted IO on another path, so in-flight IO is retried at 2 × KATO after the last exchange. The NVMe 2.1 §9.6 wait (k × KATT + CQT) would not fit that and is not applied. A connection the target closed fails over on the same schedule. | L5, L12 |
 | `externalStorage.reconnectDelayS` | 10 s | Linux `NVMF_DEF_RECONNECT_DELAY`, the default of the CVM's kernel initiator. SPDK has no default (its multipath example uses `-o 20`). | L5 |
 | `hci.curatorPartialScanS` / `curatorFullScanS` | 3600 / 21600 s | A community post says "every hour" and "around every 6 hours". The Bible gives no schedule. | — |
 | `cluster.cvmBootS` | 180 s | No published figure. Upper bound: Genesis `--svm_reboot_timeout` = 420 s (Command Ref 7.6). Also the service restart after a Hades re-map. | L7 |

@@ -88,6 +88,7 @@ Living status page: where the project stands, what is left, which behavior still
 
 ### Polish (small)
 
+- **View-field doc for HCI and T3:** `tests/view-fields-doc.test.ts` checks the T1 configurations only. Still undocumented: `cvm` `hci.replicas`, `hci.ioPending`, `hci.vdisksOwned`, `hci.readOnly`; `disk` `media`, `capacityTiB`, `replicas`, `cvm`; derived `hci.rf`, `hci.extentGroups`, `hci.unavailableExtentGroups`, `hci.rebuildRemainingGiB`, `hci.dataNodeFailureTolerance`, `hci.capacityPct`, `hci.resilientCapacityPct`, `hci.garbageReplicas`, `hci.curatorLeader`, `hci.readOnly`. Document them and add T2/T3 to the test.
 - **T3 layout:** seven hosts in one row get small at the default zoom. Wrap them into two rows.
 - **FlashArray interfaces:** the FA interface boxes are a bit narrow.
 - **`action.rejected`:** carry the action kind and target as structured fields, not only in the message.

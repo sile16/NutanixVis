@@ -34,6 +34,9 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `readPendingS` | number | The same, for reads only. |
 | `writePendingS` | number | The same, for writes only (for example, writes waiting on RF replication). |
 | `ownerCvm` | string \| null | CVM whose Stargate serves its vDisks: the local CVM normally, a remote one after a redirect, and always remote on CO nodes. |
+| `vdisks` | JSON string[] | Its vDisk ids (one AOS vDisk per FlashArray volume in T1). |
+| `outstandingIo` | number | Guest IOs of the sampled IO model issued and not yet completed (in flight or stuck). |
+| `restartNeed` | `none` \| `ha` \| `next-cycle` | Whether AHV HA owes it a start: `ha` after its host is fenced, `next-cycle` at the next HA cycle (a force-shutdown, or an initiator timeout while its host is still connected). |
 | `ioPaths` | JSON string[] | T1 only: NVMe path ids that carried this VM's vDisk IO during the last tick. |
 | `ioUplinks` | JSON string[] | Physical NICs, on any host, that carried this VM's storage IO (iSCSI or NVMe/TCP) during the last tick. It is empty for HCI VMs served locally over `virbr0`, and while the VM is not running (paused, off, crashed, restarting). |
 | `ioLatencyMs` | number \| null | Latency of its last completed IO (sampled model); `null` while it is not running. With the throughput model the inspector shows `ioLatencyUs` instead. |
@@ -41,6 +44,7 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `pathLossForceShutdownS` | number \| null | Optional. The per-VM force-shutdown timeout on storage path loss (T1); `null` means unset (retry forever). |
 | `offeredLoad` | number \| `line-rate` | T1 throughput model (`docs/research/link-congestion.md`): the VM's offered storage load in Gb/s; `line-rate` = no cap. Set by option `vm-load-gbps` or action `vm.set-load`. Present on every VM of the model, running or not (with `offeredIops` and `readPct`). |
 | `readPct` | number | T1 throughput model: read share of the load, %. |
+| `offeredIops` | number \| null | T1 throughput model: the offered load in IOPS (`offeredLoad` ÷ IO size); `null` for `line-rate`. |
 | `throughputGbps`, `readGbps`, `writeGbps`, `iops` | number | T1 throughput model: the rate the VM achieves (read + write, and each), after NIC and link limits. Present while the VM has a process (`host` set); 0 unless its state is `running` (a paused or `io-stalled` VM moves no data). A partial stall (`stuckIoPct` below 100) leaves only the free share of its queue in flight. A path whose route is not yet (or no longer) known carries nothing; the rest of the VM's paths carry its flow. |
 | `ioLatencyUs` | number | T1 throughput model: mean round-trip latency of one IO, µs, including queueing on congested links. Absent while the VM moves no data. |
 | `flowPaths` | JSON array | T1 throughput model, per NVMe path: `{id, gbps, latencyUs, islPct, routes:[{pct, out, back}]}`. `out` and `back` name the hops each way, marking a switch-to-switch hop `⇒ ISL ⇒` and a full direction `[full +N µs]`. The inspector's "Storage throughput" section shows it. |
@@ -65,6 +69,14 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `plannedShutdown` | `none` \| `preparing` \| `off` | Planned shutdown (`cvm.planned-shutdown`): `preparing` while traffic is forwarded away and services stop, `off` once powered off; it stays off until `cvm.planned-start`. |
 | `dndState` | `ok` \| `scoring` \| `degraded` | Degraded Node Detection (SPEC §6.2). `scoring`: its peers found it unresponsive and the `dnd.scoringWindowS` window is running. `degraded`: marked Degraded until `dnd.autoResolveHealthyS` of health or `cvm.mark-fixed`. |
 | `hades` | `ok` \| `maintenance` \| `restarting` | T1 Hades state (SPEC §6.2). `maintenance`: every path to the CVM's service volumes was lost and the error lasted `hades.externalStorageErrorThresholdS`, so its services are stopped (`stargate` is `down`). `restarting`: a volume check found the mounts healthy again, the node left maintenance and the services are restarting (`hades.servicesRestartS`). Always `ok` outside T1, or with `hades-maintenance-on-storage-error: off`. |
+| `ownedVdisks` | number | vDisks its Stargate holds (has acquired) now. |
+| `backend` | `external-nvme` \| `hci` | Its storage backend: the FlashArray over NVMe/TCP (T1), or the HCI extent store. |
+| `backendHealth` | `ok` \| `degraded` \| `unavailable` | The backend's own health. T1: `degraded` while some path is not live or a controller reports ANA Inaccessible, `unavailable` with no live path. HCI: `unavailable` without metadata or any reachable replica, `degraded` while data is unavailable, under-replicated or read-only. |
+| `nvmeHealth` | `ok` \| `degraded` \| `unavailable` | T1: the NVMe/TCP initiator's view, the same rule as `backendHealth`. |
+| `nvmeMultipathPolicy` | `active-active` \| `active-passive` | T1: the profile's `externalStorage.multipathPolicy`. |
+| `nvmePathSelector` | `queue-depth` \| `round-robin` | T1: the selector among optimized paths (`externalStorage.pathSelector`). |
+| `nvmeIoInflight`, `nvmeIoHeld`, `nvmeIoQueued` | number | T1: initiator commands by state: sent on a path, held after a path loss (until the retry), or waiting for a live path. |
+| `nvmeReservations` | JSON string[] | T1: vDisks whose NVMe reservation this CVM holds. |
 
 ### `cvm-interface` (schema fields, echoed into the view)
 
@@ -72,6 +84,8 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 |---|---|---|
 | `service` | `mgmt` \| `external-storage` \| `backplane` | Used to count a CVM's storage vNICs. |
 | `vlan` | number | |
+| `ip` | string | Schema value. |
+| `vswitch` | string \| null | The vSwitch it attaches to (schema). Host interfaces (`host-interface`) carry the same `ip` and `vswitch` fields. |
 
 ### `ahv-host`
 
@@ -81,6 +95,12 @@ Status: **proposed by stream H (scenarios)**, for adoption by the integrator. Th
 | `role` | `hci` \| `compute-only` \| `storage-only` \| `external-storage-compute` | Schema role. |
 | `haState` | `connected` \| `disconnected` \| `fenced` | The Acropolis leader's view of the host. `disconnected`: heartbeats are missing. `fenced`: Stargates block its IO, from T+60. It returns to `connected` once the host rejoins. |
 | `maintenance` | boolean | AHV maintenance mode (`host.enter-maintenance`): unschedulable, its VMs migrated off. |
+| `block` | string \| null | Its block (chassis) id, for block awareness. |
+| `cvm` | string \| null | Its CVM id (`null` on a compute-only node). |
+| `rebooting` | boolean | A host reboot is in progress. |
+| `isolated` | boolean | `host.isolate` has cut its network links. |
+| `sessions` | JSON Record<vdiskId, string> | The AHV redirector's iSCSI session per vDisk: the serving CVM, `<cvm> (external)` when it uses that CVM's external portal, `<cvm> (parked)` while logged in but not yet served, or `none`. |
+| `unhealthyStargates` | JSON string[] | CVMs the redirector currently counts unhealthy (unanswered NOPs, not yet answering again). |
 | badges | — | The `acropolis-leader` badge appears on the leader host; `maintenance` on a host in maintenance mode. |
 
 ### `vswitch` (engine view kind: `bond`)
@@ -97,12 +117,26 @@ The engine reports AHV virtual switches with view `kind: 'bond'`; the UI and sce
 | `activeMember` | string \| null | The active member under active-backup or no-bond, or under balance-tcp in LACP fallback; otherwise `null`. |
 | `initialActive` | string \| null | Active-backup only: the member pinned with `bond/set-active-slave` (topology option `vs0-active-member: alternate`), preferred whenever the bond picks a new active member. `null`: OVS default, the first linked member. |
 | `pinning` | JSON Record<vnicId, nicId> | Which member each vNIC egresses on. vNIC ids are cvm-interface ids, host-interface ids or VM ids. It covers balance-slb, active-backup and no-bond, and is empty for balance-tcp, which is per-flow. |
+| `net` | `bond` | Engine element type. |
+| `mode` | as `bondMode` | Engine name for `bondMode`. |
+| `uplinks` | string | Comma-separated uplink NICs in use (`vswitch.set-uplinks` may drop some of `members`). |
+| `eligible` | string | Comma-separated members that may carry traffic now (carrier, LACP aggregated). |
+| `misconfig` | string \| null | A detected misconfiguration, e.g. `lacp-no-mlag`: the uplinks reach two LACP partners without a shared MLAG domain. |
+| `group` | string | The vSwitch name: bonds of one group change mode and LACP rate together, cluster-wide (SPEC §5.5). |
+| `active` | string \| null | Engine name for the single active member (active-backup, no-bond, LACP fallback). |
+| `member.<nic>` | `up` \| `active` \| `backup` \| `down` \| `detached` \| `lacp-down` \| `unused` \| `not-uplink` | Per member: `detached` is outside the LACP aggregator (another partner), `lacp-down` timed out its LACPDUs, `unused` is the second NIC of a no-bond vSwitch, `not-uplink` is not in `uplinks`. |
+| `buckets.<nic>` | number | Hashed modes (balance-slb, balance-tcp), not in fallback: hash buckets pinned to each member. |
 
 ### `nic` (host NICs and FA ports)
 
 | Key | Type | Meaning |
 |---|---|---|
-| `link` | `up` \| `down` | Carrier. |
+| `link` | string \| null | The id of its cable (`null` if uncabled). Carrier is that cable's status. |
+| `net` | `nic` | Engine element type. |
+| `mtu` | number | |
+| `adminUp` | boolean | `false` after `fail` (admin down or failed). |
+| `hung` | boolean | `hang`: carrier stays up, frames die (LACPDUs may keep flowing). |
+| `bond` | string \| null | The vSwitch (bond) it is a member of. |
 | `speedGbps` | number | |
 
 ### `switch`
@@ -112,6 +146,11 @@ The engine reports AHV virtual switches with view `kind: 'bond'`; the UI and sce
 | `state` | `up` \| `failed` \| `hung` | `hung`: stops forwarding but keeps carrier on every port (`switch.hang`). |
 | `vlans` | string | Comma-separated VLANs carried. |
 | `flowControl` | `off` \| `global-pause` \| `pfc` | |
+| `net` | `switch` | Engine element type. |
+| `mtu` | number | |
+| `adminUp` | boolean | |
+| `hung` | boolean | `switch.hang`. |
+| `mlagDomain` | string \| null | Its MLAG domain while MLAG is on; `null` otherwise. |
 
 ### `fa-array`
 
@@ -121,6 +160,12 @@ The engine reports AHV virtual switches with view `kind: 'bond'`; the UI and sce
 | `pauseS` | number | How long the current array-wide pause has lasted (0 while serving). |
 | `primary` | string \| null | Controller id holding the primary role; `null` while none does, for example mid-promotion. |
 | `mgmtApi` | `up` \| `unreachable` | Management API (`fa.vir0`) reachability from the cluster. |
+| `model` | string | Array model (schema), e.g. `FlashArray//X70`. |
+| `promoting` | string \| null | The controller being promoted to primary, mid-failover. |
+| `ndu` | `reboot-secondary` \| `await-hosts` \| `failover` \| `reboot-primary` \| null | The NDU phase (`fa.ndu`); `null` when none runs. |
+| `heldIo` | number | Commands the array holds (array-wide pause or a stalled controller), answered once it serves again. |
+| `reservations` | number | NVMe reservations held on its volumes. |
+| `promotionS` | number | Duration of a crash promotion (`flasharray.primaryCrashPauseS`, bounded by claim-expiry detection plus `promotionMaxS`). |
 
 ### `fa-controller`
 
@@ -128,6 +173,8 @@ The engine reports AHV virtual switches with view `kind: 'bond'`; the UI and sce
 |---|---|---|
 | `role` | `primary` \| `secondary` \| `promoting` \| `offline` | |
 | `state` | `up` \| `draining` \| `crashed` \| `rebooting` \| `stalled` | `stalled`: alive but not completing IO (`fa.io-stall`). `draining`: a planned reboot's first phase; new IO is answered ANA Inaccessible, in-flight IO finishes. |
+| `slot` | `ct0` \| `ct1` | Schema value. |
+| `hosts` | number | Host initiator endpoints this controller has heard from (connect or keep-alive), each counted once. |
 
 ### `fa-interface`
 
@@ -139,6 +186,8 @@ The engine reports AHV virtual switches with view `kind: 'bond'`; the UI and sce
 | `enabled` | boolean | Admin state (`fa.interface.disable` / `enable`). |
 | `oper` | `up` \| `down` | `down` if disabled, if its port has no carrier, or if its controller is not `up`. |
 | `cabled` | boolean | `false` when its port has no cable (the topology option `array-data-ports: first-only`): not connected by design, status `offline`, no NVMe path to it. |
+| `ip` | string | Schema value. |
+| `floating` | boolean | `true` for the floating management VIP (`fa.vir0`), drawn in the controller that holds it (its `nic` follows the primary). |
 
 ### `throughput-model` (`flows`, T1)
 
@@ -173,6 +222,8 @@ All of these are scalars.
 | `faultToleranceByComponent` | JSON Record<`ZOOKEEPER` \| `METADATA` \| `EXTENT_GROUPS`, number \| null> | Data Resiliency widget rows: additional node failures each component tolerates now. `null` where the array owns it (T1 `METADATA`, `EXTENT_GROUPS`). |
 | `blockAwareness` | `met` \| `not-met` \| `off` | Block fault-tolerance rule (Bible 4i). |
 | `degradedNodes` | JSON string[] | CVMs Degraded Node Detection currently marks Degraded. |
+| `zkMembers` | JSON string[] | CVMs holding a Zookeeper ensemble seat. |
+| `engine.queuedActions` | number | Actions applied but not yet run: every action takes effect at the start of the next tick, and in manual mode several can wait (the inspector shows "Queued actions"). |
 
 ## Event codes
 

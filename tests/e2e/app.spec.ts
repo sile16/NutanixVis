@@ -208,3 +208,21 @@ test('a load set by the IOPS slider shows as "now" in the VM load form', async (
   const form = page.getByTestId('action-vm.set-load').locator('xpath=ancestor::form');
   await expect(form).toContainText(/now \d/i);
 });
+
+test('the Compare chart highlights the loaded topology and opens a scenario on another', async ({
+  page,
+}) => {
+  await page.goto('./#topology=t1-bonded-slb');
+  await page.getByTestId('compare-open').click();
+  const dialog = page.getByTestId('compare-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId('compare-col-slb-4ip')).toHaveAttribute('data-current', 'yes');
+  await expect(dialog.getByTestId('compare-col-lacp-4ip')).toHaveAttribute('data-current', 'no');
+  if (process.env.SHOT_DIR) await page.screenshot({ path: `${process.env.SHOT_DIR}/compare.png` });
+  // A failure cell opens its guided scenario on that column's topology.
+  await dialog.getByTestId('compare-try-lacp-4ip-10').click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId('topology-select')).toHaveValue('t1-bonded-lacp');
+  await expect(page.getByTestId('scenario-select')).toHaveValue('guided-10-nic-hang--lacp-4ip');
+  await expect(page.getByTestId('scenario-active')).toContainText('LACP');
+});

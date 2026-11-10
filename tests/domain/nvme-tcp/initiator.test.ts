@@ -11,6 +11,7 @@ import type { MultipathPolicy, PathSelector, Profile } from '../../../src/domain
 import { current } from '../../../src/domain/versions/profiles/current';
 import { createSimulation, type EngineSimulation } from '../../../src/engine/sim';
 import type { SimEvent } from '../../../src/engine/types';
+import { loadSimulation } from '../../../src/loader/simulation';
 import { device, type FabricOptions, fabric, VERSIONS } from '../../engine/helpers';
 import { type FakeTarget, fakeTarget, StubCvm, type StubIo } from './stub';
 
@@ -379,5 +380,39 @@ describe('CVM restart', () => {
     expect(r.init.health()).toBe('ok');
     expect(r.events('nvme.path.lost')).toHaveLength(0);
     expect(r.events('nvme.path.restored')).toHaveLength(3);
+  });
+});
+
+describe('queue-depth selector with a silently dead path', () => {
+  // The UI's default view: two storage vSwitches, a line-rate VM on nodes 1 and 2.
+  const options = {
+    'node-count': 3,
+    'vm-layout': 'two-plus-spare',
+    'vm-load-gbps': 'line-rate',
+    'read-pct': 70,
+    'storage-vswitch-layout': 'per-fabric',
+  } as const;
+
+  it('never stalls a VM completely when half its paths die, whenever the fault lands', () => {
+    for (const at of [1, 2, 3, 4, 5, 6, 7]) {
+      const sim = loadSimulation({ topologyId: 't1-ahv-flasharray', options, seed: 1 }).sim;
+      sim.tick(at);
+      sim.applyAction({ kind: 'fail', target: 'sw-a' });
+      const seen: string[] = [];
+      for (let i = 0; i < 15; i++) {
+        const s = sim.tick(1);
+        const a = s.devices['node-1.vm-1']?.fields;
+        const b = s.devices['node-2.vm-1']?.fields;
+        // A dead path's stale latency must not make it the selector's favourite: the live
+        // paths keep completing IO every tick while the dead queues hold their stuck commands.
+        expect(a?.state, `fault at ${at}, tick ${i}`).toBe('running');
+        expect(b?.state, `fault at ${at}, tick ${i}`).toBe('running');
+        seen.push(`${a?.stuckIoPct}/${b?.stuckIoPct}`);
+      }
+      expect(
+        seen.some((x) => x !== '0/0'),
+        `fault at ${at}`,
+      ).toBe(true);
+    }
   });
 });

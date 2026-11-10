@@ -836,6 +836,18 @@ export class NvmeTcpInitiator implements StorageBackend {
     return dead.find((p) => (perPath.get(p.id) ?? 0) < this.queues);
   }
 
+  /** Paths still believed live that hold a stuck command of `vdisk` and completed no IO since. */
+  private deadPaths(vdisk: string): Set<string> {
+    const dead = new Set<string>();
+    for (const c of this.cmds.values()) {
+      if (c.state !== 'inflight' || !c.stuck || c.path === null || this.vdiskOf(c) !== vdisk)
+        continue;
+      const p = this.path(c.path);
+      if (p && usable(p) && p.lastIoOkAt < c.startedAt) dead.add(p.id);
+    }
+    return dead;
+  }
+
   /** Commands of `vdisk` at the initiator that are not held (queued or in flight). */
   private outstandingOf(vdisk: string): number {
     let n = 0;
@@ -888,13 +900,19 @@ export class NvmeTcpInitiator implements StorageBackend {
         const fastest = Math.min(...live.map((p) => this.latencyOf(p, base)));
         for (const p of live) p.credit = Math.min(1, p.credit + fastest / this.latencyOf(p, base));
         const load = this.loadByPath();
+        // A path that has completed nothing since its stuck commands went out has no latency to
+        // weigh: its last RTT is stale and would read as the fastest. It takes no weighted turn
+        // (a dead queue never drains, so Little's law gives it no new IO); the sink above and
+        // the plain fewest-outstanding pass below still apply to it.
+        const dead = this.deadPaths(vdisk);
         let best: Path | null = null;
         let bestN = Number.POSITIVE_INFINITY;
         for (const weighted of [true, false]) {
           for (let k = 0; k < live.length; k++) {
             const p = live[(i + k) % live.length] as Path;
             const n = load.get(p.id) ?? 0;
-            if (ok(p) && (!weighted || p.credit >= 1 - 1e-9) && n < bestN) {
+            const turn = !weighted || (p.credit >= 1 - 1e-9 && !dead.has(p.id));
+            if (ok(p) && turn && n < bestN) {
               best = p;
               bestN = n;
             }

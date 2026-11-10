@@ -68,6 +68,12 @@ export class Hades {
   private errorSince: number | null = null;
   /** First tick every path was gone (null while some path is live). */
   private lostSince: number | null = null;
+  /**
+   * Since when IO has been blackholed without a break (some command stuck in flight on a path
+   * that still looks live). The kernel's own connections over that link died when it did, so the
+   * clock runs from the start, not from whichever stuck command is the oldest now.
+   */
+  private blackholeSince: number | null = null;
   /** The mounts failed (paths gone past `mountFailAfterS`); they stay bad until a remount. */
   private mountsBad = false;
   private lastCheckAt = Number.NEGATIVE_INFINITY;
@@ -90,6 +96,7 @@ export class Hades {
       if (!monitored) {
         this.errorSince = null;
         this.lostSince = null;
+        this.blackholeSince = null;
         this.mountsBad = false;
         return null;
       }
@@ -101,7 +108,12 @@ export class Hades {
       // IO blackholed on a path that still looks live: the kernel's own connections over the same
       // link miss their keep-alive (KATO), then the queued service-volume IO fails as above.
       const blackholeLimit = ctx.profile.externalStorage.keepAliveTimeoutS.value + limit;
-      if ((this.backend.stuckIoAgeS?.(now) ?? 0) >= blackholeLimit) this.mountsBad = true;
+      const stuckAge = this.backend.stuckIoAgeS?.(now) ?? 0;
+      if (stuckAge > 0) this.blackholeSince = Math.min(this.blackholeSince ?? now, now - stuckAge);
+      else this.blackholeSince = null;
+      if (this.blackholeSince !== null && now - this.blackholeSince >= blackholeLimit) {
+        this.mountsBad = true;
+      }
       if (!this.checkDue(ctx)) return null;
       if (!this.mountsBad) {
         this.errorSince = null;
@@ -138,7 +150,8 @@ export class Hades {
     const age = this.backend.stuckIoAgeS?.(ctx.now) ?? 0;
     if (this.state === 'ok' && age > 0) {
       const kato = ctx.profile.externalStorage.keepAliveTimeoutS.value;
-      return Math.max(ctx.now - age + kato + H.mountFailAfterS.value, nextCheck);
+      const since = Math.min(this.blackholeSince ?? ctx.now - age, ctx.now - age);
+      return Math.max(since + kato + H.mountFailAfterS.value, nextCheck);
     }
     // Only while the check's answer would change something: a lost backend (ok) or a healthy
     // one (maintenance). Otherwise the backend's own reconnect timers wake the engine.
@@ -159,6 +172,7 @@ export class Hades {
     this.state = 'restarting';
     this.mountsBad = false;
     this.lostSince = null;
+    this.blackholeSince = null;
   }
 
   /** Services are back (restart done) or the CVM was power-cycled: start monitoring afresh. */
@@ -166,6 +180,7 @@ export class Hades {
     this.state = 'ok';
     this.errorSince = null;
     this.lostSince = null;
+    this.blackholeSince = null;
     this.mountsBad = false;
     this.lastCheckAt = Number.NEGATIVE_INFINITY;
     this.enteredAt = null;

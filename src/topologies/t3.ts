@@ -106,7 +106,12 @@ function buildT3(
     devices: [...devices, ...sw.devices],
     links: [...links, ...sw.links],
     options,
-    layout: computeLayout({ hosts: hostBoxes, switches: ['sw-a', 'sw-b'] }),
+    // Compute-only nodes in one row, storage nodes in the next (seven in a row get too small).
+    layout: computeLayout({
+      hosts: hostBoxes,
+      switches: ['sw-a', 'sw-b'],
+      hostRows: [p.coCount, p.storageCount],
+    }),
   });
 }
 

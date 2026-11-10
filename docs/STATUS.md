@@ -90,7 +90,6 @@ Living status page: where the project stands, what is left, which behavior still
 
 ### Polish (small)
 
-- **T3 layout:** seven hosts in one row get small at the default zoom. Wrap them into two rows.
 - **FlashArray interfaces:** the FA interface boxes are a bit narrow.
 - **`action.rejected`:** carry the action kind and target as structured fields, not only in the message.
 

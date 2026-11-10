@@ -90,6 +90,11 @@ export interface LayoutSpec {
   hosts: readonly HostBoxSpec[];
   switches: readonly string[];
   fa?: FaBoxSpec;
+  /**
+   * Hosts per row, top to bottom (their sum is the host count). Omitted: one row. Many hosts in
+   * one row get small at the default zoom; T3 puts its compute-only and storage nodes in two.
+   */
+  hostRows?: readonly number[];
 }
 
 const cvmWidth = (n: number) => Math.max(160, rowWidth(n, CVM_IF.w) + 2 * PAD);
@@ -198,23 +203,46 @@ export function computeLayout(spec: LayoutSpec): Layout {
   const out: Layout = {};
   const metrics = spec.hosts.map(hostMetrics);
   const hostH = Math.max(0, ...metrics.map((m) => m.h));
-  const hostsW =
-    metrics.reduce((s, m) => s + m.w, 0) + Math.max(0, spec.hosts.length - 1) * HOST_GAP;
+  // Host rows: consecutive slices of `hosts`; the widest sets the diagram width.
+  const counts = spec.hostRows?.length ? spec.hostRows : [spec.hosts.length];
+  const rows: number[][] = [];
+  let next = 0;
+  for (const c of counts) {
+    rows.push(
+      Array.from({ length: Math.max(0, c) }, (_, k) => next + k).filter(
+        (i) => i < spec.hosts.length,
+      ),
+    );
+    next += c;
+  }
+  if (next < spec.hosts.length)
+    rows.push(Array.from({ length: spec.hosts.length - next }, (_, k) => next + k));
+  const rowW = (r: number[]) =>
+    r.reduce((s, i) => s + (metrics[i]?.w ?? 0), 0) + Math.max(0, r.length - 1) * HOST_GAP;
+  const hostsW = Math.max(0, ...rows.map(rowW));
   const fa = spec.fa ? faMetrics(spec.fa) : undefined;
   const switchesMinW = rowWidth(spec.switches.length, SWITCH.w, 4 * GAP);
   const total = Math.max(hostsW, fa?.w ?? 0, switchesMinW);
 
-  let x = snapDown((total - hostsW) / 2);
-  spec.hosts.forEach((h, i) => {
-    const m = metrics[i];
-    if (!m) return;
-    out[h.id] = { x, y: 0, w: m.w, h: hostH };
-    layoutHost(h, m.w, hostH, m.nicRow, out);
-    x += m.w + HOST_GAP;
-  });
+  // One row: every host as tall as the tallest. Several rows: each row as tall as its own tallest.
+  let y = 0;
+  for (const r of rows) {
+    const rowH = rows.length === 1 ? hostH : Math.max(0, ...r.map((i) => metrics[i]?.h ?? 0));
+    let x = snapDown((total - rowW(r)) / 2);
+    for (const i of r) {
+      const h = spec.hosts[i];
+      const m = metrics[i];
+      if (!h || !m) continue;
+      out[h.id] = { x, y, w: m.w, h: rowH };
+      layoutHost(h, m.w, rowH, m.nicRow, out);
+      x += m.w + HOST_GAP;
+    }
+    y += rowH + HOST_GAP;
+  }
+  const hostsBottom = Math.max(0, y - HOST_GAP);
 
   // Switches spread evenly under the hosts (A left, B right).
-  const swY = hostH + ROW_GAP;
+  const swY = hostsBottom + ROW_GAP;
   const n = spec.switches.length;
   let prevRight = Number.NEGATIVE_INFINITY;
   spec.switches.forEach((id, i) => {

@@ -79,18 +79,14 @@ function Header({ entry }: { entry: CatalogEntry }) {
   return (
     <header className="flex flex-wrap items-end gap-x-4 gap-y-2 border-b border-border bg-panel px-4 py-2">
       {/* Keyboard users would otherwise tab through every cable before reaching the panel. */}
-      <a
-        href="#side-panel"
+      <button
+        type="button"
         className="sr-only rounded bg-accent px-2 py-1 text-xs text-white focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50"
         data-testid="skip-to-panel"
-        onClick={(e) => {
-          // Focus the panel without touching the URL hash (it carries the topology).
-          e.preventDefault();
-          document.getElementById('side-panel')?.focus();
-        }}
+        onClick={() => document.getElementById('side-panel')?.focus()}
       >
         Skip to side panel
-      </a>
+      </button>
       <div className="mr-2 self-center">
         <h1 className="text-lg font-bold leading-tight tracking-tight">
           NutanixVis{' '}

@@ -114,7 +114,13 @@ export function TimeControls() {
         <Button
           size="sm"
           variant="ghost"
-          onClick={stopStep}
+          onClick={() => {
+            stopStep();
+            // The Stop button goes away: keep keyboard focus on Step (enabled again next frame).
+            requestAnimationFrame(() =>
+              document.querySelector<HTMLButtonElement>('[data-testid="step"]')?.focus(),
+            );
+          }}
           data-testid="step-stop"
           title="Stop this step here"
         >

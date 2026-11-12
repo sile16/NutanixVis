@@ -82,7 +82,6 @@ In every design, NVMe multipathing runs inside the CVM (Stargate's NVMe/TCP init
 
 ## Same failure, three designs (access array ports)
 
-The UI's **Compare** chart (`src/ui/compare/comparison.ts`) is the maintained, five-column version of this table (both array IP counts, ISL use, placement drift, ISL packet loss, host reboot, configuration risk); each of its failure cells links to the guided scenario that shows it, and that scenario's walkthrough is checked against the model.
 
 | Failure | A: MAC pinning | B: LACP + MLAG | C: per-fabric no-bond |
 |---|---|---|---|

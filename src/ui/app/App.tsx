@@ -9,7 +9,6 @@ import { Move, RotateCcw } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { matrix as versionMatrix } from '../../domain/versions';
 import type { CatalogEntry } from '../../fixtures/catalog';
-import { CompareButton } from '../compare/compare-dialog';
 import { VendorLogo } from '../components/brand';
 import { Button, Select } from '../components/controls';
 import { Diagram } from '../diagram/diagram';
@@ -110,9 +109,6 @@ function Header({ entry }: { entry: CatalogEntry }) {
           </option>
         ))}
       </Select>
-      <div className="self-end pb-0.5">
-        <CompareButton />
-      </div>
       <VersionSelector matrix={matrix} hasFlashArray={entry.hasFlashArray} />
       <div className="flex items-end gap-2">
         <SimClock />
